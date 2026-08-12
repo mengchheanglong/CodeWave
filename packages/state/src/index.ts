@@ -81,6 +81,8 @@ export class SQLiteStateStore {
         provider_id TEXT NOT NULL,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'execute',
+        pre_run_commit TEXT,
         created_at TEXT NOT NULL,
         started_at TEXT,
         completed_at TEXT,
@@ -179,6 +181,8 @@ export class SQLiteStateStore {
     this.ensureColumn('sessions', 'orchestration_source_session_id', 'TEXT');
     this.ensureColumn('sessions', 'orchestration_source_run_id', 'TEXT');
     this.ensureColumn('sessions', 'orchestration_source_provider_id', 'TEXT');
+    this.ensureColumn('runs', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
+    this.ensureColumn('runs', 'pre_run_commit', 'TEXT');
     this.ensureColumn('approvals', 'tool_use_id', 'TEXT');
     this.ensureColumn(
       'approvals',
@@ -403,6 +407,7 @@ export class SQLiteStateStore {
     updates: {
       providerSessionId?: string | null;
       approvalPolicy?: ApprovalPolicy;
+      providerId?: ProviderId;
     } = {},
   ): void {
     const current = this.getSession(sessionId);
@@ -416,13 +421,15 @@ export class SQLiteStateStore {
           UPDATE sessions
           SET
             provider_session_id = ?,
-            approval_policy = ?
+            approval_policy = ?,
+            provider_id = ?
           WHERE id = ?
         `,
       )
       .run(
         updates.providerSessionId ?? current.providerSessionId,
         updates.approvalPolicy ?? current.approvalPolicy,
+        updates.providerId ?? current.providerId,
         sessionId,
       );
   }
@@ -437,12 +444,14 @@ export class SQLiteStateStore {
             provider_id,
             prompt,
             status,
+            mode,
+            pre_run_commit,
             created_at,
             started_at,
             completed_at,
             error_message
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -451,6 +460,8 @@ export class SQLiteStateStore {
         run.providerId,
         run.prompt,
         run.status,
+        run.mode,
+        run.preRunCommit ?? null,
         run.createdAt,
         run.startedAt,
         run.completedAt,
@@ -464,7 +475,7 @@ export class SQLiteStateStore {
     const rows = this.database
       .prepare(
         `
-          SELECT id, session_id, provider_id, prompt, status, created_at, started_at, completed_at, error_message
+          SELECT id, session_id, provider_id, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
           FROM runs
           WHERE session_id = ?
           ORDER BY created_at DESC
@@ -472,24 +483,14 @@ export class SQLiteStateStore {
       )
       .all(sessionId) as Array<Record<string, unknown>>;
 
-    return rows.map((row) => ({
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      providerId: String(row.provider_id) as ProviderId,
-      prompt: String(row.prompt),
-      status: String(row.status) as RunStatus,
-      createdAt: String(row.created_at),
-      startedAt: row.started_at ? String(row.started_at) : null,
-      completedAt: row.completed_at ? String(row.completed_at) : null,
-      errorMessage: row.error_message ? String(row.error_message) : null,
-    }));
+    return rows.map((row) => this.mapRunRow(row));
   }
 
   getRun(runId: string): WorkbenchRun | null {
     const row = this.database
       .prepare(
         `
-          SELECT id, session_id, provider_id, prompt, status, created_at, started_at, completed_at, error_message
+          SELECT id, session_id, provider_id, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
           FROM runs
           WHERE id = ?
         `,
@@ -500,12 +501,30 @@ export class SQLiteStateStore {
       return null;
     }
 
+    return this.mapRunRow(row);
+  }
+
+  setRunPreRunCommit(runId: string, preRunCommit: string | null): void {
+    this.database
+      .prepare(
+        `
+          UPDATE runs
+          SET pre_run_commit = ?
+          WHERE id = ?
+        `,
+      )
+      .run(preRunCommit, runId);
+  }
+
+  private mapRunRow(row: Record<string, unknown>): WorkbenchRun {
     return {
       id: String(row.id),
       sessionId: String(row.session_id),
       providerId: String(row.provider_id) as ProviderId,
       prompt: String(row.prompt),
       status: String(row.status) as RunStatus,
+      mode: row.mode === 'plan' ? 'plan' : 'execute',
+      preRunCommit: row.pre_run_commit ? String(row.pre_run_commit) : null,
       createdAt: String(row.created_at),
       startedAt: row.started_at ? String(row.started_at) : null,
       completedAt: row.completed_at ? String(row.completed_at) : null,

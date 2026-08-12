@@ -1,6 +1,8 @@
 import type {
   ApprovalRecord,
   ArchiveSnapshot,
+  CompareRunRequest,
+  CompareRunResponse,
   CreateSessionRequest,
   DeleteSessionResponse,
   DelegateRunRequest,
@@ -22,6 +24,7 @@ import type {
   SessionSnapshot,
   StartRunRequest,
   ToolPlaneResponse,
+  UndoRunResponse,
   UpdateSessionRequest,
   WorkbenchSession,
 } from '@qwemini/protocol';
@@ -50,6 +53,8 @@ export interface DaemonApi {
   startRun(sessionId: string, input: StartRunRequest): Promise<RunSnapshot>;
   getRun(runId: string): Promise<RunSnapshot>;
   cancelRun(runId: string): Promise<RunSnapshot>;
+  undoRun(runId: string): Promise<UndoRunResponse>;
+  compareRun(input: CompareRunRequest): Promise<CompareRunResponse>;
   getArchive(): Promise<ArchiveSnapshot>;
   getOrchestrationBoard(): Promise<OrchestrationBoardSnapshot>;
   recommendPrompt(
@@ -180,6 +185,17 @@ export function createDaemonApi({
     cancelRun(runId) {
       return requestJson<RunSnapshot>(`/api/runs/${runId}/cancel`, {
         method: 'POST',
+      });
+    },
+    undoRun(runId) {
+      return requestJson<UndoRunResponse>(`/api/runs/${runId}/undo`, {
+        method: 'POST',
+      });
+    },
+    compareRun(input) {
+      return requestJson<CompareRunResponse>('/api/compare', {
+        method: 'POST',
+        body: input,
       });
     },
     getArchive() {

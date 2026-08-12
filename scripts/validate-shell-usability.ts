@@ -301,6 +301,7 @@ async function validateStartRunCreatesSessionOnDemand() {
       'startRun',
       'session-1',
       {
+        mode: 'execute',
         prompt: 'implement this',
       },
     ],

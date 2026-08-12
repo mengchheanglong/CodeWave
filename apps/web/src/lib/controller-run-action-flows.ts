@@ -3,6 +3,7 @@ import type {
   OrchestrationRole,
   ProviderId,
   RoutingToolRequirement,
+  RunMode,
   RunSnapshot,
 } from '@qwemini/protocol';
 import { isRoutingToolRequirement } from '@qwemini/protocol';
@@ -66,7 +67,10 @@ export function createControllerRunActionFlows(
   } = deps;
 
   function toProviderId(value: ProviderId): ProviderId {
-    return value === 'gemini' ? 'gemini' : 'qwen';
+    if (value === 'gemini' || value === 'opencode' || value === 'freebuff') {
+      return value;
+    }
+    return 'qwen';
   }
 
   function toApprovalPolicy(value: ApprovalPolicy): ApprovalPolicy {
@@ -196,7 +200,10 @@ export function createControllerRunActionFlows(
       return;
     }
 
-    const snapshot = await api.startRun(session.id, { prompt });
+    const snapshot = await api.startRun(session.id, {
+      prompt,
+      mode: state.runModeDraft,
+    });
 
     state.promptDraft = '';
     syncRouteAction();
@@ -340,16 +347,51 @@ export function createControllerRunActionFlows(
     emitShellControlsState();
   }
 
+  function updateRunMode(mode: RunMode) {
+    state.runModeDraft = mode;
+    emitShellControlsState();
+  }
+
+  async function executePlanRun(planText: string) {
+    const trimmed = planText.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    state.runModeDraft = 'execute';
+    state.promptDraft = trimmed;
+    emitShellControlsState();
+    await startRun();
+  }
+
+  async function undoSelectedRun() {
+    if (!state.selectedRun) {
+      return;
+    }
+    const runId = state.selectedRun.id;
+    const response = await api.undoRun(runId);
+    state.undoAvailable = false;
+    state.undoDetail = response.detail;
+    if (state.selectedRun?.id === runId) {
+      state.selectedRun = response.run;
+    }
+    emitRunViewState();
+    await refreshRun(runId);
+  }
+
   return {
     cancelSelectedRun,
     createFollowUpRun,
     createSession,
     delegatePrompt,
+    executePlanRun,
     handoffPrompt,
     refreshRecommendation,
     resolveApproval,
     routePrompt,
     startRun,
+    undoSelectedRun,
+    updateRunMode,
     updateSelectedSessionPolicy,
     updateSelectedSessionPolicyDraft,
   };

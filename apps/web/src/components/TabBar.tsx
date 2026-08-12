@@ -1,7 +1,12 @@
+import type { ReactNode } from 'react';
+import { Badge } from '@qwemini/ui-kit';
+
 type TabItem<T extends string> = {
   id: T;
   label: string;
   badge?: number | string;
+  hot?: boolean;
+  icon?: ReactNode;
 };
 
 type TabBarProps<T extends string> = {
@@ -30,9 +35,12 @@ export function TabBar<T extends string>({
             className={`tab-chip${active ? ' active' : ''}`}
             onClick={() => onSelect(item.id)}
           >
+            {item.icon ? <span className="tab-icon">{item.icon}</span> : null}
             <span className="tab-label">{item.label}</span>
             {item.badge !== undefined ? (
-              <span className="tab-badge">{item.badge}</span>
+              <Badge tone={item.hot ? 'warning' : active ? 'accent' : 'neutral'}>
+                {item.badge}
+              </Badge>
             ) : null}
           </button>
         );

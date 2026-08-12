@@ -1,9 +1,9 @@
 # AGENTS.md
 
-Project: **Qwemini**  
-Tagline: **One workspace for Qwen and Gemini**
+Project: **CodeWave**  
+Tagline: **The visual workspace for AI coding agents**
 
-Qwemini is an open-source, local-first agent workspace that brings **Qwen CLI** and **Gemini CLI** into one unified environment. The product should feel like a real coding-agent environment, not a thin wrapper around one CLI.
+CodeWave is an open-source, local-first agent workspace that harnesses **Qwen**, **Gemini**, **OpenCode**, **Freebuff**, and future AI coding CLIs into one unified environment. The product feels like a real coding-agent workspace, not a thin wrapper around one CLI.
 
 ## Read this first
 
@@ -16,7 +16,7 @@ If an `implement.md`, `backlog.md`, or other active planning file exists, read t
 
 ## What this repo is building
 
-Qwemini is building a provider-flexible coding-agent environment with:
+CodeWave is building a provider-flexible coding-agent environment with:
 
 - a product-owned shell
 - a local daemon as the control center

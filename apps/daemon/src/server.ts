@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readdir, rename as renamePath, rm, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildToolPlaneSnapshot, loadWorkspaceToolRegistry } from '@qwemini/mcp-hub';
@@ -13,6 +15,9 @@ import {
   type ApprovalRecord,
   type ArtifactRecord,
   type CheckpointRecord,
+  type CompareRunLane,
+  type CompareRunRequest,
+  type CompareRunResponse,
   type CreateSessionRequest,
   type DeleteSessionResponse,
   type DelegateRunRequest,
@@ -42,6 +47,7 @@ import {
   type RoutePromptRequest,
   type RoutePromptResponse,
   type RunSnapshot,
+  type UndoRunResponse,
   type RuntimeInfo,
   type ToolDescriptorSource,
   type SessionSnapshot,
@@ -67,7 +73,9 @@ import {
   recommendHandoffRoute,
   recommendProviderRoute,
 } from '@qwemini/orchestrator';
+import { FreebuffCliProvider } from '@qwemini/provider-freebuff';
 import { GeminiCliProvider } from '@qwemini/provider-gemini';
+import { OpenCodeCliProvider } from '@qwemini/provider-opencode';
 import { QwenCliProvider } from '@qwemini/provider-qwen';
 import { SQLiteStateStore, resolveDataDirectory } from '@qwemini/state';
 
@@ -248,6 +256,39 @@ type RenameWorkspaceEntryRequest = {
   nextName: string;
 };
 
+const execFileAsync = promisify(execFile);
+
+async function getGitHeadCommit(workspacePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['rev-parse', '--short', 'HEAD'],
+      { cwd: workspacePath, timeout: 5000, windowsHide: true },
+    );
+    const value = stdout.trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+async function gitResetToCommit(
+  workspacePath: string,
+  commit: string,
+): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['reset', '--hard', commit],
+      { cwd: workspacePath, timeout: 30000, windowsHide: true, maxBuffer: 1024 * 1024 },
+    );
+    return { ok: true, detail: `Reset workspace to ${commit}.` };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, detail: `Git reset failed: ${message}` };
+  }
+}
+
 function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+/, '').trim();
 }
@@ -281,11 +322,22 @@ export class QweminiDaemon {
     );
     this.providers.set(DEFAULT_PROVIDER_ID, new QwenCliProvider({ rootPath }));
     this.providers.set('gemini', new GeminiCliProvider());
+    this.providers.set('opencode', new OpenCodeCliProvider({ rootPath }));
+    this.providers.set('freebuff', new FreebuffCliProvider({ rootPath }));
   }
 
   async start(): Promise<void> {
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response);
+      void this.handleRequest(request, response).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+          sendJson(response, 400, {
+            error: `Daemon request failed: ${message}`,
+          });
+        } catch {
+          response.destroy();
+        }
+      });
     });
 
     await new Promise<void>((resolve) => {
@@ -487,7 +539,7 @@ export class QweminiDaemon {
 
     if (request.method === 'PATCH' && sessionMatch) {
       const body = await readJsonBody<UpdateSessionRequest>(request);
-      if (!isApprovalPolicy(body.approvalPolicy)) {
+      if (body.approvalPolicy && !isApprovalPolicy(body.approvalPolicy)) {
         sendJson(response, 400, { error: 'Invalid approval policy.' });
         return;
       }
@@ -554,6 +606,18 @@ export class QweminiDaemon {
       }
 
       sendJson(response, 201, snapshot);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/compare') {
+      const body = await readJsonBody<CompareRunRequest>(request);
+      const responsePayload = await this.compareRun(body);
+      if (responsePayload instanceof Error) {
+        sendJson(response, 409, { error: responsePayload.message });
+        return;
+      }
+
+      sendJson(response, 201, responsePayload satisfies CompareRunResponse);
       return;
     }
 
@@ -650,6 +714,23 @@ export class QweminiDaemon {
       }
 
       sendJson(response, 200, snapshot);
+      return;
+    }
+
+    const undoRunMatch = pathname.match(/^\/api\/runs\/([^/]+)\/undo$/);
+    if (request.method === 'POST' && undoRunMatch) {
+      const result = await this.undoRun(undoRunMatch[1]!);
+      if (result === null) {
+        notFound(response);
+        return;
+      }
+
+      if (result instanceof Error) {
+        sendJson(response, 409, { error: result.message });
+        return;
+      }
+
+      sendJson(response, 200, result satisfies UndoRunResponse);
       return;
     }
 
@@ -1542,6 +1623,53 @@ export class QweminiDaemon {
     return this.stateStore.createSession(session);
   }
 
+  private async compareRun(
+    input: CompareRunRequest,
+  ): Promise<CompareRunResponse | Error> {
+    const prompt = input.prompt.trim();
+    if (!prompt) {
+      return new Error('A prompt is required for comparison.');
+    }
+
+    const providers = [...new Set(input.providers)];
+    if (providers.length < 2) {
+      return new Error('Choose at least two different providers to compare.');
+    }
+
+    const approvalPolicy = input.approvalPolicy ?? this.getDefaultApprovalPolicy();
+    const lanes: CompareRunLane[] = [];
+
+    for (const providerId of providers) {
+      const session = await this.createSession({
+        workspacePath: input.workspacePath,
+        providerId,
+        approvalPolicy,
+      });
+      if (session instanceof Error) {
+        return session;
+      }
+
+      const snapshot = await this.startRun(session.id, {
+        prompt,
+        mode: 'execute',
+      });
+      if (!snapshot) {
+        return new Error(`Failed to start the ${providerId} lane.`);
+      }
+      if (snapshot instanceof Error) {
+        return snapshot;
+      }
+
+      lanes.push({
+        sessionId: session.id,
+        providerId,
+        runSnapshot: snapshot,
+      });
+    }
+
+    return { lanes } satisfies CompareRunResponse;
+  }
+
   private async updateSessionPolicy(
     sessionId: string,
     body: UpdateSessionRequest,
@@ -1551,16 +1679,29 @@ export class QweminiDaemon {
       return null;
     }
 
-    const validationError = await this.validateApprovalPolicyForProvider(
-      session.providerId,
-      body.approvalPolicy,
+    let nextApprovalPolicy = body.approvalPolicy ?? session.approvalPolicy;
+    const nextProviderId = body.providerId ?? session.providerId;
+
+    let validationError = await this.validateApprovalPolicyForProvider(
+      nextProviderId,
+      nextApprovalPolicy,
     );
+
+    if (validationError && body.providerId && !body.approvalPolicy) {
+      nextApprovalPolicy = 'manual';
+      validationError = await this.validateApprovalPolicyForProvider(
+        nextProviderId,
+        nextApprovalPolicy,
+      );
+    }
+
     if (validationError) {
       return validationError;
     }
 
     this.stateStore.updateSession(sessionId, {
-      approvalPolicy: body.approvalPolicy,
+      approvalPolicy: nextApprovalPolicy,
+      providerId: nextProviderId,
     });
     return this.stateStore.getSession(sessionId);
   }
@@ -1771,13 +1912,42 @@ export class QweminiDaemon {
       return null;
     }
 
+    const events = this.stateStore.listEvents(runId);
+    let contextChars = 0;
+    for (const event of events) {
+      if (event.type === 'run.output.delta') {
+        const text =
+          typeof event.payload.text === 'string' ? event.payload.text : '';
+        contextChars += text.length;
+      } else if (event.type === 'message.created') {
+        const content =
+          typeof event.payload.content === 'string' ? event.payload.content : '';
+        contextChars += content.length;
+      } else {
+        const serialized = JSON.stringify(event.payload ?? {});
+        contextChars += serialized.length;
+      }
+    }
+
+    const isTerminal = isTerminalRunStatus(run.status);
+    const undo = {
+      available: Boolean(isTerminal && run.preRunCommit),
+      detail: run.preRunCommit
+        ? isTerminal
+          ? `Reverts tracked workspace changes to commit ${run.preRunCommit}.`
+          : 'Undo becomes available when the run completes.'
+        : 'Workspace is not a git repository.',
+    };
+
     return {
       run,
-      events: this.stateStore.listEvents(runId),
+      events,
       artifacts: this.stateStore.listArtifacts(runId),
       approvals: this.stateStore.listApprovals(runId),
       checkpoints: this.stateStore.listCheckpoints(runId),
       toolInvocations: this.stateStore.listToolInvocations(runId),
+      contextChars,
+      undo,
     };
   }
 
@@ -1892,13 +2062,23 @@ export class QweminiDaemon {
       providerId: session.providerId,
       prompt: body.prompt,
       status: 'running',
+      mode: body.mode === 'plan' ? 'plan' : 'execute',
+      preRunCommit: null,
       createdAt: now,
       startedAt: now,
       completedAt: null,
       errorMessage: null,
     };
 
+    const preRunCommit = await getGitHeadCommit(session.workspacePath);
+    if (preRunCommit) {
+      run.preRunCommit = preRunCommit;
+    }
+
     this.stateStore.createRun(run);
+    if (run.preRunCommit) {
+      this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);
+    }
     await this.syncProviderConnectedTools(session, run);
     await this.acceptEvent({
       id: randomUUID(),
@@ -1918,15 +2098,39 @@ export class QweminiDaemon {
       },
     });
 
-    const handle = await provider.startRun({
-      session,
-      run,
-      emitEvent: async (event) => {
-        await this.acceptEvent(event);
-      },
-      updateSession: async (updates) => this.updateSession(session.id, updates),
-      requestApproval: async (approval) => this.requestApproval(run, approval),
-    });
+    let handle: Awaited<ReturnType<ProviderAdapter['startRun']>>;
+    try {
+      handle = await provider.startRun({
+        session,
+        run,
+        emitEvent: async (event) => {
+          await this.acceptEvent(event);
+        },
+        updateSession: async (updates) => this.updateSession(session.id, updates),
+        requestApproval: async (approval) => this.requestApproval(run, approval),
+      });
+    } catch (launchError) {
+      const message =
+        launchError instanceof Error
+          ? launchError.message
+          : typeof launchError === 'object' && launchError !== null &&
+              'message' in launchError
+            ? String(launchError.message)
+            : String(launchError);
+      await this.acceptEvent({
+        id: randomUUID(),
+        sessionId: session.id,
+        runId: run.id,
+        timestamp: new Date().toISOString(),
+        source: 'system',
+        type: 'run.failed',
+        payload: {
+          message: `${provider.displayName} failed to start the run.`,
+          detail: message,
+        },
+      });
+      return new Error(`${provider.displayName} failed to start the run: ${message}`);
+    }
 
     this.runHandles.set(run.id, handle);
     return this.getRunSnapshot(run.id);
@@ -1963,6 +2167,53 @@ export class QweminiDaemon {
     }
 
     return this.getRunSnapshot(runId);
+  }
+
+  private async undoRun(
+    runId: string,
+  ): Promise<UndoRunResponse | Error | null> {
+    const run = this.stateStore.getRun(runId);
+    if (!run) {
+      return null;
+    }
+
+    if (!isTerminalRunStatus(run.status)) {
+      return new Error('Undo is only available after the run completes.');
+    }
+
+    if (!run.preRunCommit) {
+      return new Error(
+        'Undo is unavailable because the workspace is not a git repository.',
+      );
+    }
+
+    const session = this.stateStore.getSession(run.sessionId);
+    if (!session) {
+      return new Error('Session for the run was not found.');
+    }
+
+    const result = await gitResetToCommit(session.workspacePath, run.preRunCommit);
+    if (!result.ok) {
+      return new Error(result.detail);
+    }
+
+    await this.acceptEvent({
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      runId,
+      timestamp: new Date().toISOString(),
+      source: 'system',
+      type: 'run.undo',
+      payload: {
+        targetCommit: run.preRunCommit,
+        detail: result.detail,
+      },
+    });
+
+    return {
+      run: this.stateStore.getRun(runId)!,
+      detail: result.detail,
+    } satisfies UndoRunResponse;
   }
 
   private async requestApproval(
@@ -2005,6 +2256,13 @@ export class QweminiDaemon {
 
     const session = this.stateStore.getSession(run.sessionId);
     const approvalPolicy = session?.approvalPolicy ?? this.getDefaultApprovalPolicy();
+
+    if (run.mode === 'plan') {
+      return this.finalizeApproval(approval.id, {
+        decision: 'denied',
+        reason: 'Plan mode is read-only; tool execution was blocked.',
+      });
+    }
 
     if (approvalPolicy === 'allow') {
       return this.finalizeApproval(approval.id, {
@@ -2127,6 +2385,59 @@ export class QweminiDaemon {
         reason,
       });
     }
+  }
+
+  private async capturePlanArtifact(runId: string): Promise<void> {
+    const messages = this.stateStore
+      .listEvents(runId)
+      .filter((event) => event.type === 'message.created')
+      .map((event) => ({
+        role: typeof event.payload.role === 'string' ? event.payload.role : '',
+        content:
+          typeof event.payload.content === 'string' ? event.payload.content.trim() : '',
+      }));
+
+    const planContent = messages
+      .filter((message) => message.role === 'assistant' && message.content)
+      .at(-1)?.content;
+
+    if (!planContent) {
+      return;
+    }
+
+    const run = this.stateStore.getRun(runId);
+    if (!run) {
+      return;
+    }
+
+    const artifact: ArtifactRecord = {
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      runId,
+      kind: 'plan',
+      title: 'Plan',
+      createdAt: new Date().toISOString(),
+      content: planContent,
+      metadata: {
+        sourceRunId: runId,
+        prompt: run.prompt,
+      },
+    };
+
+    this.stateStore.createArtifact(artifact);
+    await this.acceptEvent({
+      id: randomUUID(),
+      sessionId: artifact.sessionId,
+      runId: artifact.runId,
+      timestamp: artifact.createdAt,
+      source: 'system',
+      type: 'artifact.created',
+      payload: {
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        title: artifact.title,
+      },
+    });
   }
 
   private syncRunStatusFromApprovals(runId: string): void {
@@ -2496,6 +2807,9 @@ export class QweminiDaemon {
         event.runId,
         'Run completed before the approval was resolved.',
       );
+      if (current?.mode === 'plan') {
+        await this.capturePlanArtifact(event.runId);
+      }
       this.runHandles.delete(event.runId);
     }
 

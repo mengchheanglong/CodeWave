@@ -5,7 +5,9 @@
   "dependencies": {
     "@qwemini/mcp-hub": "file:../../packages/mcp-hub",
     "@qwemini/orchestrator": "file:../../packages/orchestrator",
+    "@qwemini/provider-freebuff": "file:../../packages/providers/freebuff",
     "@qwemini/provider-gemini": "file:../../packages/providers/gemini",
+    "@qwemini/provider-opencode": "file:../../packages/providers/opencode",
     "@qwemini/protocol": "file:../../packages/protocol",
     "@qwemini/provider-qwen": "file:../../packages/providers/qwen",
     "@qwemini/state": "file:../../packages/state"

@@ -1,0 +1,12 @@
+/* ============================================================
+   Qwemini design tokens — motion
+   ============================================================ */
+
+:root {
+  --dur-micro: 150ms; /* hover, focus */
+  --dur-fast: 250ms; /* panel open, tab switch */
+  --dur-emphasis: 400ms; /* toast entry, approval pulse */
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0.2, 1);
+}

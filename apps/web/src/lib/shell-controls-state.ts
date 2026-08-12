@@ -3,6 +3,7 @@ import type {
   OrchestrationRole,
   ProviderId,
   RoutingToolRequirement,
+  RunMode,
 } from '@qwemini/protocol';
 
 export type FollowUpKind = 'review' | 'verify';
@@ -13,6 +14,7 @@ export type ShellControlsState = {
   providerId: ProviderId;
   sessionApprovalPolicy: ApprovalPolicy;
   sessionApprovalPolicyDisabled: boolean;
+  runMode: RunMode;
   prompt: string;
   promptDisabled: boolean;
   routingTools: RoutingToolRequirement[];
@@ -35,6 +37,7 @@ export const emptyShellControlsState: ShellControlsState = {
   providerId: 'qwen',
   sessionApprovalPolicy: 'manual',
   sessionApprovalPolicyDisabled: false,
+  runMode: 'execute',
   prompt: '',
   promptDisabled: true,
   routingTools: [],

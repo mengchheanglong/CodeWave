@@ -38,6 +38,7 @@ export {
   requestCreateSession,
   requestDelegatePrompt,
   requestDelegateRoleChange,
+  requestExecutePlan,
   requestFollowUpRun,
   requestHandoffPrompt,
   requestPromptDraftChange,
@@ -45,11 +46,13 @@ export {
   requestSessionDelete,
   requestRoutePrompt,
   requestRoutingToolsDraftChange,
+  requestRunModeChange,
   requestRunSelection,
   requestSelectedSessionPolicyDraftChange,
   requestSessionDraftChange,
   requestSessionSelection,
   requestStartRun,
+  requestUndoRun,
   requestWorkspaceDraftCommit,
   subscribeRunViewState,
   subscribeShellControlsState,
@@ -113,6 +116,9 @@ function emitRunViewState() {
       runs: state.runs,
       selectedRun: state.selectedRun,
       events: state.events,
+      contextChars: state.contextChars,
+      undoAvailable: state.undoAvailable,
+      undoDetail: state.undoDetail,
     }),
   );
 }
@@ -179,6 +185,7 @@ function emitShellControlsState() {
     providerId: state.providerIdDraft,
     sessionApprovalPolicy: state.sessionApprovalPolicyDraft,
     sessionApprovalPolicyDisabled: state.sessionApprovalPolicyDraftDisabled,
+    runMode: state.runModeDraft,
     prompt: state.promptDraft,
     promptDisabled: state.promptDraftDisabled,
     routingTools: [...state.routingToolsDraft],
@@ -296,11 +303,14 @@ const {
   createFollowUpRun,
   createSession,
   delegatePrompt,
+  executePlanRun,
   handoffPrompt,
   refreshRecommendation,
   resolveApproval,
   routePrompt,
   startRun,
+  undoSelectedRun,
+  updateRunMode,
   updateSelectedSessionPolicy,
   updateSelectedSessionPolicyDraft,
 } = createControllerRunActionFlows({
@@ -327,6 +337,7 @@ const {
 
 setControllerRequesters(createControllerRequesters({
   state,
+  api,
   emitShellControlsState,
   syncSessionCreationControls,
   syncRunAction,
@@ -348,6 +359,9 @@ setControllerRequesters(createControllerRequesters({
   updateSelectedSessionPolicy,
   cancelSelectedRun,
   createFollowUpRun,
+  executePlanRun,
+  undoSelectedRun,
+  updateRunMode,
 }));
 
 emitRunViewState();

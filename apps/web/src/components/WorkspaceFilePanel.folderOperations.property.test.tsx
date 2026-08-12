@@ -262,8 +262,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               const folderName = container.querySelector('.workspace-file-name')?.textContent;
               expect(folderName).toBe(newName.trim());
               // Verify it's still a folder by checking for folder icon
-              const folderIcon = container.querySelector('.workspace-file-kind')?.textContent;
-              expect(folderIcon).toBe('📁');
+              const folderIcon = container.querySelector('.workspace-file-kind svg');
+              expect(folderIcon).not.toBeNull();
             });
             
             unmount();
@@ -341,8 +341,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               const fileName = container.querySelector('.workspace-file-name')?.textContent;
               expect(fileName).toBe(expectedNewName);
               // Verify it's still a file by checking for file icon
-              const fileIcon = container.querySelector('.workspace-file-kind')?.textContent;
-              expect(fileIcon).toBe('📄');
+              const fileIcon = container.querySelector('.workspace-file-kind svg');
+              expect(fileIcon).not.toBeNull();
             });
             
             unmount();

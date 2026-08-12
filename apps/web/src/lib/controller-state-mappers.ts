@@ -50,7 +50,9 @@ function toRunSummary(
   return {
     id: run.id,
     status: run.status,
+    mode: run.mode,
     createdAt: run.createdAt,
+    completedAt: run.completedAt,
     prompt: run.prompt,
   };
 }
@@ -334,6 +336,9 @@ export function buildRunViewState(input: {
   runs: WorkbenchRun[];
   selectedRun: WorkbenchRun | null;
   events: WorkbenchEvent[];
+  contextChars: number;
+  undoAvailable: boolean;
+  undoDetail: string | null;
 }): RunViewState {
   return {
     selectedSessionId: input.selectedSessionId,
@@ -342,6 +347,9 @@ export function buildRunViewState(input: {
     ),
     selectedRun: toRunSummary(input.selectedRun),
     events: input.events.map((entry) => toRunEvent(entry)),
+    contextChars: input.contextChars,
+    undoAvailable: input.undoAvailable,
+    undoDetail: input.undoDetail,
   };
 }
 

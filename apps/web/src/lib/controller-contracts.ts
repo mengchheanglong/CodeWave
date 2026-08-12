@@ -1,4 +1,9 @@
-import type { ApprovalPolicy, RoutingToolRequirement, WorkbenchSession } from '@qwemini/protocol';
+import type {
+  ApprovalPolicy,
+  RoutingToolRequirement,
+  RunMode,
+  WorkbenchSession,
+} from '@qwemini/protocol';
 import type {
   DelegateRole,
   FollowUpKind,
@@ -63,5 +68,8 @@ export type ControllerRequesterMap = {
   sessionDeleteRequester: (sessionId: string) => Promise<void>;
   applySelectedSessionPolicyRequester: () => Promise<void>;
   cancelSelectedRunRequester: () => Promise<void>;
+  undoRunRequester: () => Promise<void>;
+  runModeDraftChangeRequester: (mode: RunMode) => Promise<void>;
+  executePlanRequester: (planText: string) => Promise<void>;
   followUpRunRequester: CreateFollowUpRun;
 };

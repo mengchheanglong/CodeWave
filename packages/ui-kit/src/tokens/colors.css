@@ -1,0 +1,87 @@
+/* ============================================================
+   Qwemini design tokens — colors
+   Cool blue-gray base (GitHub-dark family), provider-aware accent.
+   ============================================================ */
+
+:root {
+  /* Base surfaces */
+  --surface-0: #0d1117; /* deepest background */
+  --surface-1: #161b22; /* primary surface */
+  --surface-2: #1c2128; /* elevated surface */
+  --surface-3: #21262d; /* card/panel surface */
+
+  /* Ink hierarchy */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-tertiary: #59636e;
+
+  /* Provider accents — the active one wins via [data-accent] */
+  --accent-qwen: #ff8a3d; /* warm amber */
+  --accent-gemini: #4285f4; /* google blue */
+  --accent-opencode: #10b981; /* emerald */
+  --accent-freebuff: #00f2fe; /* electric cyan */
+
+  /* Status colors */
+  --status-success: #3fb950;
+  --status-error: #f85149;
+  --status-warning: #d29922;
+  --status-info: #58a6ff;
+  --status-running: #a371f7;
+
+  /* Diff colors */
+  --diff-add-bg: rgba(63, 185, 80, 0.14);
+  --diff-add-text: #3fb950;
+  --diff-del-bg: rgba(248, 81, 73, 0.14);
+  --diff-del-text: #f85149;
+  --diff-hunk-bg: rgba(88, 166, 255, 0.1);
+  --diff-hunk-text: #58a6ff;
+
+  /* Borders */
+  --border-default: #30363d;
+  --border-muted: #21262d;
+
+  /* Overlays / elevation */
+  --overlay-scrim: rgba(1, 4, 9, 0.62);
+}
+
+:root[data-accent='gemini'] {
+  --accent-active: var(--accent-gemini);
+}
+
+:root[data-accent='opencode'] {
+  --accent-active: var(--accent-opencode);
+}
+
+:root[data-accent='freebuff'] {
+  --accent-active: var(--accent-freebuff);
+}
+
+:root[data-accent='qwen'],
+:root:not([data-accent]) {
+  --accent-active: var(--accent-qwen);
+}
+
+/* Light theme */
+html[data-theme='light'] {
+  --surface-0: #ffffff;
+  --surface-1: #f6f8fa;
+  --surface-2: #f0f2f5;
+  --surface-3: #e8eaed;
+  --text-primary: #1f2328;
+  --text-secondary: #59636e;
+  --text-tertiary: #8c959f;
+  --status-success: #1a7f37;
+  --status-error: #d1242f;
+  --status-warning: #9a6700;
+  --status-info: #0969da;
+  --status-running: #8250df;
+  --diff-add-bg: rgba(26, 127, 55, 0.12);
+  --diff-add-text: #1a7f37;
+  --diff-del-bg: rgba(209, 36, 47, 0.12);
+  --diff-del-text: #d1242f;
+  --diff-hunk-bg: rgba(9, 105, 218, 0.08);
+  --diff-hunk-text: #0969da;
+  --border-default: #d0d7de;
+  --border-muted: #e8eaed;
+  --overlay-scrim: rgba(31, 35, 40, 0.4);
+}

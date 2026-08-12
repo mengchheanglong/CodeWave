@@ -1,0 +1,120 @@
+.card {
+  border: 1px solid var(--border-muted, #21262d);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2, #1c2128);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-muted, #21262d);
+}
+
+.fileIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent-active, #ff8a3d);
+}
+
+.file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm, 13px);
+  color: var(--text-primary, #e6edf3);
+  font-weight: 500;
+}
+
+.stats {
+  flex: none;
+  display: inline-flex;
+  gap: 8px;
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.add {
+  color: var(--diff-add-text, #3fb950);
+}
+
+.del {
+  color: var(--diff-del-text, #f85149);
+}
+
+.viewport {
+  max-height: 340px;
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--surface-0, #0d1117);
+}
+
+.line {
+  display: flex;
+  gap: 10px;
+  padding: 0 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  color: var(--text-secondary, #8b949e);
+}
+
+.line:hover {
+  background: rgba(139, 148, 158, 0.06);
+}
+
+.sign {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  user-select: none;
+}
+
+.content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hunkLine {
+  background: var(--diff-hunk-bg, rgba(88, 166, 255, 0.1));
+  color: var(--diff-hunk-text, #58a6ff);
+}
+
+.ctxLine {
+  /* context lines — default styling */
+}
+
+.addLine {
+  background: var(--diff-add-bg, rgba(63, 185, 80, 0.14));
+  color: var(--diff-add-text, #3fb950);
+}
+
+.delLine {
+  background: var(--diff-del-bg, rgba(248, 81, 73, 0.14));
+  color: var(--diff-del-text, #f85149);
+}
+
+.more {
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: var(--text-xs, 11px);
+  font-weight: 600;
+  color: var(--status-info, #58a6ff);
+  cursor: pointer;
+  text-align: left;
+  border-top: 1px solid var(--border-muted, #21262d);
+}
+
+.more:hover {
+  background: rgba(88, 166, 255, 0.08);
+}

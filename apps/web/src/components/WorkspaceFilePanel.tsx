@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState } from './EmptyState';
+import { PromptModal } from './PromptModal';
+import { FileTextIcon, FolderIcon } from './icons';
 
 type WorkspaceEntryKind = 'file' | 'folder';
 
@@ -162,17 +164,23 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedWorkspacePath]);
 
-  async function createFolder() {
-    const nextFolderName = window.prompt('Folder name');
-    if (!nextFolderName) {
-      return;
-    }
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    placeholder: string;
+    defaultValue: string;
+    confirmLabel: string;
+    onConfirm: (val: string) => void;
+  }>({
+    isOpen: false,
+    title: '',
+    placeholder: '',
+    defaultValue: '',
+    confirmLabel: 'Save',
+    onConfirm: () => {},
+  });
 
-    const name = nextFolderName.trim();
-    if (!name) {
-      return;
-    }
-
+  async function executeCreateFolder(name: string) {
     setLoading(true);
     setError(null);
     try {
@@ -196,25 +204,21 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
     }
   }
 
-  async function renameEntry(entry: WorkspaceEntryRecord) {
-    let defaultValue = entry.name;
-    
-    // For files, pre-fill without extension
-    if (entry.kind === 'file') {
-      const lastDotIndex = entry.name.lastIndexOf('.');
-      if (lastDotIndex > 0) {
-        defaultValue = entry.name.substring(0, lastDotIndex);
-      }
-    }
+  function createFolder() {
+    setModalConfig({
+      isOpen: true,
+      title: 'Create New Folder',
+      placeholder: 'e.g. components',
+      defaultValue: '',
+      confirmLabel: 'Create Folder',
+      onConfirm: (name) => {
+        void executeCreateFolder(name);
+      },
+    });
+  }
 
-    const nextNameInput = window.prompt('Rename entry', defaultValue);
-    if (!nextNameInput) {
-      return;
-    }
-
+  async function executeRenameEntry(entry: WorkspaceEntryRecord, nextNameInput: string) {
     let nextName = nextNameInput.trim();
-    
-    // For files, restore extension if user didn't include it
     if (entry.kind === 'file') {
       const lastDotIndex = entry.name.lastIndexOf('.');
       if (lastDotIndex > 0) {
@@ -250,6 +254,27 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
       setError(formatErrorMessage(message, 'rename', entry.kind, entry.name));
       setLoading(false);
     }
+  }
+
+  function renameEntry(entry: WorkspaceEntryRecord) {
+    let defaultValue = entry.name;
+    if (entry.kind === 'file') {
+      const lastDotIndex = entry.name.lastIndexOf('.');
+      if (lastDotIndex > 0) {
+        defaultValue = entry.name.substring(0, lastDotIndex);
+      }
+    }
+
+    setModalConfig({
+      isOpen: true,
+      title: `Rename ${entry.kind === 'folder' ? 'Folder' : 'File'}`,
+      placeholder: 'New name...',
+      defaultValue,
+      confirmLabel: 'Rename',
+      onConfirm: (newName) => {
+        void executeRenameEntry(entry, newName);
+      },
+    });
   }
 
   async function deleteEntry(entry: WorkspaceEntryRecord) {
@@ -359,7 +384,11 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
                 }}
               >
                 <span className="workspace-file-kind" aria-hidden="true">
-                  {entry.kind === 'folder' ? '📁' : '📄'}
+                  {entry.kind === 'folder' ? (
+                    <FolderIcon size={14} />
+                  ) : (
+                    <FileTextIcon size={14} />
+                  )}
                 </span>
                 <span className="workspace-file-name">{entry.name}</span>
               </button>
@@ -389,6 +418,15 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
           ))}
         </div>
       )}
+      <PromptModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        placeholder={modalConfig.placeholder}
+        defaultValue={modalConfig.defaultValue}
+        confirmLabel={modalConfig.confirmLabel}
+        onConfirm={modalConfig.onConfirm}
+        onClose={() => setModalConfig((prev) => ({ ...prev, isOpen: false }))}
+      />
     </section>
   );
 }

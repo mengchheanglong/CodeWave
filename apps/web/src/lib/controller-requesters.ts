@@ -1,6 +1,7 @@
 import type {
   ApprovalPolicy,
   RoutingToolRequirement,
+  RunMode,
 } from '@qwemini/protocol';
 import type {
   DelegateRole,
@@ -26,10 +27,12 @@ import type {
   UpdateSelectedSessionPolicy,
   DelegatePrompt,
 } from './controller-contracts.js';
+import type { DaemonApi } from './daemon-api.js';
 import type { ControllerRequesterState } from './controller-state-slices.js';
 
 type ControllerRequesterDeps = {
   state: ControllerRequesterState;
+  api: DaemonApi;
   emitShellControlsState: () => void;
   syncSessionCreationControls: () => void;
   syncRunAction: () => void;
@@ -51,6 +54,9 @@ type ControllerRequesterDeps = {
   updateSelectedSessionPolicy: UpdateSelectedSessionPolicy;
   cancelSelectedRun: CancelSelectedRun;
   createFollowUpRun: CreateFollowUpRun;
+  executePlanRun: (planText: string) => Promise<void>;
+  undoSelectedRun: () => Promise<void>;
+  updateRunMode: (mode: RunMode) => void;
 };
 
 export function createControllerRequesters(
@@ -58,6 +64,7 @@ export function createControllerRequesters(
 ): ControllerRequesterMap {
   const {
     state,
+    api,
     emitShellControlsState,
     syncSessionCreationControls,
     syncRunAction,
@@ -79,6 +86,9 @@ export function createControllerRequesters(
     updateSelectedSessionPolicy,
     cancelSelectedRun,
     createFollowUpRun,
+    executePlanRun,
+    undoSelectedRun,
+    updateRunMode,
   } = deps;
 
   function toApprovalPolicy(value: string): ApprovalPolicy {
@@ -97,6 +107,15 @@ export function createControllerRequesters(
     },
     cancelSelectedRunRequester: async () => {
       await cancelSelectedRun().catch(() => {});
+    },
+    undoRunRequester: async () => {
+      await undoSelectedRun().catch(() => {});
+    },
+    runModeDraftChangeRequester: async (mode: RunMode) => {
+      updateRunMode(mode);
+    },
+    executePlanRequester: async (planText: string) => {
+      await executePlanRun(planText).catch(() => {});
     },
     checkpointRecoveryRequester: async (checkpointId: string) => {
       await recoverFromCheckpoint(checkpointId);
@@ -152,6 +171,23 @@ export function createControllerRequesters(
       }
       if (typeof patch.providerId === 'string') {
         state.providerIdDraft = patch.providerId;
+        try {
+          localStorage.setItem('qwemini.preferred_provider', patch.providerId);
+        } catch {}
+        if (state.selectedSession) {
+          state.selectedSession.providerId = patch.providerId;
+          void api
+            .updateSession(state.selectedSession.id, {
+              providerId: patch.providerId,
+            })
+            .then((updatedSession) => {
+              if (updatedSession && state.selectedSession) {
+                state.selectedSession.approvalPolicy = updatedSession.approvalPolicy;
+                emitShellControlsState();
+              }
+            })
+            .catch(() => {});
+        }
         syncSessionCreationControls();
       }
       if (typeof patch.sessionApprovalPolicy === 'string') {

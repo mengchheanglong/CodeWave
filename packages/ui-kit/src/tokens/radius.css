@@ -1,0 +1,11 @@
+/* ============================================================
+   Qwemini design tokens — radius
+   Reduced from the playful 22px to a sharp dev-tool scale.
+   ============================================================ */
+
+:root {
+  --radius-sm: 4px; /* controls, chips */
+  --radius-md: 8px; /* default: inputs, buttons, cards */
+  --radius-lg: 12px; /* panels, large cards */
+  --radius-xl: 16px; /* modals, overlays */
+}

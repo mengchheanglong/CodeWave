@@ -1,8 +1,8 @@
 import type { WorkbenchEvent, WorkbenchRun } from '@qwemini/protocol';
 
-type RunViewSummary = Pick<
+export type RunViewSummary = Pick<
   WorkbenchRun,
-  'id' | 'status' | 'createdAt' | 'prompt'
+  'id' | 'status' | 'mode' | 'createdAt' | 'completedAt' | 'prompt'
 >;
 
 type RunViewEvent = Pick<WorkbenchEvent, 'type' | 'timestamp'> & {
@@ -14,6 +14,9 @@ export type RunViewState = {
   runs: RunViewSummary[];
   selectedRun: RunViewSummary | null;
   events: RunViewEvent[];
+  contextChars: number;
+  undoAvailable: boolean;
+  undoDetail: string | null;
 };
 
 export const emptyRunViewState: RunViewState = {
@@ -21,4 +24,7 @@ export const emptyRunViewState: RunViewState = {
   runs: [],
   selectedRun: null,
   events: [],
+  contextChars: 0,
+  undoAvailable: false,
+  undoDetail: null,
 };

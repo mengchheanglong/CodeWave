@@ -1,7 +1,7 @@
 export const DEFAULT_DAEMON_PORT = 4120;
 export const DEFAULT_PROVIDER_ID = 'qwen';
 
-export type ProviderId = 'qwen' | 'gemini';
+export type ProviderId = 'qwen' | 'gemini' | 'opencode' | 'freebuff';
 export type EventSource = ProviderId | 'system' | 'plugin';
 export type RoutingToolRequirement =
   | 'workspace-read'
@@ -37,10 +37,11 @@ export type RunStatus =
   | 'completed'
   | 'failed'
   | 'cancelled';
-export type ArtifactKind = 'text' | 'json' | 'transcript';
+export type ArtifactKind = 'text' | 'json' | 'transcript' | 'plan';
 export type ApprovalStatus = 'requested' | 'approved' | 'denied';
 export type ApprovalBehavior = 'allow' | 'deny';
 export type ApprovalPolicy = 'manual' | 'allow' | 'deny';
+export type RunMode = 'execute' | 'plan';
 export type SessionRecoveryKind = 'session' | 'checkpoint';
 export type ToolInvocationStatus =
   | 'requested'
@@ -63,7 +64,8 @@ export type WorkbenchEventType =
   | 'checkpoint.saved'
   | 'run.completed'
   | 'run.failed'
-  | 'run.cancelled';
+  | 'run.cancelled'
+  | 'run.undo';
 
 export interface SessionRecoveryMetadata {
   kind: SessionRecoveryKind;
@@ -98,6 +100,8 @@ export interface WorkbenchRun {
   providerId: ProviderId;
   prompt: string;
   status: RunStatus;
+  mode: RunMode;
+  preRunCommit: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -348,6 +352,11 @@ export interface SessionSnapshot {
   runs: WorkbenchRun[];
 }
 
+export interface RunUndoInfo {
+  available: boolean;
+  detail: string | null;
+}
+
 export interface RunSnapshot {
   run: WorkbenchRun;
   events: WorkbenchEvent[];
@@ -355,6 +364,8 @@ export interface RunSnapshot {
   approvals: ApprovalRecord[];
   checkpoints: CheckpointRecord[];
   toolInvocations: ToolInvocationRecord[];
+  contextChars: number;
+  undo: RunUndoInfo;
 }
 
 export interface ArchiveSessionSummary {
@@ -411,11 +422,35 @@ export interface RecommendPromptResponse {
 }
 
 export interface UpdateSessionRequest {
-  approvalPolicy: ApprovalPolicy;
+  approvalPolicy?: ApprovalPolicy;
+  providerId?: ProviderId;
 }
 
 export interface StartRunRequest {
   prompt: string;
+  mode?: RunMode;
+}
+
+export interface UndoRunResponse {
+  run: WorkbenchRun;
+  detail: string;
+}
+
+export interface CompareRunLane {
+  sessionId: string;
+  providerId: ProviderId;
+  runSnapshot: RunSnapshot;
+}
+
+export interface CompareRunRequest {
+  prompt: string;
+  workspacePath: string;
+  providers: ProviderId[];
+  approvalPolicy?: ApprovalPolicy;
+}
+
+export interface CompareRunResponse {
+  lanes: CompareRunLane[];
 }
 
 export interface RoutePromptRequest {

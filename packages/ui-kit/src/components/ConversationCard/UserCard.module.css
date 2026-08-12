@@ -1,0 +1,55 @@
+.card {
+  border: 1px solid color-mix(in srgb, var(--accent-active, #ff8a3d) 22%, var(--border-muted, #21262d));
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--accent-active, #ff8a3d) 6%, var(--surface-1, #161b22));
+  overflow: hidden;
+  transition: border-color var(--dur-micro, 150ms) ease;
+}
+
+.card:hover {
+  border-color: color-mix(in srgb, var(--accent-active, #ff8a3d) 40%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-active, #ff8a3d) 15%, var(--border-muted, #21262d));
+  background: color-mix(in srgb, var(--accent-active, #ff8a3d) 8%, transparent);
+}
+
+.avatar {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent-active, #ff8a3d);
+}
+
+.author {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent-active, #ff8a3d);
+}
+
+.timestamp {
+  margin-left: auto;
+  font-size: var(--text-xs, 11px);
+  color: var(--text-tertiary, #8b949e);
+  font-family: var(--font-mono, monospace);
+}
+
+.body {
+  padding: 12px 14px;
+}
+
+.text {
+  margin: 0;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

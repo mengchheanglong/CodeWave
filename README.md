@@ -111,7 +111,8 @@ simple, composable, and built for experimentation.
 
 ### Providers
 - **Qwen CLI adapter** — stream-json SDK with control-path integration, approval mediation, session resume, and checkpoint support
-- **Gemini CLI adapter** — ACP default (daemon-mediated permissions) with `QWEMINI_GEMINI_MODE=stream-json` fallback
+- **Gemini CLI adapter** — ACP default (daemon-mediated permissions) with `QWEMINI_GEMINI_MODE=stream-json` fallback (note: Google shut down Gemini CLI for individual users on 2026-06-18 in favor of Antigravity CLI)
+- **OpenCode CLI adapter** — ACP default (daemon-mediated permissions, session resume) with a `QWEMINI_OPENCODE_MODE=run` stream-json fallback; free local/cloud models via Ollama, OpenRouter, and OpenCode Zen/Go
 - **Windows fixes** — direct Node entrypoint resolution for both providers; bundled `node-pty` patch for Gemini ACP
 - **Health checks** — capability-aware provider probing with visible approval/resume/checkpoint differences
 
@@ -130,9 +131,17 @@ simple, composable, and built for experimentation.
 
 ### Shell
 - **Three-column layout** — left session rail, center thread/canvas, right inspector/utility panel with resizable columns
-- **Thread view** — grouped assistant replies, user prompt bubbles, Qwen thinking in muted style
+- **Step-card timeline** — grouped assistant replies, user prompts, thinking blocks (toggleable), and expandable tool cards with status/duration/output
+- **Status strip** — daemon connection, workspace, provider, access mode, and live run phase at a glance
+- **Plan mode** — read-only runs that produce a plan card with one-click **Approve & execute**
+- **Git undo** — revert a completed run's tracked changes to its pre-run commit
+- **Attention notifications** — desktop notifications for approvals and run completion (🔔 toggle in the status strip)
+- **Context meter** — approximate context used per run in the composer
+- **@-mention picker** — fuzzy file/directory search from the workspace; `@` in the prompt opens the picker and inserts `@path`
+- **Compare mode** — run the same prompt on two providers side by side (⚖ Compare button)
+- **Themes** — light/dark toggle (🌙/☀️) in the status strip, persisted in localStorage
 - **Events timeline** — normalized event log with tool call/activity evidence
-- **Approvals** — daemon-mediated approval lists with resolve/deny actions
+- **Approvals** — inline decision cards in the transcript plus daemon-mediated lists; keyboard approve/deny (`Shift+Enter`/`Shift+A`/`Shift+D`)
 - **Tool plane evidence** — provider-enumerated vs event-observed tool registration signals
 - **Archive explorer** — per-session run summaries with recovery/lineage metadata
 - **Quick open** — grouped command palette with keyboard shortcuts (`Ctrl/Cmd+K`)
@@ -160,6 +169,7 @@ Qwemini is structured as an npm monorepo with workspaces:
 | **MCP Hub** | `packages/mcp-hub` | Workspace registry, tool-plane snapshots, MCP server status |
 | **Qwen provider** | `packages/providers/qwen` | Qwen CLI adapter with stream-json + control-path |
 | **Gemini provider** | `packages/providers/gemini` | Gemini CLI adapter with ACP default + stream-json fallback |
+| **OpenCode provider** | `packages/providers/opencode` | OpenCode CLI adapter with ACP default + run-JSON fallback |
 
 ### Design rules
 1. **UI must NOT talk to provider CLIs directly** — only to the daemon
@@ -197,8 +207,9 @@ npm run check:registrations:json         # CI-friendly JSON summary
 
 ## Known limitations
 
-- Qwen runs through the external CLI today; the vendor seam is ready for bounded in-repo builds under `vendor/qwen-code/`
+- Qwen runs through the external CLI today; the vendor seam is ready for bounded in-repo builds under `vendor/qwen-code/`; the Qwen OAuth free tier ended 2026-04-15, so configure a local (Ollama) or paid model backend through Qwen Code settings
 - Gemini defaults to ACP; use `QWEMINI_GEMINI_MODE=stream-json` as fallback if ACP regresses on another machine
+- OpenCode defaults to ACP; use `QWEMINI_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
 
 ---
 

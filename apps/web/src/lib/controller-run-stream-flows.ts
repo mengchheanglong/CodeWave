@@ -3,6 +3,7 @@ import type {
   WorkbenchEvent,
 } from '@qwemini/protocol';
 import type { DaemonApi } from './daemon-api.js';
+import { notifyAttention } from './attention-notifications.js';
 import { buildRunPresentation } from '../shell-status-summary.js';
 import type {
   LoadArchive,
@@ -66,6 +67,9 @@ export function createControllerRunStreamFlows(
 
     state.selectedRun = snapshot.run;
     state.events = snapshot.events;
+    state.contextChars = snapshot.contextChars ?? 0;
+    state.undoAvailable = Boolean(snapshot.undo?.available);
+    state.undoDetail = snapshot.undo?.detail ?? null;
     state.artifacts = snapshot.artifacts;
     state.approvals = snapshot.approvals;
     state.checkpoints = snapshot.checkpoints;
@@ -213,6 +217,16 @@ export function createControllerRunStreamFlows(
       }
 
       state.events.push(event);
+
+      if (event.type === 'approval.requested') {
+        const toolName =
+          typeof event.payload.toolName === 'string' ? event.payload.toolName : 'tool';
+        notifyAttention('approval', `${toolName} is waiting for your decision.`);
+      } else if (event.type === 'run.completed') {
+        notifyAttention('run-completed', 'The run finished. Review the result.');
+      } else if (event.type === 'run.failed') {
+        notifyAttention('run-failed', 'The run failed. Check the transcript.');
+      }
 
       if (
         event.type.startsWith('tool.') ||

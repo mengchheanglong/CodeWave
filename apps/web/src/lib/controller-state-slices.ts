@@ -28,6 +28,7 @@ export type ControllerUiSyncState = Pick<
 
 export type ControllerRequesterState = Pick<
   ShellState,
+  | 'selectedSession'
   | 'workspacePathDraft'
   | 'providerIdDraft'
   | 'sessionApprovalPolicyDraft'
@@ -53,6 +54,9 @@ export type ControllerRunActionState = Pick<
   | 'selectedSessionApprovalPolicyDraft'
   | 'selectedSessionApprovalPolicyDraftDisabled'
   | 'applySelectedSessionPolicyDisabled'
+  | 'runModeDraft'
+  | 'undoAvailable'
+  | 'undoDetail'
   | 'orchestratorNoteMessage'
   | 'recommendationRequestToken'
 >;
@@ -85,6 +89,9 @@ export type ControllerRunStreamState = Pick<
   | 'selectedRun'
   | 'eventSource'
   | 'events'
+  | 'contextChars'
+  | 'undoAvailable'
+  | 'undoDetail'
   | 'artifacts'
   | 'approvals'
   | 'checkpoints'
@@ -116,6 +123,9 @@ export type ControllerBootstrapState = Pick<
   | 'runSelectionToken'
   | 'eventSource'
   | 'events'
+  | 'contextChars'
+  | 'undoAvailable'
+  | 'undoDetail'
   | 'artifacts'
   | 'approvals'
   | 'checkpoints'

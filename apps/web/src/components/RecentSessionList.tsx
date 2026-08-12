@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
 import { EmptyState } from './EmptyState';
+import { ChevronDownIcon, HomeIcon, MoreIcon } from './icons';
 
 type RecentSessionListProps = {
   sessions: ShellPanelsState['recentSessions'];
@@ -159,10 +160,10 @@ export function RecentSessionList({
                 }`}
                 aria-hidden="true"
               >
-                ▾
+                <ChevronDownIcon size={12} />
               </span>
               <span className="rail-project-icon" aria-hidden="true">
-                ⌂
+                <HomeIcon size={13} />
               </span>
               <span className="rail-project-info">
                 <span className="rail-project-name">
@@ -192,7 +193,7 @@ export function RecentSessionList({
                   );
                 }}
               >
-                …
+                <MoreIcon size={14} />
               </button>
               <div
                 className="project-item-menu-popover"
@@ -227,7 +228,23 @@ export function RecentSessionList({
                     }}
                   >
                     <div className="session-item-head qw-session-row-head sidebar-item-title-row">
+                      <span
+                        className={`thread-tab-dot thread-tab-dot-${session.providerId}`}
+                        aria-hidden="true"
+                      ></span>
                       <strong className="sb-project-name">{getThreadTitle(session)}</strong>
+                    </div>
+                    <div className="qw-session-row-meta">
+                      <span className="qw-session-row-provider">
+                        {session.providerId}
+                      </span>
+                      <span className="qw-session-row-policy">
+                        {session.approvalPolicy === 'allow'
+                          ? 'auto'
+                          : session.approvalPolicy === 'deny'
+                            ? 'read-only'
+                            : 'ask'}
+                      </span>
                     </div>
                   </button>
 
@@ -248,10 +265,9 @@ export function RecentSessionList({
                         setOpenMenuSessionId((current) =>
                           current === session.id ? null : session.id,
                         );
-                      }}
-                    >
-                      …
-                    </button>
+                      }}                      >
+                        <MoreIcon size={14} />
+                      </button>
                     <div
                       className="session-item-menu-popover"
                       hidden={openMenuSessionId !== session.id}

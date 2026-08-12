@@ -5,6 +5,7 @@ import type {
   CheckpointRecord,
   OrchestrationBoardSnapshot,
   OrchestrationRecommendation,
+  RunMode,
   RuntimeInfo,
   ToolInvocationRecord,
   ToolPlaneSnapshot,
@@ -35,6 +36,9 @@ export type ShellState = {
   selectedRun: WorkbenchRun | null;
   eventSource: EventSource | null;
   events: WorkbenchEvent[];
+  contextChars: number;
+  undoAvailable: boolean;
+  undoDetail: string | null;
   artifacts: ArtifactRecord[];
   approvals: ApprovalRecord[];
   checkpoints: CheckpointRecord[];
@@ -44,6 +48,7 @@ export type ShellState = {
   providerIdDraft: ProviderId;
   sessionApprovalPolicyDraft: ApprovalPolicy;
   sessionApprovalPolicyDraftDisabled: boolean;
+  runModeDraft: RunMode;
   promptDraft: string;
   promptDraftDisabled: boolean;
   routingToolsDraft: RoutingToolRequirement[];
@@ -76,6 +81,18 @@ export type ShellState = {
   toolPlaneRequestToken: number;
 };
 
+function getSavedProviderId(): ProviderId {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('qwemini.preferred_provider');
+      if (saved === 'qwen' || saved === 'gemini' || saved === 'opencode' || saved === 'freebuff') {
+        return saved;
+      }
+    } catch {}
+  }
+  return emptyShellControlsState.providerId;
+}
+
 export function createInitialShellState(): ShellState {
   return {
     runtime: null,
@@ -89,16 +106,20 @@ export function createInitialShellState(): ShellState {
     selectedRun: null,
     eventSource: null,
     events: [],
+    contextChars: 0,
+    undoAvailable: false,
+    undoDetail: null,
     artifacts: [],
     approvals: [],
     checkpoints: [],
     tools: [],
     recommendation: null,
     workspacePathDraft: emptyShellControlsState.workspacePath,
-    providerIdDraft: emptyShellControlsState.providerId,
+    providerIdDraft: getSavedProviderId(),
     sessionApprovalPolicyDraft: emptyShellControlsState.sessionApprovalPolicy,
     sessionApprovalPolicyDraftDisabled:
       emptyShellControlsState.sessionApprovalPolicyDisabled,
+    runModeDraft: emptyShellControlsState.runMode,
     promptDraft: emptyShellControlsState.prompt,
     promptDraftDisabled: emptyShellControlsState.promptDisabled,
     routingToolsDraft: [...emptyShellControlsState.routingTools],

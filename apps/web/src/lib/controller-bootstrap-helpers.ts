@@ -50,6 +50,9 @@ export function createControllerBootstrapHelpers(
   function clearRunSelectionView(title: string) {
     state.selectedRun = null;
     state.events = [];
+    state.contextChars = 0;
+    state.undoAvailable = false;
+    state.undoDetail = null;
     state.artifacts = [];
     state.approvals = [];
     state.checkpoints = [];

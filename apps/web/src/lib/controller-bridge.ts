@@ -1,6 +1,7 @@
 import type {
   ApprovalPolicy,
   RoutingToolRequirement,
+  RunMode,
 } from '@qwemini/protocol';
 import type { ShellPanelsState } from './shell-panels-state.js';
 import type {
@@ -44,6 +45,9 @@ const requesters: ControllerRequesterMap = {
   sessionDeleteRequester: noopAsync,
   applySelectedSessionPolicyRequester: noopAsync,
   cancelSelectedRunRequester: noopAsync,
+  undoRunRequester: noopAsync,
+  runModeDraftChangeRequester: noopAsync,
+  executePlanRequester: noopAsync,
   followUpRunRequester: noopAsync,
 };
 
@@ -198,6 +202,18 @@ export async function requestApplySelectedSessionPolicy(): Promise<void> {
 
 export async function requestCancelSelectedRun(): Promise<void> {
   await requesters.cancelSelectedRunRequester();
+}
+
+export async function requestUndoRun(): Promise<void> {
+  await requesters.undoRunRequester();
+}
+
+export async function requestRunModeChange(mode: RunMode): Promise<void> {
+  await requesters.runModeDraftChangeRequester(mode);
+}
+
+export async function requestExecutePlan(planText: string): Promise<void> {
+  await requesters.executePlanRequester(planText);
 }
 
 export async function requestFollowUpRun(kind: FollowUpKind): Promise<void> {
