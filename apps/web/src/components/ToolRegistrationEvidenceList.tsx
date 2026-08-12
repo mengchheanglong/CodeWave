@@ -1,4 +1,4 @@
-import type { ProviderId, RoutingToolRequirement } from '@qwemini/protocol';
+import type { ProviderId, RoutingToolRequirement } from '@codewave/protocol';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
 
 type ToolRegistrationEvidenceListProps = {

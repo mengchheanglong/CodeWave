@@ -55,6 +55,16 @@ export function createControllerRuntimeSessionFlows(
     transitionToNewSession,
   } = deps;
 
+  function requireProviderRevision(): string {
+    const revision = state.runtime?.providerRegistry.revision;
+    if (!revision) {
+      throw new Error(
+        'Provider policy is unavailable. Refresh the runtime, review the provider settings, and retry.',
+      );
+    }
+    return revision;
+  }
+
   async function loadToolPlane(workspacePath?: string) {
     const requestToken = state.toolPlaneRequestToken + 1;
     state.toolPlaneRequestToken = requestToken;
@@ -207,6 +217,22 @@ export function createControllerRuntimeSessionFlows(
 
     state.runtime = runtimeSnapshot;
     state.workspacePathDraft = state.runtime.defaultWorkspacePath;
+    const draftedProviderReady = state.runtime.providers.some(
+      (provider) =>
+        provider.providerId === state.providerIdDraft && provider.available,
+    );
+    if (!draftedProviderReady) {
+      state.providerIdDraft = state.runtime.recommendedProviderId;
+      try {
+        if (typeof window === 'undefined') {
+          throw new Error('localStorage unavailable');
+        }
+        window.localStorage.setItem(
+          'codewave.preferred_provider',
+          state.providerIdDraft,
+        );
+      } catch {}
+    }
     state.dataDirectoryLabel = state.runtime.dataDirectory;
     state.providerHealthMessage = formatProviderHealthSummary(
       state.runtime.providers,
@@ -261,13 +287,17 @@ export function createControllerRuntimeSessionFlows(
       return;
     }
 
-    const response = await api.recoverSession(state.selectedSession.id);
+    const response = await api.recoverSession(state.selectedSession.id, {
+      expectedProviderRevision: requireProviderRevision(),
+    });
 
     await transitionToNewSession(response.session, 'Session recovery');
   }
 
   async function recoverFromCheckpoint(checkpointId: string) {
-    const response = await api.recoverCheckpointSession(checkpointId);
+    const response = await api.recoverCheckpointSession(checkpointId, {
+      expectedProviderRevision: requireProviderRevision(),
+    });
 
     await transitionToNewSession(response.session, 'Checkpoint recovery');
   }

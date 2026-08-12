@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { submitWorkspacePrompt } from '../test/workspace-prompt';
 import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 /**
@@ -53,6 +54,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
 
     const newFolderButton = screen.getByRole('button', { name: /New folder/i });
     await user.click(newFolderButton);
+    await submitWorkspacePrompt('test-folder');
 
     // Verify error is displayed
     await waitFor(() => {
@@ -76,6 +78,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
       });
 
     await user.click(newFolderButton);
+    await submitWorkspacePrompt('new-folder');
 
     // Verify error is cleared
     await waitFor(() => {
@@ -110,6 +113,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
 
     const renameButton = screen.getAllByRole('button', { name: /Rename/i })[0];
     await user.click(renameButton);
+    await submitWorkspacePrompt('invalid/name');
 
     // Verify error is displayed
     await waitFor(() => {
@@ -135,6 +139,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
       });
 
     await user.click(renameButton);
+    await submitWorkspacePrompt('renamed');
 
     // Verify error is cleared
     await waitFor(() => {
@@ -256,6 +261,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
 
     const newFolderButton = screen.getByRole('button', { name: /New folder/i });
     await user.click(newFolderButton);
+    await submitWorkspacePrompt('test');
 
     // Verify error is displayed
     await waitFor(() => {
@@ -308,6 +314,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
 
     const newFolderButton = screen.getByRole('button', { name: /New folder/i });
     await user.click(newFolderButton);
+    await submitWorkspacePrompt('test');
 
     // Verify error is displayed
     await waitFor(() => {

@@ -5,7 +5,7 @@ import {
   ToolCard,
   UserCard,
   type ToolStatus,
-} from '@qwemini/ui-kit';
+} from '@codewave/ui-kit';
 import type { TimelineStep } from '../lib/run-inspector-views';
 
 type StepTimelineProps = {

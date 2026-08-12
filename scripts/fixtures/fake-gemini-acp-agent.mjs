@@ -3,19 +3,22 @@ import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 
 const args = process.argv.slice(2);
-const toolTitles = (process.env.QWEMINI_FAKE_GEMINI_TOOL_TITLES ?? 'run_shell_command')
+const toolTitles = (process.env.CODEWAVE_FAKE_GEMINI_TOOL_TITLES ?? 'run_shell_command')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const shouldRequestPermission =
+  process.env.CODEWAVE_FAKE_ACP_PERMISSION === '1' ||
+  process.env.CODEWAVE_FAKE_ACP_PERMISSION === 'true';
 const shouldFailMcpList =
-  process.env.QWEMINI_FAKE_GEMINI_MCP_LIST_FAIL === '1' ||
-  process.env.QWEMINI_FAKE_GEMINI_MCP_LIST_FAIL === 'true';
+  process.env.CODEWAVE_FAKE_GEMINI_MCP_LIST_FAIL === '1' ||
+  process.env.CODEWAVE_FAKE_GEMINI_MCP_LIST_FAIL === 'true';
 const shouldTimeoutMcpList =
-  process.env.QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT === '1' ||
-  process.env.QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT === 'true';
+  process.env.CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT === '1' ||
+  process.env.CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT === 'true';
 const mcpListTimeoutMs = Math.max(
   1000,
-  Number(process.env.QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS ?? 5000) || 5000,
+  Number(process.env.CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS ?? 5000) || 5000,
 );
 
 function buildRawInput(toolName) {
@@ -125,20 +128,76 @@ class FakeGeminiAgent {
         },
       });
 
-      await this.connection.sessionUpdate({
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: 'tool_call_update',
-          toolCallId,
-          status: 'completed',
-          rawOutput: {
-            stdout: `deterministic-${title}`,
+      if (shouldRequestPermission && index === 0) {
+        const permission = await this.connection.requestPermission({
+          sessionId: params.sessionId,
+          toolCall: {
+            toolCallId,
+            title,
+            kind: 'execute',
+            status: 'pending',
+            rawInput,
           },
-        },
-      });
+          options: [
+            {
+              kind: 'allow_once',
+              name: 'Allow once',
+              optionId: 'allow-once',
+            },
+            {
+              kind: 'reject_once',
+              name: 'Reject once',
+              optionId: 'reject-once',
+            },
+          ],
+        });
+        if (
+          permission.outcome.outcome === 'cancelled' ||
+          permission.outcome.optionId !== 'allow-once'
+        ) {
+          for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+            await this.connection.sessionUpdate({
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: 'tool_call_update',
+                toolCallId,
+                status: 'failed',
+                rawOutput: 'Denied by deterministic CodeWave approval.',
+              },
+            });
+          }
+          index += 1;
+          continue;
+        }
+      }
+
+      for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId,
+            status: 'completed',
+            rawOutput: {
+              stdout: `deterministic-${title}`,
+            },
+          },
+        });
+      }
 
       index += 1;
     }
+
+    await this.connection.sessionUpdate({
+      sessionId: params.sessionId,
+      update: {
+        sessionUpdate: 'agent_thought_chunk',
+        content: {
+          type: 'text',
+          text: 'Deterministic private reasoning trace.',
+        },
+      },
+    });
 
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
@@ -170,7 +229,7 @@ class FakeGeminiAgent {
 
 if (handleCommandMode()) {
   // Command mode exits in place.
-} else if (args.includes('--acp')) {
+} else if (args.includes('--acp') || args.includes('acp')) {
   const input = Writable.toWeb(process.stdout);
   const output = Readable.toWeb(process.stdin);
   const stream = acp.ndJsonStream(input, output);

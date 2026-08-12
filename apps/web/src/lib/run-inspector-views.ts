@@ -334,6 +334,43 @@ export function buildTimelineSteps(
         steps.push({ kind: 'run', text: 'Run started', timestamp: event.timestamp });
         break;
 
+      case 'run.steering.queued': {
+        const payload = (event.payload ?? {}) as { prompt?: unknown };
+        const prompt = typeof payload.prompt === 'string' ? payload.prompt : 'Update';
+        steps.push({
+          kind: 'system',
+          text: `Update queued: ${prompt}`,
+          timestamp: event.timestamp,
+        });
+        break;
+      }
+
+      case 'run.steering.applied': {
+        const payload = (event.payload ?? {}) as { delivery?: unknown };
+        steps.push({
+          kind: 'system',
+          text:
+            payload.delivery === 'native'
+              ? 'Update delivered to the active run'
+              : 'Queued update started in the next run',
+          timestamp: event.timestamp,
+        });
+        break;
+      }
+
+      case 'run.steering.failed': {
+        const payload = (event.payload ?? {}) as { message?: unknown };
+        steps.push({
+          kind: 'system',
+          text:
+            typeof payload.message === 'string'
+              ? `Queued update failed: ${payload.message}`
+              : 'Queued update could not be started',
+          timestamp: event.timestamp,
+        });
+        break;
+      }
+
       case 'run.output.delta': {
         const payload = (event.payload ?? {}) as { stream?: unknown; text?: unknown };
         const stream =

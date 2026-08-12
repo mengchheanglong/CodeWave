@@ -1,12 +1,17 @@
-/* ============================================================
-   Qwemini design tokens — motion
-   ============================================================ */
-
 :root {
-  --dur-micro: 150ms; /* hover, focus */
-  --dur-fast: 250ms; /* panel open, tab switch */
-  --dur-emphasis: 400ms; /* toast entry, approval pulse */
+  --dur-instant: 90ms;
+  --dur-micro: 140ms;
+  --dur-fast: 220ms;
+  --dur-emphasis: 360ms;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+}
 
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.3, 0, 0.2, 1);
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-micro: 0ms;
+    --dur-fast: 0ms;
+    --dur-emphasis: 0ms;
+  }
 }

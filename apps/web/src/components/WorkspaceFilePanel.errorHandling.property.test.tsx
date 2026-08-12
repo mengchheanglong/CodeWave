@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fc from 'fast-check';
+import { submitWorkspacePrompt } from '../test/workspace-prompt';
 import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 /**
@@ -61,6 +62,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Permission denied'));
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('newfolder');
 
       // Property: View state should be preserved
       await waitFor(() => {
@@ -99,6 +101,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Invalid file name'));
 
       await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
+      await submitWorkspacePrompt('newname');
 
       // Property: View state should be preserved
       await waitFor(() => {
@@ -191,9 +194,11 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
             if (operation === 'create') {
               vi.mocked(window.prompt).mockReturnValueOnce('newfolder');
               await user.click(screen.getByRole('button', { name: /New folder/i }));
+              await submitWorkspacePrompt('newfolder');
             } else if (operation === 'rename') {
               vi.mocked(window.prompt).mockReturnValueOnce('newname');
               await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
+              await submitWorkspacePrompt('newname');
             } else {
               vi.mocked(window.confirm).mockReturnValueOnce(true);
               await user.click(screen.getAllByRole('button', { name: /Delete/i })[0]);
@@ -237,6 +242,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Folder already exists: existing'));
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('existing');
 
       // Property: Error message should clearly indicate conflict
       await waitFor(() => {
@@ -270,6 +276,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Invalid folder name: contains invalid characters'));
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('invalid/name');
 
       // Property: Error message should clearly indicate validation issue
       await waitFor(() => {
@@ -348,6 +355,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Permission denied'));
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('badfolder');
 
       // Verify error is displayed
       await waitFor(() => {
@@ -370,6 +378,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
         });
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('goodfolder');
 
       // Property: Error should be cleared
       await waitFor(() => {
@@ -404,6 +413,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Invalid folder name'));
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('badfolder');
 
       // Verify error is displayed
       await waitFor(() => {
@@ -457,6 +467,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       (global.fetch as any).mockRejectedValueOnce(new Error('Invalid file name'));
 
       await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
+      await submitWorkspacePrompt('invalid/name');
 
       // Verify error is displayed
       await waitFor(() => {
@@ -479,6 +490,7 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
         });
 
       await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
+      await submitWorkspacePrompt('new');
 
       // Property: Error should be cleared
       await waitFor(() => {

@@ -20,7 +20,7 @@ function patchConsoleListModule(request, loaded) {
   if (
     !loaded ||
     typeof loaded.getConsoleProcessList !== 'function' ||
-    loaded.__qweminiConsoleListPatched
+    loaded.__codewaveConsoleListPatched
   ) {
     return loaded;
   }
@@ -35,9 +35,9 @@ function patchConsoleListModule(request, loaded) {
       const fallbackPid =
         Number.isInteger(shellPid) && shellPid > 0 ? shellPid : null;
 
-      if (!process.env.QWEMINI_GEMINI_WINDOWS_PATCH_SILENT) {
+      if (!process.env.CODEWAVE_GEMINI_WINDOWS_PATCH_SILENT) {
         process.emitWarning(
-          `Qwemini Gemini Windows patch suppressed console list failure: ${normalizeErrorMessage(error)}`,
+          `CodeWave Gemini Windows patch suppressed console list failure: ${normalizeErrorMessage(error)}`,
         );
       }
 
@@ -45,7 +45,7 @@ function patchConsoleListModule(request, loaded) {
     }
   };
 
-  loaded.__qweminiConsoleListPatched = true;
+  loaded.__codewaveConsoleListPatched = true;
   return loaded;
 }
 
@@ -62,7 +62,7 @@ function patchWindowsPtyAgent(request, loaded) {
     !WindowsPtyAgent ||
     !WindowsPtyAgent.prototype ||
     typeof WindowsPtyAgent.prototype.resize !== 'function' ||
-    WindowsPtyAgent.prototype.__qweminiResizePatched
+    WindowsPtyAgent.prototype.__codewaveResizePatched
   ) {
     return loaded;
   }
@@ -84,7 +84,7 @@ function patchWindowsPtyAgent(request, loaded) {
       throw error;
     }
   };
-  WindowsPtyAgent.prototype.__qweminiResizePatched = true;
+  WindowsPtyAgent.prototype.__codewaveResizePatched = true;
   return loaded;
 }
 

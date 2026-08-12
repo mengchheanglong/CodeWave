@@ -10,9 +10,9 @@ Date: 2026-04-03
 
 ## Purpose
 
-Pin the concrete frontend-oriented donor paths from Panes that are actually useful to Qwemini without dragging Qwemini into a React/Tauri rewrite.
+Pin the concrete frontend-oriented donor paths from Panes that are actually useful to CodeWave without dragging CodeWave into a React/Tauri rewrite.
 
-This note is a scout only. Qwemini does not vendor these files.
+This note is a scout only. CodeWave does not vendor these files.
 
 ## Confirmed frontend stack
 
@@ -23,7 +23,7 @@ This note is a scout only. Qwemini does not vendor these files.
 - `react-resizable-panels`
 - worker-backed markdown parsing
 
-This makes Panes a strong UX reference, but not a direct code donor for the current Qwemini shell.
+This makes Panes a strong UX reference, but not a direct code donor for the current CodeWave shell.
 
 ## Concrete upstream files inspected
 
@@ -39,19 +39,19 @@ This makes Panes a strong UX reference, but not a direct code donor for the curr
 - `src/stores/threadStore.ts`
 - `src/stores/toastStore.ts`
 
-## What is actually useful to Qwemini
+## What is actually useful to CodeWave
 
 ### High-value pattern donors
 
 - `src/lib/commandPalette.ts`
   - small, portable query-mode parsing and scoped search behavior
-  - useful if Qwemini adds a command palette to the current shell
+  - useful if CodeWave adds a command palette to the current shell
 - `src/stores/toastStore.ts`
   - simple queued toast model with bounded list and severity-aware durations
   - useful as the behavioral model for replacing the current single-message notice pattern
 - `src/components/chat/MarkdownContent.tsx`
   - strong pattern for markdown caching, worker offload, and local-link interception
-  - useful if Qwemini upgrades transcript rendering beyond plain text
+  - useful if CodeWave upgrades transcript rendering beyond plain text
 - `src/globals.css`
   - useful as a visual/token reference for panel spacing, resize affordances, and denser agent-workspace styling
 - `src/components/layout/ThreeColumnLayout.tsx`
@@ -63,7 +63,7 @@ This makes Panes a strong UX reference, but not a direct code donor for the curr
   - useful for block grouping ideas around actions, diffs, and approvals
   - too coupled to Panes content-block model for direct import
 - `src/components/shared/ToastContainer.tsx`
-  - useful as a presentational reference if Qwemini adds queued notifications
+  - useful as a presentational reference if CodeWave adds queued notifications
 
 ### Low-value or wrong-shape donors
 
@@ -74,7 +74,7 @@ This makes Panes a strong UX reference, but not a direct code donor for the curr
 - `src/stores/threadStore.ts`
   - useful only as a state-boundary reference, not as reusable code
 
-## Recommended Qwemini action
+## Recommended CodeWave action
 
 ### Reference only
 
@@ -100,11 +100,11 @@ This makes Panes a strong UX reference, but not a direct code donor for the curr
 
 ## Why Panes should not become the frontend base
 
-- Qwemini's current shell is a daemon-served web app, not a Tauri desktop renderer
-- Panes is organized around workspaces, threads, terminals, and editor tabs, while Qwemini is currently organized around sessions, runs, approvals, artifacts, and tool-plane inspection
-- direct reuse would create a mixed frontend architecture before Qwemini has chosen to migrate frontend stacks
+- CodeWave's current shell is a daemon-served web app, not a Tauri desktop renderer
+- Panes is organized around workspaces, threads, terminals, and editor tabs, while CodeWave is currently organized around sessions, runs, approvals, artifacts, and tool-plane inspection
+- direct reuse would create a mixed frontend architecture before CodeWave has chosen to migrate frontend stacks
 
-## Best extraction order if Qwemini uses Panes ideas
+## Best extraction order if CodeWave uses Panes ideas
 
 1. Add a queue-based toast system inspired by `src/stores/toastStore.ts`.
 2. Add command-palette parsing and scoped search behavior inspired by `src/lib/commandPalette.ts`.
@@ -115,4 +115,4 @@ This makes Panes a strong UX reference, but not a direct code donor for the curr
 
 - importing code directly would pull in React/Tauri/Zustand dependencies that do not match the current shell
 - adopting Panes layout wholesale would distract from finishing the current daemon-centered v1
-- transplanting thread-centric models into Qwemini would blur the current session/run boundary
+- transplanting thread-centric models into CodeWave would blur the current session/run boundary

@@ -2,7 +2,7 @@ import type {
   ProviderCapabilities,
   ProviderHealth,
   ProviderId,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import {
   buildSelectedSessionNote,
   buildSessionProviderNote,
@@ -34,6 +34,7 @@ export function createControllerUiSync(deps: ControllerUiSyncDeps) {
         daemonApprovalMediation: false,
         resumableSessions: false,
         checkpointEvents: false,
+        inFlightSteering: 'unsupported',
       }
     );
   }

@@ -1,4 +1,4 @@
-import type { ApprovalPolicy, ProviderId, RoutingToolRequirement } from '@qwemini/protocol';
+import type { ApprovalPolicy, ProviderId, RoutingToolRequirement } from '@codewave/protocol';
 import type { ReactNode } from 'react';
 import { ArchiveIcon, HomeIcon, ListIcon, WorkflowIcon } from '../components/icons';
 import type { DelegateRole } from './shell-controls-state';
@@ -15,10 +15,10 @@ export type UtilityView =
   | 'checkpoints';
 
 export function parseProviderId(value: string): ProviderId {
-  if (value === 'gemini' || value === 'opencode' || value === 'freebuff') {
+  if (value === 'qwen' || value === 'gemini' || value === 'opencode') {
     return value;
   }
-  return 'qwen';
+  return 'freebuff';
 }
 
 export function parseApprovalPolicy(value: string): ApprovalPolicy {

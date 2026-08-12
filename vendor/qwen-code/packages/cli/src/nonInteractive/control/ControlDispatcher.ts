@@ -3,12 +3,12 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * Adapted for Qwemini from:
+ * Adapted for CodeWave from:
  * QwenLM/qwen-code
  * packages/cli/src/nonInteractive/control/ControlDispatcher.ts
  * commit 92f7549bdc684f264ae09dc4a6f8e7398363f53e
  *
- * Qwemini uses a trimmed host-side dispatcher that preserves the control-plane
+ * CodeWave uses a trimmed host-side dispatcher that preserves the control-plane
  * shape while avoiding qwen-code's internal controller graph.
  */
 

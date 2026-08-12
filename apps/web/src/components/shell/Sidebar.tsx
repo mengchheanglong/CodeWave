@@ -8,6 +8,7 @@ import {
   parseApprovalPolicy,
   parseProviderId,
   railViewIcon,
+  renderProviderLabel,
   type RailView,
 } from '../../lib/shell-format';
 import {
@@ -19,7 +20,7 @@ import { ArchiveSessionList } from '../ArchiveSessionList';
 import { OrchestrationSwimlanes } from '../OrchestrationSwimlanes';
 import { RecentSessionList } from '../RecentSessionList';
 import { RunHistoryList } from '../RunHistoryList';
-import { FolderIcon, PlusIcon, SearchIcon } from '../icons';
+import { FolderIcon, PlusIcon, SearchIcon, WrenchIcon } from '../icons';
 import {
   formatRunStatus,
   formatSessionOrchestration,
@@ -36,6 +37,7 @@ export type RailTab = {
 type SidebarProps = {
   shellControlsState: ShellControlsState;
   onAddFolder: () => void;
+  onOpenProviderSettings: () => void;
   shellPanelsState: ShellPanelsState;
   shellSummaryState: ShellSummaryState;
   runViewState: RunViewState;
@@ -61,6 +63,7 @@ type SidebarProps = {
 export function Sidebar({
   shellControlsState,
   onAddFolder,
+  onOpenProviderSettings,
   shellPanelsState,
   shellSummaryState,
   runViewState,
@@ -88,15 +91,20 @@ export function Sidebar({
     <aside className="workspace-column panes-sidebar">
       <div className="sidebar-top">
         <div className="sidebar-brand-block">
+          <div className="sidebar-intro">
+            <span className="sidebar-intro-eyebrow">Agent workspace</span>
+            <span className="sidebar-intro-copy">Build, inspect, and orchestrate.</span>
+          </div>
           <div className="sidebar-action-stack">
             <button
               type="button"
               className="sidebar-primary-button"
+              aria-label="New thread"
               onClick={() => {
                 void requestCreateSession();
               }}
             >
-              <PlusIcon size={14} /> New thread
+              <PlusIcon size={14} /> New task
             </button>
             <button
               type="button"
@@ -104,6 +112,13 @@ export function Sidebar({
               onClick={onAddFolder}
             >
               <FolderIcon size={14} /> Add folder
+            </button>
+            <button
+              type="button"
+              className="sidebar-mode-button"
+              onClick={onOpenProviderSettings}
+            >
+              <WrenchIcon size={14} /> Providers
             </button>
           </div>
         </div>
@@ -150,10 +165,29 @@ export function Sidebar({
                   });
                 }}
               >
-                <option value="qwen">Qwen</option>
-                <option value="gemini">Gemini</option>
-                <option value="opencode">OpenCode</option>
-                <option value="freebuff">Freebuff</option>
+                {(shellPanelsState.providerRegistry?.providers ?? []).map((provider) => {
+                  const providerHealth = shellPanelsState.providerHealth.find(
+                    (entry) => entry.providerId === provider.providerId,
+                  );
+                  return (
+                    <option
+                      key={provider.providerId}
+                      value={provider.providerId}
+                      disabled={!provider.enabled || !providerHealth?.available}
+                    >
+                      {renderProviderLabel(provider.providerId)} ·{' '}
+                      {providerHealth?.available
+                        ? provider.accessMode === 'free-cloud'
+                          ? 'Free'
+                          : provider.accessMode === 'local-or-byok'
+                            ? 'Local/BYOK'
+                            : 'Paid/BYOK'
+                        : provider.enabled
+                          ? 'Setup required'
+                          : 'Disabled'}
+                    </option>
+                  );
+                })}
               </select>
             </label>
 

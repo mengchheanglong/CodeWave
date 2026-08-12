@@ -1,16 +1,25 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readdir, rename as renamePath, rm, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildToolPlaneSnapshot, loadWorkspaceToolRegistry } from '@qwemini/mcp-hub';
+import { buildToolPlaneSnapshot, loadWorkspaceToolRegistry } from '@codewave/mcp-hub';
 import {
   type ArchiveSnapshot,
+  type ClientHandshakeRequest,
+  type ClientHandshakeResponse,
+  CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+  CODEWAVE_MAX_REQUEST_BYTES,
+  CODEWAVE_MAX_SSE_REPLAY_EVENTS,
+  CODEWAVE_MAX_STEERING_PROMPT_CHARS,
+  CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
+  CODEWAVE_PROTOCOL_VERSION,
+  DAEMON_CAPABILITIES,
+  DAEMON_CLIENT_SCOPES,
   DEFAULT_DAEMON_PORT,
-  DEFAULT_PROVIDER_ID,
   type ApprovalPolicy,
   type ApprovalRecord,
   type ArtifactRecord,
@@ -40,15 +49,22 @@ import {
   type ProviderSessionUpdate,
   type ProviderHealth,
   type ProviderId,
+  type ProviderRunHandle,
   type ProviderToolCapability,
+  type DaemonClientScope,
   type ResolveApprovalRequest,
+  type RecoverSessionRequest,
   type RecoverSessionResponse,
   type RoutingToolRequirement,
   type RoutePromptRequest,
   type RoutePromptResponse,
   type RunSnapshot,
+  type RunSteeringInput,
+  type SteerRunRequest,
+  type SteerRunResponse,
   type UndoRunResponse,
   type RuntimeInfo,
+  type ProviderRegistrySnapshot,
   type ToolDescriptorSource,
   type SessionSnapshot,
   type StartRunRequest,
@@ -56,13 +72,16 @@ import {
   type ToolPlaneSnapshot,
   type ToolInvocationRecord,
   type UpdateSessionRequest,
+  type UpdateDefaultProviderRequest,
+  type UpdateProviderConfigurationRequest,
   type WorkbenchEvent,
   type WorkbenchRun,
   type RunStatus,
   type WorkbenchSession,
   inferRoutingToolRequirement,
+  isDaemonClientScope,
   isRoutingToolRequirement,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import {
   buildDelegatedPrompt,
   buildFollowUpPrompt,
@@ -72,12 +91,17 @@ import {
   recommendFollowUpRoute,
   recommendHandoffRoute,
   recommendProviderRoute,
-} from '@qwemini/orchestrator';
-import { FreebuffCliProvider } from '@qwemini/provider-freebuff';
-import { GeminiCliProvider } from '@qwemini/provider-gemini';
-import { OpenCodeCliProvider } from '@qwemini/provider-opencode';
-import { QwenCliProvider } from '@qwemini/provider-qwen';
-import { SQLiteStateStore, resolveDataDirectory } from '@qwemini/state';
+} from '@codewave/orchestrator';
+import { FreebuffCliProvider } from '@codewave/provider-freebuff';
+import { GeminiCliProvider } from '@codewave/provider-gemini';
+import { OpenCodeCliProvider } from '@codewave/provider-opencode';
+import { QwenCliProvider } from '@codewave/provider-qwen';
+import { SQLiteStateStore, resolveDataDirectory } from '@codewave/state';
+import {
+  isKnownProviderId,
+  ProviderPolicyStore,
+  ProviderRevisionConflictError,
+} from './provider-policy.js';
 
 const WEB_DIST_ROOT = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const MIME_TYPES = new Map<string, string>([
@@ -89,30 +113,131 @@ const MIME_TYPES = new Map<string, string>([
   ['.ico', 'image/x-icon'],
   ['.map', 'application/json; charset=utf-8'],
 ]);
+const CLIENT_CONNECTION_TTL_MS = 12 * 60 * 60 * 1000;
+const MAX_CLIENT_CONNECTIONS = 256;
+const DAEMON_SERVER_VERSION = '0.1.0-dev';
+const DAEMON_PROTOCOL_LIMITS = {
+  maxRequestBytes: CODEWAVE_MAX_REQUEST_BYTES,
+  maxSseReplayEvents: CODEWAVE_MAX_SSE_REPLAY_EVENTS,
+  maxSteeringPromptChars: CODEWAVE_MAX_STEERING_PROMPT_CHARS,
+  defaultTranscriptMessages: CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+  maxTranscriptMessages: CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
+  idempotencyKeyMinLength: 8,
+  idempotencyKeyMaxLength: 128,
+  connectionTtlSeconds: CLIENT_CONNECTION_TTL_MS / 1000,
+  maxClientConnections: MAX_CLIENT_CONNECTIONS,
+} as const;
+
+type ClientConnection = {
+  connectionId: string;
+  clientName: string;
+  clientVersion: string;
+  protocolVersion: number;
+  grantedScopes: Set<DaemonClientScope>;
+  issuedAt: string;
+  expiresAt: string;
+};
+
+const requestBodyCache = new WeakMap<IncomingMessage, string>();
+const idempotencyResponseContexts = new WeakMap<
+  ServerResponse,
+  {
+    key: string;
+    persist: (statusCode: number, responseJson: string) => void;
+    complete: () => void;
+  }
+>();
 
 function sendJson(
   response: ServerResponse,
   statusCode: number,
   payload: unknown,
 ): void {
+  const responseJson = JSON.stringify(payload);
+  const idempotency = idempotencyResponseContexts.get(response);
+  if (idempotency) {
+    idempotencyResponseContexts.delete(response);
+    try {
+      idempotency.persist(statusCode, responseJson);
+    } finally {
+      idempotency.complete();
+    }
+  }
   response.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
+    'X-CodeWave-Protocol-Version': String(CODEWAVE_PROTOCOL_VERSION),
+    ...(idempotency ? { 'Idempotency-Key': idempotency.key } : {}),
   });
-  response.end(JSON.stringify(payload));
+  response.end(responseJson);
+}
+
+function sendConflict(
+  response: ServerResponse,
+  error: unknown,
+  fallbackMessage: string,
+): void {
+  if (error instanceof ProviderRevisionConflictError) {
+    sendJson(response, 409, {
+      error: error.message,
+      code: error.code,
+      currentProviderRevision: error.currentRevision,
+    });
+    return;
+  }
+  sendJson(response, 409, {
+    error: error instanceof Error ? error.message : fallbackMessage,
+  });
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const cached = requestBodyCache.get(request);
+  if (cached !== undefined) return cached;
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > CODEWAVE_MAX_REQUEST_BYTES) {
+      throw new Error('Request body exceeds the 2 MiB daemon limit.');
+    }
+    chunks.push(buffer);
+  }
+
+  const body = Buffer.concat(chunks).toString('utf8');
+  requestBodyCache.set(request, body);
+  return body;
 }
 
 async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  if (chunks.length === 0) {
+  const body = await readRequestBody(request);
+  if (!body) {
     throw new Error('Request body is required.');
   }
+  return JSON.parse(body) as T;
+}
 
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function canonicalizeRequestBody(body: string): string {
+  if (!body.trim()) return '';
+  try {
+    return stableJson(JSON.parse(body));
+  } catch {
+    return body;
+  }
 }
 
 function notFound(response: ServerResponse): void {
@@ -212,7 +337,8 @@ class RunEventBroker {
   }
 
   publish(event: WorkbenchEvent): void {
-    const payload = `data: ${JSON.stringify(event)}\n\n`;
+    const cursor = event.sequence ?? event.id;
+    const payload = `id: ${cursor}\ndata: ${JSON.stringify(event)}\n\n`;
     const subscribers = this.subscribers.get(event.runId);
     if (!subscribers) {
       return;
@@ -305,14 +431,25 @@ function isValidEntryName(value: string): boolean {
   return true;
 }
 
-export class QweminiDaemon {
+export class CodeWaveDaemon {
   private readonly port: number;
   private readonly dataDirectory: string;
   private readonly stateStore: SQLiteStateStore;
   private readonly eventBroker = new RunEventBroker();
-  private readonly providers = new Map<string, ProviderAdapter>();
-  private readonly runHandles = new Map<string, { cancel: () => Promise<void> }>();
+  private readonly providers = new Map<ProviderId, ProviderAdapter>();
+  private readonly providerPolicy: ProviderPolicyStore;
+  private readonly providerHealthCache = new Map<
+    ProviderId,
+    { expiresAt: number; health: ProviderHealth }
+  >();
+  private readonly runHandles = new Map<string, ProviderRunHandle>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly clientConnections = new Map<string, ClientConnection>();
+  private readonly inFlightMutationKeys = new Set<string>();
+  private readonly steeringDispatches = new Set<string>();
+  private readonly nativeSteeringChains = new Map<string, Promise<void>>();
+  private readonly steeringFallbackSchedules = new Set<string>();
+  private readonly sessionRunReservations = new Set<string>();
 
   constructor(private readonly rootPath: string, port = DEFAULT_DAEMON_PORT) {
     this.port = port;
@@ -320,15 +457,17 @@ export class QweminiDaemon {
     this.stateStore = new SQLiteStateStore(
       path.join(this.dataDirectory, 'state.sqlite'),
     );
-    this.providers.set(DEFAULT_PROVIDER_ID, new QwenCliProvider({ rootPath }));
-    this.providers.set('gemini', new GeminiCliProvider());
-    this.providers.set('opencode', new OpenCodeCliProvider({ rootPath }));
-    this.providers.set('freebuff', new FreebuffCliProvider({ rootPath }));
+    this.providerPolicy = new ProviderPolicyStore(rootPath);
+    this.installProviders(this.providerPolicy.snapshot());
+    this.stateStore.pruneMutationReceipts(
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+    );
+    this.reconcileInterruptedRuns();
   }
 
   async start(): Promise<void> {
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response).catch((error) => {
+      void this.handleIncomingRequest(request, response).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         try {
           sendJson(response, 400, {
@@ -343,10 +482,306 @@ export class QweminiDaemon {
     await new Promise<void>((resolve) => {
       server.listen(this.port, '127.0.0.1', () => resolve());
     });
+    await this.resumeQueuedSteeringInputs();
   }
 
   getBaseUrl(): string {
     return `http://127.0.0.1:${this.port}`;
+  }
+
+  private getRequiredClientScope(
+    method: string,
+    pathname: string,
+  ): DaemonClientScope | null {
+    if (
+      !pathname.startsWith('/api/') ||
+      pathname === '/api/health' ||
+      pathname === '/api/handshake'
+    ) {
+      return null;
+    }
+    if (pathname === '/api/runtime') return 'runtime:read';
+    if (pathname.startsWith('/api/providers')) {
+      return method === 'GET' ? 'providers:read' : 'providers:write';
+    }
+    if (pathname === '/api/tool-plane') return 'tools:read';
+    if (pathname.startsWith('/api/workspace/')) {
+      return method === 'GET' ? 'workspace:read' : 'workspace:write';
+    }
+    if (pathname.startsWith('/api/orchestrator/')) {
+      return method === 'GET' || pathname.endsWith('/recommend')
+        ? 'orchestration:read'
+        : 'orchestration:write';
+    }
+    if (pathname === '/api/archive') return 'sessions:read';
+    if (pathname === '/api/compare') return 'runs:write';
+    if (pathname.startsWith('/api/sessions')) {
+      if (/\/runs$/.test(pathname)) return 'runs:write';
+      return method === 'GET' ? 'sessions:read' : 'sessions:write';
+    }
+    if (pathname.startsWith('/api/runs/')) {
+      if (/\/(follow-up|delegate|handoff)$/.test(pathname)) {
+        return 'orchestration:write';
+      }
+      return method === 'GET' ? 'runs:read' : 'runs:write';
+    }
+    if (pathname.startsWith('/api/approvals/')) return 'approvals:write';
+    if (pathname.startsWith('/api/checkpoints/')) return 'sessions:write';
+    return 'runtime:read';
+  }
+
+  private authorizeClient(
+    request: IncomingMessage,
+    url: URL,
+    response: ServerResponse,
+  ): boolean {
+    const method = request.method?.toUpperCase() ?? 'GET';
+    const requiredScope = this.getRequiredClientScope(method, url.pathname);
+    if (!requiredScope) return true;
+
+    const rawHeader = request.headers['x-codewave-connection'];
+    const connectionId =
+      (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader) ??
+      url.searchParams.get('connectionId') ??
+      null;
+    if (!connectionId) {
+      sendJson(response, 401, {
+        error:
+          'A CodeWave client handshake is required before accessing this daemon endpoint.',
+        code: 'client_handshake_required',
+        requiredScope,
+      });
+      return false;
+    }
+
+    const connection = this.clientConnections.get(connectionId);
+    if (!connection) {
+      sendJson(response, 401, {
+        error:
+          'This client connection is no longer valid. Negotiate a new daemon handshake and retry.',
+        code: 'client_connection_invalid',
+        requiredScope,
+      });
+      return false;
+    }
+    if (Date.parse(connection.expiresAt) <= Date.now()) {
+      this.clientConnections.delete(connectionId);
+      sendJson(response, 401, {
+        error:
+          'This client connection expired. Negotiate a new daemon handshake and retry.',
+        code: 'client_connection_expired',
+        requiredScope,
+      });
+      return false;
+    }
+    if (!connection.grantedScopes.has(requiredScope)) {
+      sendJson(response, 403, {
+        error: `The negotiated client connection does not grant ${requiredScope}.`,
+        code: 'client_scope_required',
+        requiredScope,
+      });
+      return false;
+    }
+    return true;
+  }
+
+  private negotiateClient(
+    input: ClientHandshakeRequest,
+    response: ServerResponse,
+  ): void {
+    if (input.protocolVersion !== CODEWAVE_PROTOCOL_VERSION) {
+      sendJson(response, 426, {
+        error: `Protocol version ${String(input.protocolVersion)} is not supported by this daemon.`,
+        code: 'protocol_version_unsupported',
+        supportedProtocolVersions: [CODEWAVE_PROTOCOL_VERSION],
+      });
+      return;
+    }
+    const clientName =
+      typeof input.clientName === 'string' ? input.clientName.trim() : '';
+    const clientVersion =
+      typeof input.clientVersion === 'string' ? input.clientVersion.trim() : '';
+    if (
+      !clientName ||
+      !clientVersion ||
+      clientName.length > 128 ||
+      clientVersion.length > 128 ||
+      /[\r\n\0]/.test(clientName) ||
+      /[\r\n\0]/.test(clientVersion)
+    ) {
+      sendJson(response, 400, {
+        error:
+          'clientName and clientVersion are required, single-line values of at most 128 characters.',
+        code: 'invalid_client_identity',
+      });
+      return;
+    }
+    if (
+      !Array.isArray(input.requestedScopes) ||
+      input.requestedScopes.length === 0 ||
+      input.requestedScopes.some((scope) => !isDaemonClientScope(scope))
+    ) {
+      sendJson(response, 400, {
+        error: 'requestedScopes must contain known CodeWave daemon scopes.',
+        code: 'invalid_client_scope',
+      });
+      return;
+    }
+
+    const issuedAtDate = new Date();
+    const expiresAtDate = new Date(
+      issuedAtDate.getTime() + CLIENT_CONNECTION_TTL_MS,
+    );
+    const grantedScopes = [...new Set(input.requestedScopes)];
+    for (const [connectionId, existing] of this.clientConnections) {
+      if (Date.parse(existing.expiresAt) <= issuedAtDate.getTime()) {
+        this.clientConnections.delete(connectionId);
+      }
+    }
+    if (this.clientConnections.size >= MAX_CLIENT_CONNECTIONS) {
+      const oldest = [...this.clientConnections.values()].sort((left, right) =>
+        left.issuedAt.localeCompare(right.issuedAt),
+      )[0];
+      if (oldest) this.clientConnections.delete(oldest.connectionId);
+    }
+    const connection: ClientConnection = {
+      connectionId: randomUUID(),
+      clientName,
+      clientVersion,
+      protocolVersion: CODEWAVE_PROTOCOL_VERSION,
+      grantedScopes: new Set(grantedScopes),
+      issuedAt: issuedAtDate.toISOString(),
+      expiresAt: expiresAtDate.toISOString(),
+    };
+    this.clientConnections.set(connection.connectionId, connection);
+    sendJson(response, 201, {
+      connectionId: connection.connectionId,
+      protocolVersion: connection.protocolVersion,
+      serverName: 'CodeWave daemon',
+      serverVersion: DAEMON_SERVER_VERSION,
+      capabilities: [...DAEMON_CAPABILITIES],
+      availableScopes: [...DAEMON_CLIENT_SCOPES],
+      grantedScopes,
+      limits: { ...DAEMON_PROTOCOL_LIMITS },
+      issuedAt: connection.issuedAt,
+      expiresAt: connection.expiresAt,
+    } satisfies ClientHandshakeResponse);
+  }
+
+  private async handleIncomingRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const method = request.method?.toUpperCase() ?? 'GET';
+    const url = new URL(request.url ?? '/', this.getBaseUrl());
+    if (!this.authorizeClient(request, url, response)) return;
+    if (url.pathname === '/api/handshake') {
+      await this.handleRequest(request, response);
+      return;
+    }
+    const mutating = method === 'POST' || method === 'PATCH' || method === 'DELETE';
+    const rawKey = request.headers['idempotency-key'];
+    const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+    if (!mutating || !key) {
+      await this.handleRequest(request, response);
+      return;
+    }
+
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
+      sendJson(response, 400, {
+        error:
+          'Idempotency-Key must be 8-128 characters using letters, numbers, dot, underscore, colon, or dash.',
+      });
+      return;
+    }
+
+    const operation = `${method} ${url.pathname}`;
+    const body = await readRequestBody(request);
+    const requestHash = createHash('sha256')
+      .update(operation)
+      .update('\0')
+      .update(canonicalizeRequestBody(body))
+      .digest('hex');
+    const existing = this.stateStore.getMutationReceipt(key);
+    if (existing) {
+      if (existing.operation !== operation || existing.requestHash !== requestHash) {
+        sendJson(response, 409, {
+          error:
+            'This idempotency key was already used for a different mutation payload.',
+        });
+        return;
+      }
+      if (existing.statusCode === 0) {
+        response.setHeader('Idempotency-Key', key);
+        response.setHeader('Idempotency-Pending', 'true');
+        sendJson(response, 409, {
+          error:
+            'This mutation was reserved but its final response was interrupted. CodeWave will not execute it again; inspect current state before issuing a new mutation.',
+        });
+        return;
+      }
+      response.setHeader('Idempotency-Key', key);
+      response.setHeader('Idempotency-Replayed', 'true');
+      response.writeHead(existing.statusCode, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-CodeWave-Protocol-Version': String(CODEWAVE_PROTOCOL_VERSION),
+      });
+      response.end(existing.responseJson);
+      return;
+    }
+
+    if (this.inFlightMutationKeys.has(key)) {
+      sendJson(response, 409, {
+        error: 'A mutation with this idempotency key is still in progress.',
+      });
+      return;
+    }
+
+    this.inFlightMutationKeys.add(key);
+    this.stateStore.createMutationReceipt({
+      key,
+      operation,
+      requestHash,
+      statusCode: 0,
+      responseJson: '',
+      createdAt: new Date().toISOString(),
+    });
+    const complete = () => this.inFlightMutationKeys.delete(key);
+    response.once('close', complete);
+    idempotencyResponseContexts.set(response, {
+      key,
+      persist: (statusCode, responseJson) => {
+        this.stateStore.finalizeMutationReceipt(key, statusCode, responseJson);
+      },
+      complete,
+    });
+    await this.handleRequest(request, response);
+  }
+
+  private installProviders(registry: ProviderRegistrySnapshot): void {
+    this.providers.clear();
+    for (const configuration of registry.providers) {
+      const command = configuration.command ?? undefined;
+      if (configuration.providerId === 'freebuff') {
+        this.providers.set(
+          'freebuff',
+          new FreebuffCliProvider({ rootPath: this.rootPath, command }),
+        );
+      } else if (configuration.providerId === 'opencode') {
+        this.providers.set(
+          'opencode',
+          new OpenCodeCliProvider({ rootPath: this.rootPath, command }),
+        );
+      } else if (configuration.providerId === 'qwen') {
+        this.providers.set(
+          'qwen',
+          new QwenCliProvider({ rootPath: this.rootPath, command }),
+        );
+      } else {
+        this.providers.set('gemini', new GeminiCliProvider(command));
+      }
+    }
+    this.providerHealthCache.clear();
   }
 
   private async handleRequest(
@@ -362,12 +797,64 @@ export class QweminiDaemon {
     const pathname = url.pathname;
 
     if (request.method === 'GET' && pathname === '/api/health') {
-      sendJson(response, 200, { ok: true });
+      sendJson(response, 200, {
+        ok: true,
+        protocolVersion: CODEWAVE_PROTOCOL_VERSION,
+        handshakeRequired: true,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/handshake') {
+      const body = await readJsonBody<ClientHandshakeRequest>(request);
+      this.negotiateClient(body, response);
       return;
     }
 
     if (request.method === 'GET' && pathname === '/api/runtime') {
       sendJson(response, 200, await this.buildRuntimeInfo());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/providers') {
+      sendJson(response, 200, this.providerPolicy.snapshot());
+      return;
+    }
+
+    if (request.method === 'PATCH' && pathname === '/api/providers/default') {
+      const body = await readJsonBody<UpdateDefaultProviderRequest>(request);
+      if (!isKnownProviderId(body.providerId)) {
+        sendJson(response, 400, { error: 'Invalid default provider.' });
+        return;
+      }
+      try {
+        const registry = await this.providerPolicy.setDefaultProvider(
+          body.providerId,
+          body.expectedProviderRevision,
+        );
+        this.installProviders(registry);
+        sendJson(response, 200, registry);
+      } catch (error) {
+        sendConflict(response, error, 'Default provider could not be changed.');
+      }
+      return;
+    }
+
+    const providerConfigurationMatch = pathname.match(/^\/api\/providers\/([^/]+)$/);
+    if (request.method === 'PATCH' && providerConfigurationMatch) {
+      const providerId = providerConfigurationMatch[1];
+      if (!isKnownProviderId(providerId)) {
+        sendJson(response, 404, { error: 'Unknown provider.' });
+        return;
+      }
+      const body = await readJsonBody<UpdateProviderConfigurationRequest>(request);
+      try {
+        const registry = await this.providerPolicy.updateProvider(providerId, body);
+        this.installProviders(registry);
+        sendJson(response, 200, registry);
+      } catch (error) {
+        sendConflict(response, error, 'Provider settings could not be saved.');
+      }
       return;
     }
 
@@ -485,7 +972,7 @@ export class QweminiDaemon {
       const body = await readJsonBody<RoutePromptRequest>(request);
       const route = await this.routePrompt(body);
       if (route instanceof Error) {
-        sendJson(response, 409, { error: route.message });
+        sendConflict(response, route, 'The routed run could not be created.');
         return;
       }
 
@@ -518,10 +1005,44 @@ export class QweminiDaemon {
       const body = await readJsonBody<CreateSessionRequest>(request);
       const session = await this.createSession(body);
       if (session instanceof Error) {
-        sendJson(response, 409, { error: session.message });
+        sendConflict(response, session, 'The session could not be created.');
         return;
       }
       sendJson(response, 201, session);
+      return;
+    }
+
+    const sessionTranscriptMatch = pathname.match(
+      /^\/api\/sessions\/([^/]+)\/transcript$/,
+    );
+    if (request.method === 'GET' && sessionTranscriptMatch) {
+      const sessionId = sessionTranscriptMatch[1]!;
+      if (!this.stateStore.getSession(sessionId)) {
+        notFound(response);
+        return;
+      }
+      const rawBefore = url.searchParams.get('before');
+      const rawLimit = url.searchParams.get('limit');
+      if (rawBefore !== null && !/^[1-9]\d*$/.test(rawBefore)) {
+        sendJson(response, 400, {
+          error: 'The transcript cursor must be a positive message sequence.',
+        });
+        return;
+      }
+      if (rawLimit !== null && !/^[1-9]\d*$/.test(rawLimit)) {
+        sendJson(response, 400, {
+          error: 'The transcript limit must be a positive integer.',
+        });
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        this.stateStore.listTranscriptMessages(sessionId, {
+          beforeSequence: rawBefore === null ? undefined : Number(rawBefore),
+          limit: rawLimit === null ? undefined : Number(rawLimit),
+        }),
+      );
       return;
     }
 
@@ -551,7 +1072,7 @@ export class QweminiDaemon {
       }
 
       if (session instanceof Error) {
-        sendJson(response, 409, { error: session.message });
+        sendConflict(response, session, 'The session could not be updated.');
         return;
       }
 
@@ -576,14 +1097,18 @@ export class QweminiDaemon {
 
     const recoverSessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/recover$/);
     if (request.method === 'POST' && recoverSessionMatch) {
-      const recovered = await this.recoverSession(recoverSessionMatch[1]!);
+      const body = await readJsonBody<RecoverSessionRequest>(request);
+      const recovered = await this.recoverSession(
+        recoverSessionMatch[1]!,
+        body.expectedProviderRevision,
+      );
       if (recovered === null) {
         notFound(response);
         return;
       }
 
       if (recovered instanceof Error) {
-        sendJson(response, 409, { error: recovered.message });
+        sendConflict(response, recovered, 'The session could not be recovered.');
         return;
       }
 
@@ -601,7 +1126,7 @@ export class QweminiDaemon {
       }
 
       if (snapshot instanceof Error) {
-        sendJson(response, 409, { error: snapshot.message });
+        sendConflict(response, snapshot, 'The run could not be started.');
         return;
       }
 
@@ -613,7 +1138,7 @@ export class QweminiDaemon {
       const body = await readJsonBody<CompareRunRequest>(request);
       const responsePayload = await this.compareRun(body);
       if (responsePayload instanceof Error) {
-        sendJson(response, 409, { error: responsePayload.message });
+        sendConflict(response, responsePayload, 'The comparison could not be started.');
         return;
       }
 
@@ -650,7 +1175,7 @@ export class QweminiDaemon {
       }
 
       if (responsePayload instanceof Error) {
-        sendJson(response, 409, { error: responsePayload.message });
+        sendConflict(response, responsePayload, 'The follow-up could not be started.');
         return;
       }
 
@@ -676,7 +1201,7 @@ export class QweminiDaemon {
       }
 
       if (responsePayload instanceof Error) {
-        sendJson(response, 409, { error: responsePayload.message });
+        sendConflict(response, responsePayload, 'The delegated run could not be started.');
         return;
       }
 
@@ -697,7 +1222,7 @@ export class QweminiDaemon {
       }
 
       if (responsePayload instanceof Error) {
-        sendJson(response, 409, { error: responsePayload.message });
+        sendConflict(response, responsePayload, 'The handoff could not be started.');
         return;
       }
 
@@ -714,6 +1239,22 @@ export class QweminiDaemon {
       }
 
       sendJson(response, 200, snapshot);
+      return;
+    }
+
+    const steerRunMatch = pathname.match(/^\/api\/runs\/([^/]+)\/steer$/);
+    if (request.method === 'POST' && steerRunMatch) {
+      const body = await readJsonBody<SteerRunRequest>(request);
+      const result = await this.steerRun(steerRunMatch[1]!, body);
+      if (result === null) {
+        notFound(response);
+        return;
+      }
+      if (result instanceof Error) {
+        sendConflict(response, result, 'The run update could not be queued.');
+        return;
+      }
+      sendJson(response, 202, result satisfies SteerRunResponse);
       return;
     }
 
@@ -743,7 +1284,24 @@ export class QweminiDaemon {
         return;
       }
 
-      this.handleStream(runId, response);
+      const headerCursor = request.headers['last-event-id'];
+      const rawCursor =
+        url.searchParams.get('after') ??
+        (Array.isArray(headerCursor) ? headerCursor[0] : headerCursor);
+      if (rawCursor !== null && rawCursor !== undefined && !/^\d+$/.test(rawCursor)) {
+        sendJson(response, 400, {
+          error: 'The event replay cursor must be a non-negative integer.',
+        });
+        return;
+      }
+
+      this.handleStream(
+        runId,
+        response,
+        rawCursor === null || rawCursor === undefined
+          ? undefined
+          : Number(rawCursor),
+      );
       return;
     }
 
@@ -764,8 +1322,10 @@ export class QweminiDaemon {
       /^\/api\/checkpoints\/([^/]+)\/recover-session$/,
     );
     if (request.method === 'POST' && checkpointRecoverMatch) {
+      const body = await readJsonBody<RecoverSessionRequest>(request);
       const recovered = await this.recoverSessionFromCheckpoint(
         checkpointRecoverMatch[1]!,
+        body.expectedProviderRevision,
       );
       if (recovered === null) {
         notFound(response);
@@ -773,7 +1333,7 @@ export class QweminiDaemon {
       }
 
       if (recovered instanceof Error) {
-        sendJson(response, 409, { error: recovered.message });
+        sendConflict(response, recovered, 'The checkpoint could not be recovered.');
         return;
       }
 
@@ -834,11 +1394,25 @@ export class QweminiDaemon {
 
   private async buildRuntimeInfo(): Promise<RuntimeInfo> {
     const providers = await this.listProviderHealth();
+    const providerRegistry = this.providerPolicy.snapshot();
+    const recommendedProviderId =
+      providers.find((provider) => provider.available)?.providerId ??
+      providerRegistry.defaultProviderId;
 
     return {
       defaultWorkspacePath: this.rootPath,
       dataDirectory: this.dataDirectory,
+      defaultProviderId: providerRegistry.defaultProviderId,
+      recommendedProviderId,
+      providerRegistry,
       providers,
+      protocol: {
+        version: CODEWAVE_PROTOCOL_VERSION,
+        serverVersion: DAEMON_SERVER_VERSION,
+        capabilities: [...DAEMON_CAPABILITIES],
+        availableScopes: [...DAEMON_CLIENT_SCOPES],
+        limits: { ...DAEMON_PROTOCOL_LIMITS },
+      },
     };
   }
 
@@ -1059,8 +1633,90 @@ export class QweminiDaemon {
   }
 
   private async listProviderHealth(): Promise<ProviderHealth[]> {
+    const registry = this.providerPolicy.snapshot();
     return Promise.all(
-      [...this.providers.values()].map((provider) => provider.healthCheck()),
+      registry.providers.map(async (configuration) => {
+        const provider = this.providers.get(configuration.providerId);
+        if (!provider) {
+          return {
+            providerId: configuration.providerId,
+            available: false,
+            detail: 'The provider adapter is not installed in this CodeWave build.',
+            capabilities: {
+              daemonApprovalMediation: false,
+              resumableSessions: false,
+              checkpointEvents: false,
+              inFlightSteering: 'unsupported',
+            },
+            enabled: configuration.enabled,
+            configured: false,
+            status: 'unavailable',
+            accessMode: configuration.accessMode,
+            priority: configuration.priority,
+            isDefault:
+              configuration.providerId === registry.defaultProviderId,
+            lastCheckedAt: new Date().toISOString(),
+            latencyMs: 0,
+          } satisfies ProviderHealth;
+        }
+
+        const capabilities = await provider.capabilities();
+        if (!configuration.enabled) {
+          return {
+            providerId: configuration.providerId,
+            available: false,
+            detail: `${configuration.displayName} is disabled by CodeWave provider policy. ${configuration.setupHint}`,
+            capabilities,
+            enabled: false,
+            configured:
+              configuration.configurationSource !== 'default' ||
+              !configuration.requiresExplicitEnable,
+            status: 'disabled',
+            accessMode: configuration.accessMode,
+            priority: configuration.priority,
+            isDefault:
+              configuration.providerId === registry.defaultProviderId,
+            lastCheckedAt: new Date().toISOString(),
+            latencyMs: 0,
+          } satisfies ProviderHealth;
+        }
+
+        const cached = this.providerHealthCache.get(configuration.providerId);
+        if (cached && cached.expiresAt > Date.now()) {
+          return cached.health;
+        }
+
+        const startedAt = Date.now();
+        let adapterHealth: ProviderHealth;
+        try {
+          adapterHealth = await provider.healthCheck();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          adapterHealth = {
+            providerId: configuration.providerId,
+            available: false,
+            detail: `Health probe failed: ${message}`,
+            capabilities,
+          };
+        }
+        const checkedAt = new Date().toISOString();
+        const health = {
+          ...adapterHealth,
+          enabled: true,
+          configured: true,
+          status: adapterHealth.available ? 'ready' : 'setup-required',
+          accessMode: configuration.accessMode,
+          priority: configuration.priority,
+          isDefault: configuration.providerId === registry.defaultProviderId,
+          lastCheckedAt: checkedAt,
+          latencyMs: Date.now() - startedAt,
+        } satisfies ProviderHealth;
+        this.providerHealthCache.set(configuration.providerId, {
+          expiresAt: Date.now() + 10_000,
+          health,
+        });
+        return health;
+      }),
     );
   }
 
@@ -1128,6 +1784,9 @@ export class QweminiDaemon {
   private async getProviderCapabilities(
     providerId: string,
   ): Promise<ProviderCapabilities | null> {
+    if (!isKnownProviderId(providerId)) {
+      return null;
+    }
     const provider = this.providers.get(providerId);
     if (!provider) {
       return null;
@@ -1137,18 +1796,31 @@ export class QweminiDaemon {
   }
 
   private async getProviderHealth(providerId: string): Promise<ProviderHealth | null> {
-    const provider = this.providers.get(providerId);
-    if (!provider) {
+    if (!isKnownProviderId(providerId)) {
       return null;
     }
-
-    return provider.healthCheck();
+    return (
+      (await this.listProviderHealth()).find(
+        (provider) => provider.providerId === providerId,
+      ) ?? null
+    );
   }
 
   private async validateApprovalPolicyForProvider(
     providerId: string,
     approvalPolicy: ApprovalPolicy,
   ): Promise<Error | null> {
+    const configuration = this.providerPolicy
+      .snapshot()
+      .providers.find((provider) => provider.providerId === providerId);
+    if (!configuration) {
+      return new Error(`Provider ${providerId} is not configured.`);
+    }
+    if (!configuration.enabled) {
+      return new Error(
+        `${configuration.displayName} is disabled. Enable it in CodeWave provider settings before creating a session.`,
+      );
+    }
     const capabilities = await this.getProviderCapabilities(providerId);
     if (!capabilities) {
       return new Error(`Provider ${providerId} is not configured.`);
@@ -1234,6 +1906,7 @@ export class QweminiDaemon {
     const session = await this.createSession({
       workspacePath: recommendation.workspacePath,
       providerId: recommendation.primaryProviderId,
+      expectedProviderRevision: input.expectedProviderRevision,
       approvalPolicy,
       orchestration: {
         kind: 'route',
@@ -1249,6 +1922,7 @@ export class QweminiDaemon {
 
     const runSnapshot = await this.startRun(session.id, {
       prompt: recommendation.prompt,
+      expectedProviderRevision: input.expectedProviderRevision,
     });
     if (!runSnapshot) {
       return new Error('Failed to create the routed run session.');
@@ -1300,10 +1974,12 @@ export class QweminiDaemon {
     recommendation: OrchestrationRecommendation,
     approvalPolicy: ApprovalPolicy,
     orchestration: WorkbenchSession['orchestration'],
+    expectedProviderRevision: string,
   ): Promise<WorkbenchSession | Error> {
     return this.createSession({
       workspacePath: recommendation.workspacePath,
       providerId: recommendation.primaryProviderId,
+      expectedProviderRevision,
       approvalPolicy,
       orchestration,
     });
@@ -1382,6 +2058,7 @@ export class QweminiDaemon {
         sourceRunId: sourceRunSnapshot.run.id,
         sourceProviderId: sourceRunSnapshot.run.providerId,
       },
+      input.expectedProviderRevision,
     );
     if (session instanceof Error) {
       return session;
@@ -1389,6 +2066,7 @@ export class QweminiDaemon {
 
     const runSnapshot = await this.startRun(session.id, {
       prompt: followUpPrompt,
+      expectedProviderRevision: input.expectedProviderRevision,
     });
     if (!runSnapshot) {
       return new Error('Failed to create the follow-up run session.');
@@ -1470,6 +2148,7 @@ export class QweminiDaemon {
         sourceRunId: sourceRunSnapshot.run.id,
         sourceProviderId: sourceRunSnapshot.run.providerId,
       },
+      input.expectedProviderRevision,
     );
     if (session instanceof Error) {
       return session;
@@ -1477,6 +2156,7 @@ export class QweminiDaemon {
 
     const runSnapshot = await this.startRun(session.id, {
       prompt: delegatedPrompt,
+      expectedProviderRevision: input.expectedProviderRevision,
     });
     if (!runSnapshot) {
       return new Error('Failed to create the delegated run session.');
@@ -1556,6 +2236,7 @@ export class QweminiDaemon {
         sourceRunId: sourceRunSnapshot.run.id,
         sourceProviderId: sourceRunSnapshot.run.providerId,
       },
+      input.expectedProviderRevision,
     );
     if (session instanceof Error) {
       return session;
@@ -1563,6 +2244,7 @@ export class QweminiDaemon {
 
     const runSnapshot = await this.startRun(session.id, {
       prompt: handoffPrompt,
+      expectedProviderRevision: input.expectedProviderRevision,
     });
     if (!runSnapshot) {
       return new Error('Failed to create the handed-off run session.');
@@ -1593,9 +2275,27 @@ export class QweminiDaemon {
     return null;
   }
 
+  private requireProviderRevision(
+    expectedProviderRevision: string | undefined,
+  ): ProviderRegistrySnapshot | ProviderRevisionConflictError {
+    const registry = this.providerPolicy.snapshot();
+    if (expectedProviderRevision !== registry.revision) {
+      return new ProviderRevisionConflictError(registry.revision);
+    }
+    return registry;
+  }
+
   private async createSession(
     input: CreateSessionRequest,
   ): Promise<WorkbenchSession | Error> {
+    const registry = this.requireProviderRevision(input.expectedProviderRevision);
+    if (registry instanceof Error) return registry;
+    const configuration = registry.providers.find(
+      (provider) => provider.providerId === input.providerId,
+    );
+    if (!configuration?.enabled) {
+      return new Error(`Provider ${input.providerId} is disabled by provider policy.`);
+    }
     const requestedApprovalPolicy = input.approvalPolicy;
     const approvalPolicy =
       requestedApprovalPolicy && isApprovalPolicy(requestedApprovalPolicy)
@@ -1608,11 +2308,16 @@ export class QweminiDaemon {
     if (validationError) {
       return validationError;
     }
+    const confirmedRegistry = this.requireProviderRevision(
+      input.expectedProviderRevision,
+    );
+    if (confirmedRegistry instanceof Error) return confirmedRegistry;
 
     const session: WorkbenchSession = {
       id: randomUUID(),
       workspacePath: path.resolve(input.workspacePath),
       providerId: input.providerId,
+      providerConfigurationRevision: confirmedRegistry.revision,
       createdAt: new Date().toISOString(),
       providerSessionId: null,
       approvalPolicy,
@@ -1643,6 +2348,7 @@ export class QweminiDaemon {
       const session = await this.createSession({
         workspacePath: input.workspacePath,
         providerId,
+        expectedProviderRevision: input.expectedProviderRevision,
         approvalPolicy,
       });
       if (session instanceof Error) {
@@ -1652,6 +2358,7 @@ export class QweminiDaemon {
       const snapshot = await this.startRun(session.id, {
         prompt,
         mode: 'execute',
+        expectedProviderRevision: input.expectedProviderRevision,
       });
       if (!snapshot) {
         return new Error(`Failed to start the ${providerId} lane.`);
@@ -1674,6 +2381,8 @@ export class QweminiDaemon {
     sessionId: string,
     body: UpdateSessionRequest,
   ): Promise<WorkbenchSession | Error | null> {
+    const registry = this.requireProviderRevision(body.expectedProviderRevision);
+    if (registry instanceof Error) return registry;
     const session = this.stateStore.getSession(sessionId);
     if (!session) {
       return null;
@@ -1681,6 +2390,12 @@ export class QweminiDaemon {
 
     let nextApprovalPolicy = body.approvalPolicy ?? session.approvalPolicy;
     const nextProviderId = body.providerId ?? session.providerId;
+    const nextProviderConfiguration = registry.providers.find(
+      (provider) => provider.providerId === nextProviderId,
+    );
+    if (!nextProviderConfiguration?.enabled) {
+      return new Error(`Provider ${nextProviderId} is disabled by provider policy.`);
+    }
 
     let validationError = await this.validateApprovalPolicyForProvider(
       nextProviderId,
@@ -1698,10 +2413,15 @@ export class QweminiDaemon {
     if (validationError) {
       return validationError;
     }
+    const confirmedRegistry = this.requireProviderRevision(
+      body.expectedProviderRevision,
+    );
+    if (confirmedRegistry instanceof Error) return confirmedRegistry;
 
     this.stateStore.updateSession(sessionId, {
       approvalPolicy: nextApprovalPolicy,
       providerId: nextProviderId,
+      providerConfigurationRevision: confirmedRegistry.revision,
     });
     return this.stateStore.getSession(sessionId);
   }
@@ -1828,7 +2548,10 @@ export class QweminiDaemon {
 
   private async recoverSession(
     sessionId: string,
+    expectedProviderRevision: string,
   ): Promise<WorkbenchSession | Error | null> {
+    const registry = this.requireProviderRevision(expectedProviderRevision);
+    if (registry instanceof Error) return registry;
     const session = this.stateStore.getSession(sessionId);
     if (!session) {
       return null;
@@ -1838,6 +2561,10 @@ export class QweminiDaemon {
     if (resumeError) {
       return resumeError;
     }
+    const confirmedRegistry = this.requireProviderRevision(
+      expectedProviderRevision,
+    );
+    if (confirmedRegistry instanceof Error) return confirmedRegistry;
 
     if (!session.providerSessionId) {
       return new Error(
@@ -1845,12 +2572,19 @@ export class QweminiDaemon {
       );
     }
 
-    return this.createRecoveredSession(session, session.providerSessionId);
+    return this.createRecoveredSession(
+      session,
+      session.providerSessionId,
+      confirmedRegistry.revision,
+    );
   }
 
   private async recoverSessionFromCheckpoint(
     checkpointId: string,
+    expectedProviderRevision: string,
   ): Promise<WorkbenchSession | Error | null> {
+    const registry = this.requireProviderRevision(expectedProviderRevision);
+    if (registry instanceof Error) return registry;
     const checkpoint = this.stateStore.getCheckpoint(checkpointId);
     if (!checkpoint) {
       return null;
@@ -1865,6 +2599,10 @@ export class QweminiDaemon {
     if (resumeError) {
       return resumeError;
     }
+    const confirmedRegistry = this.requireProviderRevision(
+      expectedProviderRevision,
+    );
+    if (confirmedRegistry instanceof Error) return confirmedRegistry;
 
     if (!checkpoint.providerSessionId) {
       return new Error(
@@ -1872,18 +2610,24 @@ export class QweminiDaemon {
       );
     }
 
-    return this.createRecoveredSession(session, checkpoint.providerSessionId, {
-      kind: 'checkpoint',
-      sourceSessionId: checkpoint.sessionId,
-      sourceCheckpointId: checkpoint.id,
-      sourceProviderSessionId: checkpoint.providerSessionId,
-      sourceRunId: checkpoint.runId,
-    });
+    return this.createRecoveredSession(
+      session,
+      checkpoint.providerSessionId,
+      confirmedRegistry.revision,
+      {
+        kind: 'checkpoint',
+        sourceSessionId: checkpoint.sessionId,
+        sourceCheckpointId: checkpoint.id,
+        sourceProviderSessionId: checkpoint.providerSessionId,
+        sourceRunId: checkpoint.runId,
+      },
+    );
   }
 
   private createRecoveredSession(
     sourceSession: WorkbenchSession,
     providerSessionId: string,
+    providerConfigurationRevision: string,
     recovery: WorkbenchSession['recovery'] = {
       kind: 'session',
       sourceSessionId: sourceSession.id,
@@ -1896,6 +2640,7 @@ export class QweminiDaemon {
       id: randomUUID(),
       workspacePath: sourceSession.workspacePath,
       providerId: sourceSession.providerId,
+      providerConfigurationRevision,
       createdAt: new Date().toISOString(),
       providerSessionId,
       approvalPolicy: sourceSession.approvalPolicy,
@@ -1913,6 +2658,8 @@ export class QweminiDaemon {
     }
 
     const events = this.stateStore.listEvents(runId);
+    const latestRunTranscriptSequence =
+      this.stateStore.getLatestTranscriptSequenceForRun(runId);
     let contextChars = 0;
     for (const event of events) {
       if (event.type === 'run.output.delta') {
@@ -1942,27 +2689,45 @@ export class QweminiDaemon {
     return {
       run,
       events,
+      transcript: this.stateStore.listTranscriptMessages(run.sessionId, {
+        beforeSequence:
+          latestRunTranscriptSequence === null
+            ? undefined
+            : latestRunTranscriptSequence + 1,
+      }),
       artifacts: this.stateStore.listArtifacts(runId),
       approvals: this.stateStore.listApprovals(runId),
       checkpoints: this.stateStore.listCheckpoints(runId),
+      steering: this.stateStore.listSteeringInputs(runId),
       toolInvocations: this.stateStore.listToolInvocations(runId),
       contextChars,
       undo,
     };
   }
 
-  private handleStream(runId: string, response: ServerResponse): void {
-    const history = this.stateStore.listEvents(runId);
+  private handleStream(
+    runId: string,
+    response: ServerResponse,
+    afterSequence?: number,
+  ): void {
+    const history = this.stateStore.listEvents(runId, {
+      afterSequence,
+      limit: CODEWAVE_MAX_SSE_REPLAY_EVENTS,
+    });
 
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      'X-CodeWave-Protocol-Version': String(CODEWAVE_PROTOCOL_VERSION),
+      'X-CodeWave-Replay-Limit': String(CODEWAVE_MAX_SSE_REPLAY_EVENTS),
     });
 
     response.write(': connected\n\n');
     for (const event of history) {
-      response.write(`data: ${JSON.stringify(event)}\n\n`);
+      response.write(
+        `id: ${event.sequence ?? event.id}\ndata: ${JSON.stringify(event)}\n\n`,
+      );
     }
 
     this.eventBroker.subscribe(runId, response);
@@ -2031,51 +2796,388 @@ export class QweminiDaemon {
     }
   }
 
+  private reconcileInterruptedRuns(): void {
+    for (const run of this.stateStore.listNonTerminalRuns()) {
+      const timestamp = new Date().toISOString();
+      const session = this.stateStore.getSession(run.sessionId);
+      this.stateStore.appendEvent({
+        id: randomUUID(),
+        sessionId: run.sessionId,
+        runId: run.id,
+        timestamp,
+        source: 'system',
+        type: 'run.failed',
+        payload: {
+          message: 'The daemon restarted before this run reached a terminal state.',
+          code: 'daemon_restart',
+          recoverable: Boolean(session?.providerSessionId),
+        },
+      });
+      this.stateStore.updateRunStatus(run.id, 'failed', {
+        completedAt: timestamp,
+        errorMessage: 'Interrupted by daemon restart.',
+      });
+      for (const approval of this.stateStore.listApprovals(run.id)) {
+        if (approval.status === 'requested') {
+          this.stateStore.updateApprovalStatus(approval.id, 'denied', {
+            reason: 'Daemon restarted before the approval was resolved.',
+            resolvedAt: timestamp,
+          });
+        }
+      }
+    }
+  }
+
+  private async resumeQueuedSteeringInputs(): Promise<void> {
+    const targetRunIds = new Set(
+      this.stateStore
+        .listQueuedSteeringInputs()
+        .map((steering) => steering.targetRunId),
+    );
+    for (const targetRunId of targetRunIds) {
+      const run = this.stateStore.getRun(targetRunId);
+      if (run && isTerminalRunStatus(run.status)) {
+        await this.dispatchQueuedSteering(targetRunId);
+      }
+    }
+  }
+
+  private async steerRun(
+    runId: string,
+    body: SteerRunRequest,
+  ): Promise<SteerRunResponse | Error | null> {
+    const run = this.stateStore.getRun(runId);
+    if (!run) return null;
+    const registry = this.requireProviderRevision(body.expectedProviderRevision);
+    if (registry instanceof Error) return registry;
+    if (body.expectedRunId !== runId) {
+      return new Error(
+        `Run fence mismatch: expected ${body.expectedRunId || 'none'}, received ${runId}.`,
+      );
+    }
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    if (!prompt) return new Error('A steering prompt is required.');
+    if (prompt.length > CODEWAVE_MAX_STEERING_PROMPT_CHARS) {
+      return new Error(
+        `Steering prompts are limited to ${CODEWAVE_MAX_STEERING_PROMPT_CHARS.toLocaleString('en-US')} characters.`,
+      );
+    }
+
+    const activeRuns = this.stateStore.listNonTerminalRuns(run.sessionId);
+    const activeRun = activeRuns.at(-1) ?? null;
+    if (!activeRun || activeRun.id !== runId || isTerminalRunStatus(run.status)) {
+      return new Error(
+        activeRun
+          ? `Run ${runId} is no longer active. The current run is ${activeRun.id}.`
+          : `Run ${runId} is no longer active. Refresh before sending an update.`,
+      );
+    }
+    const queuedUnderAnotherRevision = this.stateStore
+      .listQueuedSteeringInputs(run.id)
+      .find(
+        (steering) =>
+          steering.providerConfigurationRevision !== registry.revision,
+      );
+    if (queuedUnderAnotherRevision) {
+      return new Error(
+        'This run already has a queued update reviewed under an earlier provider policy. Let it settle, then review and send the next update.',
+      );
+    }
+
+    const steering: RunSteeringInput = {
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      targetRunId: run.id,
+      expectedRunId: body.expectedRunId,
+      providerConfigurationRevision: registry.revision,
+      prompt,
+      status: 'queued',
+      createdAt: new Date().toISOString(),
+      appliedRunId: null,
+      appliedAt: null,
+      errorMessage: null,
+    };
+    this.stateStore.createSteeringInput(steering);
+    let releaseQueuedEvent!: () => void;
+    const queuedEventAccepted = new Promise<void>((resolve) => {
+      releaseQueuedEvent = resolve;
+    });
+    const deliveryPromise = this.enqueueNativeSteeringAttempt(
+      steering,
+      queuedEventAccepted,
+    );
+    try {
+      await this.acceptEvent({
+        id: randomUUID(),
+        sessionId: run.sessionId,
+        runId: run.id,
+        timestamp: steering.createdAt,
+        source: 'system',
+        type: 'run.steering.queued',
+        payload: {
+          steeringId: steering.id,
+          prompt,
+          delivery: 'queued',
+          expectedRunId: body.expectedRunId,
+          providerConfigurationRevision: registry.revision,
+        },
+      });
+    } finally {
+      releaseQueuedEvent();
+    }
+    const delivery = await deliveryPromise;
+    const runSnapshot = this.getRunSnapshot(run.id);
+    if (!runSnapshot) return null;
+    const persistedSteering =
+      runSnapshot.steering.find((input) => input.id === steering.id) ?? steering;
+    return { steering: persistedSteering, delivery, runSnapshot };
+  }
+
+  private enqueueNativeSteeringAttempt(
+    steering: RunSteeringInput,
+    queuedEventAccepted: Promise<void>,
+  ): Promise<'native' | 'queued'> {
+    const previous = this.nativeSteeringChains.get(steering.targetRunId);
+    const delivery = (previous ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        await queuedEventAccepted;
+        return this.attemptNativeSteering(steering);
+      });
+    const tail = delivery.then(
+      () => {},
+      () => {},
+    );
+    this.nativeSteeringChains.set(steering.targetRunId, tail);
+    void tail.finally(() => {
+      if (this.nativeSteeringChains.get(steering.targetRunId) === tail) {
+        this.nativeSteeringChains.delete(steering.targetRunId);
+      }
+    });
+    return delivery;
+  }
+
+  private async attemptNativeSteering(
+    steering: RunSteeringInput,
+  ): Promise<'native' | 'queued'> {
+    const run = this.stateStore.getRun(steering.targetRunId);
+    const handle = this.runHandles.get(steering.targetRunId);
+    if (!run || isTerminalRunStatus(run.status) || !handle?.steer) {
+      return 'queued';
+    }
+
+    let result: Awaited<ReturnType<NonNullable<ProviderRunHandle['steer']>>>;
+    try {
+      result = await handle.steer({
+        steeringId: steering.id,
+        prompt: steering.prompt,
+        createdAt: steering.createdAt,
+      });
+    } catch {
+      return 'queued';
+    }
+    if (result.disposition !== 'accepted') return 'queued';
+    const currentRun = this.stateStore.getRun(steering.targetRunId);
+    if (!currentRun || isTerminalRunStatus(currentRun.status)) return 'queued';
+
+    const appliedAt = new Date().toISOString();
+    const transitioned = this.stateStore.transitionQueuedSteeringInput(
+      steering.id,
+      'applied',
+      {
+        appliedRunId: steering.targetRunId,
+        appliedAt,
+        errorMessage: null,
+      },
+    );
+    if (!transitioned) return 'queued';
+
+    await this.acceptEvent({
+      id: randomUUID(),
+      sessionId: steering.sessionId,
+      runId: steering.targetRunId,
+      timestamp: appliedAt,
+      source: 'system',
+      type: 'run.steering.applied',
+      payload: {
+        steeringIds: [steering.id],
+        appliedRunId: steering.targetRunId,
+        promptCount: 1,
+        delivery: 'native',
+        detail: result.detail ?? null,
+      },
+    });
+    return 'native';
+  }
+
+  private scheduleQueuedSteeringDispatch(targetRunId: string): void {
+    if (this.steeringFallbackSchedules.has(targetRunId)) return;
+    this.steeringFallbackSchedules.add(targetRunId);
+    void (async () => {
+      try {
+        while (true) {
+          const pending = this.nativeSteeringChains.get(targetRunId);
+          if (!pending) break;
+          await pending;
+          if (this.nativeSteeringChains.get(targetRunId) === pending) break;
+        }
+        await this.dispatchQueuedSteering(targetRunId);
+      } finally {
+        this.steeringFallbackSchedules.delete(targetRunId);
+      }
+    })().catch(() => {
+      // Durable queued inputs remain recoverable if fallback dispatch cannot start.
+    });
+  }
+
+  private async dispatchQueuedSteering(targetRunId: string): Promise<void> {
+    if (this.steeringDispatches.has(targetRunId)) return;
+    const targetRun = this.stateStore.getRun(targetRunId);
+    if (!targetRun || !isTerminalRunStatus(targetRun.status)) return;
+    const queued = this.stateStore.listQueuedSteeringInputs(targetRunId);
+    if (queued.length === 0) return;
+
+    this.steeringDispatches.add(targetRunId);
+    try {
+      const prompt = queued.map((steering) => steering.prompt).join('\n\n');
+      const next = await this.startRun(targetRun.sessionId, {
+        prompt,
+        mode: targetRun.mode,
+        expectedProviderRevision: queued[0]!.providerConfigurationRevision,
+      });
+      const appliedAt = new Date().toISOString();
+      if (!next || next instanceof Error) {
+        const message =
+          next instanceof Error
+            ? next.message
+            : 'The queued update could not create a follow-up run.';
+        for (const steering of queued) {
+          this.stateStore.updateSteeringInputStatus(steering.id, 'failed', {
+            appliedAt,
+            errorMessage: message,
+          });
+        }
+        await this.acceptEvent({
+          id: randomUUID(),
+          sessionId: targetRun.sessionId,
+          runId: targetRun.id,
+          timestamp: appliedAt,
+          source: 'system',
+          type: 'run.steering.failed',
+          payload: {
+            steeringIds: queued.map((steering) => steering.id),
+            message,
+          },
+        });
+        return;
+      }
+
+      for (const steering of queued) {
+        this.stateStore.updateSteeringInputStatus(steering.id, 'applied', {
+          appliedRunId: next.run.id,
+          appliedAt,
+          errorMessage: null,
+        });
+      }
+      await this.acceptEvent({
+        id: randomUUID(),
+        sessionId: targetRun.sessionId,
+        runId: targetRun.id,
+        timestamp: appliedAt,
+        source: 'system',
+        type: 'run.steering.applied',
+        payload: {
+          steeringIds: queued.map((steering) => steering.id),
+          appliedRunId: next.run.id,
+          promptCount: queued.length,
+        },
+      });
+    } finally {
+      this.steeringDispatches.delete(targetRunId);
+    }
+  }
+
   private async startRun(
     sessionId: string,
     body: StartRunRequest,
   ): Promise<RunSnapshot | Error | null> {
+    const registry = this.requireProviderRevision(body.expectedProviderRevision);
+    if (registry instanceof Error) return registry;
     const session = this.stateStore.getSession(sessionId);
     if (!session) {
       return null;
     }
 
-    const provider = this.providers.get(session.providerId);
-    if (!provider) {
-      return new Error(`Provider ${session.providerId} is not configured.`);
-    }
-
-    const health = await this.getProviderHealth(session.providerId);
-    if (!health) {
-      return new Error(`Provider ${session.providerId} is not configured.`);
-    }
-    if (!health.available) {
+    const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
+    if (activeRun) {
       return new Error(
-        `${provider.displayName} is not ready for runs: ${health.detail}`,
+        `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
       );
     }
 
-    const now = new Date().toISOString();
-    const run: WorkbenchRun = {
-      id: randomUUID(),
-      sessionId: session.id,
-      providerId: session.providerId,
-      prompt: body.prompt,
-      status: 'running',
-      mode: body.mode === 'plan' ? 'plan' : 'execute',
-      preRunCommit: null,
-      createdAt: now,
-      startedAt: now,
-      completedAt: null,
-      errorMessage: null,
-    };
-
-    const preRunCommit = await getGitHeadCommit(session.workspacePath);
-    if (preRunCommit) {
-      run.preRunCommit = preRunCommit;
+    if (this.sessionRunReservations.has(session.id)) {
+      return new Error(
+        'A run launch is already being prepared for this session. Refresh before retrying.',
+      );
     }
 
-    this.stateStore.createRun(run);
+    this.sessionRunReservations.add(session.id);
+    const now = new Date().toISOString();
+    let run: WorkbenchRun;
+    let provider: ProviderAdapter;
+    try {
+      const configuredProvider = this.providers.get(session.providerId);
+      if (!configuredProvider) {
+        return new Error(`Provider ${session.providerId} is not configured.`);
+      }
+      provider = configuredProvider;
+
+      const health = await this.getProviderHealth(session.providerId);
+      if (!health) {
+        return new Error(`Provider ${session.providerId} is not configured.`);
+      }
+      if (!health.available) {
+        return new Error(
+          `${provider.displayName} is not ready for runs: ${health.detail}`,
+        );
+      }
+
+      run = {
+        id: randomUUID(),
+        sessionId: session.id,
+        providerId: session.providerId,
+        providerConfigurationRevision: registry.revision,
+        prompt: body.prompt,
+        status: 'running',
+        mode: body.mode === 'plan' ? 'plan' : 'execute',
+        preRunCommit: null,
+        createdAt: now,
+        startedAt: now,
+        completedAt: null,
+        errorMessage: null,
+      };
+
+      const preRunCommit = await getGitHeadCommit(session.workspacePath);
+      if (preRunCommit) {
+        run.preRunCommit = preRunCommit;
+      }
+
+      const confirmedRegistry = this.requireProviderRevision(
+        body.expectedProviderRevision,
+      );
+      if (confirmedRegistry instanceof Error) return confirmedRegistry;
+      const newlyActiveRun = this.stateStore
+        .listNonTerminalRuns(session.id)
+        .at(-1);
+      if (newlyActiveRun) {
+        return new Error(
+          `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+        );
+      }
+      this.stateStore.createRun(run);
+    } finally {
+      this.sessionRunReservations.delete(session.id);
+    }
     if (run.preRunCommit) {
       this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);
     }
@@ -2089,6 +3191,7 @@ export class QweminiDaemon {
       type: 'run.started',
       payload: {
         providerId: session.providerId,
+        providerConfigurationRevision: registry.revision,
         workspacePath: session.workspacePath,
         ...(session.orchestration
           ? {
@@ -2132,7 +3235,10 @@ export class QweminiDaemon {
       return new Error(`${provider.displayName} failed to start the run: ${message}`);
     }
 
-    this.runHandles.set(run.id, handle);
+    const launchedRun = this.stateStore.getRun(run.id);
+    if (launchedRun && !isTerminalRunStatus(launchedRun.status)) {
+      this.runHandles.set(run.id, handle);
+    }
     return this.getRunSnapshot(run.id);
   }
 
@@ -2297,7 +3403,7 @@ export class QweminiDaemon {
   }
 
   private getDefaultApprovalPolicy(): ApprovalPolicy {
-    const policy = (process.env.QWEMINI_APPROVAL_POLICY ?? 'manual').toLowerCase();
+    const policy = (process.env.CODEWAVE_APPROVAL_POLICY ?? 'manual').toLowerCase();
     return isApprovalPolicy(policy) ? policy : 'manual';
   }
 
@@ -2708,7 +3814,7 @@ export class QweminiDaemon {
       return;
     }
 
-    this.stateStore.appendEvent(event);
+    event = this.stateStore.appendEvent(event);
     this.syncSessionToolRegistrationFromRegisteredEvent(event);
     const invocation = this.syncToolInvocationFromEvent(event);
     this.syncSessionToolRegistrationFromEvent(event, invocation);
@@ -2787,8 +3893,8 @@ export class QweminiDaemon {
           },
         };
 
-        this.stateStore.appendEvent(artifactEvent);
-        this.eventBroker.publish(artifactEvent);
+        const persistedArtifactEvent = this.stateStore.appendEvent(artifactEvent);
+        this.eventBroker.publish(persistedArtifactEvent);
       }
     }
 
@@ -2855,6 +3961,14 @@ export class QweminiDaemon {
 
     if (event.type === 'approval.requested' || event.type === 'approval.resolved') {
       this.syncRunStatusFromApprovals(event.runId);
+    }
+
+    if (
+      event.type === 'run.completed' ||
+      event.type === 'run.failed' ||
+      event.type === 'run.cancelled'
+    ) {
+      this.scheduleQueuedSteeringDispatch(event.runId);
     }
   }
 }

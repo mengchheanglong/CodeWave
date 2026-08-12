@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
-const LEFT_WIDTH_KEY = 'qwemini:left-column-width';
-const RIGHT_WIDTH_KEY = 'qwemini:right-column-width';
-const DEFAULT_LEFT_WIDTH = 404;
-const DEFAULT_RIGHT_WIDTH = 394;
-const MIN_LEFT_WIDTH = 260;
-const MAX_LEFT_WIDTH = 460;
-const MIN_RIGHT_WIDTH = 300;
-const MAX_RIGHT_WIDTH = 520;
+const LEFT_WIDTH_KEY = 'codewave:left-column-width:v2';
+const RIGHT_WIDTH_KEY = 'codewave:right-column-width:v2';
+const DEFAULT_LEFT_WIDTH = 292;
+const DEFAULT_RIGHT_WIDTH = 348;
+const MIN_LEFT_WIDTH = 232;
+const MAX_LEFT_WIDTH = 440;
+const MIN_RIGHT_WIDTH = 286;
+const MAX_RIGHT_WIDTH = 480;
 
 function readStoredWidth(
   key: string,

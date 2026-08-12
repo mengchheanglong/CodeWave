@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CompareRunResponse, ProviderId, WorkbenchEvent } from '@qwemini/protocol';
+import type { CompareRunResponse, ProviderId, WorkbenchEvent } from '@codewave/protocol';
 import type { DaemonApi } from '../lib/daemon-api';
 import { buildTimelineSteps, type TimelineStep } from '../lib/run-inspector-views';
 import { StepTimeline } from './StepTimeline';
 import { CheckIcon, ScaleIcon, XIcon } from './icons';
 
-const PROVIDER_OPTIONS: ProviderId[] = ['qwen', 'gemini', 'opencode', 'freebuff'];
+const PROVIDER_OPTIONS: ProviderId[] = ['freebuff', 'opencode', 'qwen', 'gemini'];
 
 type CompareLaneState = {
   providerId: ProviderId;
@@ -55,6 +55,7 @@ type ComparePanelProps = {
   open: boolean;
   prompt: string;
   workspacePath: string;
+  providerRevision: string | null;
   api: DaemonApi;
   onClose: () => void;
   formatTimestamp: (timestamp: string) => string;
@@ -64,16 +65,17 @@ export function ComparePanel({
   open,
   prompt,
   workspacePath,
+  providerRevision,
   api,
   onClose,
   formatTimestamp,
 }: ComparePanelProps) {
   const [selected, setSelected] = useState<ProviderId[]>([
-    'qwen',
+    'freebuff',
     'opencode',
   ]);
   const [lanes, setLanes] = useState<CompareLaneState[]>(() =>
-    buildEmptyLanes(['qwen', 'opencode']),
+    buildEmptyLanes(['freebuff', 'opencode']),
   );
   const [started, setStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +111,10 @@ export function ComparePanel({
       setError('Type a prompt first.');
       return;
     }
+    if (!providerRevision) {
+      setError('Provider policy is unavailable. Refresh the runtime and retry.');
+      return;
+    }
 
     setStarted(true);
     setError(null);
@@ -120,6 +126,7 @@ export function ComparePanel({
         prompt,
         workspacePath,
         providers: selected,
+        expectedProviderRevision: providerRevision,
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -144,7 +151,25 @@ export function ComparePanel({
     );
 
     for (const lane of response.lanes) {
-      const source = new EventSource(`/api/runs/${lane.runSnapshot.run.id}/stream`);
+      let streamUrl: string;
+      try {
+        streamUrl = await api.getRunStreamUrl(lane.runSnapshot.run.id);
+      } catch (caught) {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'Live comparison stream negotiation failed.',
+        );
+        setLanes((current) =>
+          current.map((entry) =>
+            entry.providerId === lane.providerId
+              ? { ...entry, status: 'failed', detail: 'Stream unavailable' }
+              : entry,
+          ),
+        );
+        continue;
+      }
+      const source = new EventSource(streamUrl);
       sourceRefs.current.push(source);
       source.onmessage = (message) => {
         let event: WorkbenchEvent;
@@ -187,7 +212,12 @@ export function ComparePanel({
   }
 
   return (
-    <div className="compare-overlay" role="dialog" aria-label="Compare providers">
+    <div
+      className="compare-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Compare providers"
+    >
       <div className="compare-panel">
         <header className="compare-panel-header">
           <span className="compare-panel-title">
@@ -234,7 +264,7 @@ export function ComparePanel({
             <button
               type="button"
               className="compare-start"
-              disabled={selected.length < 2 || !prompt.trim()}
+              disabled={selected.length < 2 || !prompt.trim() || !providerRevision}
               onClick={() => {
                 void startCompare();
               }}

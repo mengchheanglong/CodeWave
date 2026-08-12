@@ -1,9 +1,9 @@
 {
-  "name": "@qwemini/state",
+  "name": "@codewave/state",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@qwemini/protocol": "file:../protocol"
+    "@codewave/protocol": "file:../protocol"
   },
   "exports": {
     ".": "./src/index.ts"

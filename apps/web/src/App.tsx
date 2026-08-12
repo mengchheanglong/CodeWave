@@ -8,7 +8,7 @@ import {
 import type {
   ApprovalPolicy,
   ProviderId,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import {
   initializeShell,
   requestApprovalResolution,
@@ -19,6 +19,7 @@ import {
   requestFollowUpRun,
   requestHandoffPrompt,
   requestRecoverSelectedSession,
+  requestRuntimeRefresh,
   requestRoutePrompt,
   requestRunSelection,
   requestSelectedSessionPolicyDraftChange,
@@ -34,6 +35,7 @@ import {
 } from './app-controller';
 import { ComparePanel } from './components/ComparePanel';
 import { PromptModal } from './components/PromptModal';
+import { ProviderSettings } from './components/ProviderSettings';
 import { QuickOpen } from './components/QuickOpen';
 import { Composer } from './components/shell/Composer';
 import { ConversationHeader } from './components/shell/ConversationHeader';
@@ -93,7 +95,7 @@ import {
   type UtilityView,
 } from './lib/shell-format';
 
-const UTILITY_COLLAPSED_KEY = 'qwemini:utility-collapsed';
+const UTILITY_COLLAPSED_KEY = 'codewave:utility-collapsed';
 
 const RAIL_VIEW_ORDER: RailView[] = ['recent', 'history', 'archive', 'flows'];
 const RUN_VIEW_ORDER: RunViewTab[] = ['chat', 'timeline'];
@@ -177,13 +179,20 @@ export default function App() {
   const [timelineExpandSignal, setTimelineExpandSignal] = useState(0);
   const [showThinking, setShowThinking] = useState(true);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
-  const compareApiRef = useRef(createDaemonApi());
+  const compareApiRef = useRef(
+    createDaemonApi({
+      onProviderRevisionConflict: async () => {
+        await requestRuntimeRefresh();
+      },
+    }),
+  );
 
   useEffect(() => {
     applyTheme(appTheme);
@@ -244,6 +253,25 @@ export default function App() {
       );
     } catch {}
   }, [utilityCollapsed]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const compactWorkbench = window.matchMedia('(max-width: 1180px)');
+    const collapseForCompactWorkbench = () => {
+      if (compactWorkbench.matches) {
+        setUtilityCollapsed(true);
+      }
+    };
+
+    collapseForCompactWorkbench();
+    compactWorkbench.addEventListener('change', collapseForCompactWorkbench);
+    return () => {
+      compactWorkbench.removeEventListener('change', collapseForCompactWorkbench);
+    };
+  }, []);
 
   useEffect(() => {
     if (!runMenuOpen) {
@@ -455,6 +483,12 @@ export default function App() {
   const activeSessionId =
     shellPanelsState.selectedSessionId?.slice(0, 8) ?? 'none';
   const hasActiveRun = Boolean(runViewState.selectedRun);
+  const runAcceptsSteering = Boolean(
+    runViewState.selectedRun &&
+      ['queued', 'running', 'awaiting_approval'].includes(
+        runViewState.selectedRun.status,
+      ),
+  );
   const hasPromptDraft = shellControlsState.prompt.trim().length > 0;
   const conversationTitle = hasActiveSession ? shellSummaryState.runTitle : 'New chat';
   const conversationWorkspace = shellControlsState.workspacePath
@@ -469,7 +503,7 @@ export default function App() {
     const segments = normalized.split(/[\\/]/).filter(Boolean);
     const leaf = segments.at(-1) ?? normalized;
     const parent = segments.at(-2) ?? null;
-    if (leaf.toLowerCase() === 'qwemini' && parent) {
+    if (leaf.toLowerCase() === 'codewave' && parent) {
       return `${parent}/${leaf}`;
     }
 
@@ -513,11 +547,15 @@ export default function App() {
     100,
     Math.round((contextUsageChars / 250000) * 100),
   );
-  const composerPlaceholder = hasActiveSession
-    ? 'Ask for follow-up changes'
+  const composerPlaceholder = runAcceptsSteering
+    ? 'Queue an update while the agent works'
+    : hasActiveSession
+      ? 'Ask for follow-up changes'
     : 'Ask CodeWave to work on this workspace';
-  const sendHelperPrimary = hasActiveSession
-    ? 'Enter to send'
+  const sendHelperPrimary = runAcceptsSteering
+    ? 'Enter to queue update'
+    : hasActiveSession
+      ? 'Enter to send'
     : 'Enter to send and create the session';
   const sendHelperSecondary = 'Shift+Enter adds a new line';
   const composerHint = shellControlsState.promptDisabled
@@ -641,6 +679,7 @@ export default function App() {
         open={compareVisible}
         prompt={shellControlsState.prompt}
         workspacePath={shellControlsState.workspacePath}
+        providerRevision={shellPanelsState.providerRegistry?.revision ?? null}
         api={compareApiRef.current}
         onClose={() => {
           setCompareVisible(false);
@@ -669,6 +708,7 @@ export default function App() {
           shellSummaryState={shellSummaryState}
           runViewState={runViewState}
           onAddFolder={handleAddFolderToRail}
+          onOpenProviderSettings={() => setProviderSettingsOpen(true)}
           showSessionSetup={showSessionSetup}
           onToggleSessionSetup={() => {
             setShowSessionSetup((current) => !current);
@@ -806,6 +846,7 @@ export default function App() {
               shellSummaryState={shellSummaryState}
               hasActiveSession={hasActiveSession}
               hasActiveRun={hasActiveRun}
+              runAcceptsSteering={runAcceptsSteering}
               conversationWorkspace={conversationWorkspace}
               activeProviderId={activeProviderId}
               activeApprovalPolicy={activeApprovalPolicy}
@@ -860,11 +901,17 @@ export default function App() {
         isOpen={isFolderModalOpen}
         title="Open Folder Workspace"
         subtitle="Specify the local directory where CodeWave should run agent tasks."
-        placeholder="e.g. C:\Users\User\archive\retired\qwemini"
+        placeholder="e.g. C:\Users\User\archive\retired\codewave"
         defaultValue={shellControlsState.workspacePath}
         confirmLabel="Open Folder"
         onConfirm={handleFolderConfirm}
         onClose={() => setIsFolderModalOpen(false)}
+      />
+      <ProviderSettings
+        open={providerSettingsOpen}
+        registry={shellPanelsState.providerRegistry}
+        health={shellPanelsState.providerHealth}
+        onClose={() => setProviderSettingsOpen(false)}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-const NOTIFICATION_PERMISSION_KEY = 'qwemini.notifications.enabled';
+const NOTIFICATION_PERMISSION_KEY = 'codewave.notifications.enabled';
 
 type AttentionKind =
   | 'approval'

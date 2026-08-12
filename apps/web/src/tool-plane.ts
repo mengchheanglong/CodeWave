@@ -1,4 +1,4 @@
-import type { ToolPlaneSnapshot } from '@qwemini/protocol';
+import type { ToolPlaneSnapshot } from '@codewave/protocol';
 
 export function formatToolPlaneSummary(
   snapshot: Pick<

@@ -28,6 +28,7 @@ export type ControllerUiSyncState = Pick<
 
 export type ControllerRequesterState = Pick<
   ShellState,
+  | 'runtime'
   | 'selectedSession'
   | 'workspacePathDraft'
   | 'providerIdDraft'
@@ -39,6 +40,7 @@ export type ControllerRequesterState = Pick<
 
 export type ControllerRunActionState = Pick<
   ShellState,
+  | 'runtime'
   | 'selectedSession'
   | 'selectedRun'
   | 'recommendation'
@@ -58,6 +60,8 @@ export type ControllerRunActionState = Pick<
   | 'undoAvailable'
   | 'undoDetail'
   | 'orchestratorNoteMessage'
+  | 'runStateNoteMessage'
+  | 'runUpdateFeedbackMessage'
   | 'recommendationRequestToken'
 >;
 
@@ -72,6 +76,7 @@ export type ControllerRuntimeSessionState = Pick<
   | 'selectedSession'
   | 'runs'
   | 'workspacePathDraft'
+  | 'providerIdDraft'
   | 'providerHealthMessage'
   | 'providerSessionLabel'
   | 'dataDirectoryLabel'
@@ -89,6 +94,7 @@ export type ControllerRunStreamState = Pick<
   | 'selectedRun'
   | 'eventSource'
   | 'events'
+  | 'transcript'
   | 'contextChars'
   | 'undoAvailable'
   | 'undoDetail'
@@ -102,6 +108,7 @@ export type ControllerRunStreamState = Pick<
   | 'runStatusLabel'
   | 'runStatusClassName'
   | 'runStateNoteMessage'
+  | 'runUpdateFeedbackMessage'
   | 'runSelectionToken'
 >;
 
@@ -123,6 +130,7 @@ export type ControllerBootstrapState = Pick<
   | 'runSelectionToken'
   | 'eventSource'
   | 'events'
+  | 'transcript'
   | 'contextChars'
   | 'undoAvailable'
   | 'undoDetail'
@@ -134,5 +142,6 @@ export type ControllerBootstrapState = Pick<
   | 'runStatusLabel'
   | 'runStatusClassName'
   | 'runStateNoteMessage'
+  | 'runUpdateFeedbackMessage'
   | 'orchestratorNoteMessage'
 >;

@@ -48,6 +48,7 @@ export {
   requestRoutingToolsDraftChange,
   requestRunModeChange,
   requestRunSelection,
+  requestRuntimeRefresh,
   requestSelectedSessionPolicyDraftChange,
   requestSessionDraftChange,
   requestSessionSelection,
@@ -76,9 +77,13 @@ export async function initializeShell() {
   ) as HTMLDivElement;
 
   mountToastContainer(toastContainer);
+  let refreshRuntimeAfterProviderConflict: (() => Promise<void>) | null = null;
   const api = createDaemonApi({
     onError: (message) => {
       toast.error(message);
+    },
+    onProviderRevisionConflict: async () => {
+      await refreshRuntimeAfterProviderConflict?.();
     },
   });
 
@@ -116,6 +121,7 @@ function emitRunViewState() {
       runs: state.runs,
       selectedRun: state.selectedRun,
       events: state.events,
+      transcript: state.transcript,
       contextChars: state.contextChars,
       undoAvailable: state.undoAvailable,
       undoDetail: state.undoDetail,
@@ -131,6 +137,7 @@ function emitShellPanelsState() {
       selectedSessionCapabilities: state.selectedSession
         ? getProviderCapabilities(state.selectedSession.providerId)
         : null,
+      runtime: state.runtime,
       recentSessions: state.sessions,
       recentSessionsMessage: state.recentSessionsMessage,
       archiveSessions: state.archiveSessions,
@@ -158,6 +165,7 @@ function emitShellSummaryState() {
     runStatusLabel: state.runStatusLabel,
     runStatusClassName: state.runStatusClassName,
     runStateNote: state.runStateNoteMessage,
+    runUpdateFeedback: state.runUpdateFeedbackMessage,
     orchestratorNote: state.orchestratorNoteMessage,
     daemonConnectionLabel: connState.status,
   });
@@ -297,6 +305,7 @@ const {
   selectRun,
   transitionToNewSession,
 });
+refreshRuntimeAfterProviderConflict = loadRuntime;
 
 const {
   cancelSelectedRun,
@@ -362,6 +371,7 @@ setControllerRequesters(createControllerRequesters({
   executePlanRun,
   undoSelectedRun,
   updateRunMode,
+  refreshRuntime: loadRuntime,
 }));
 
 emitRunViewState();

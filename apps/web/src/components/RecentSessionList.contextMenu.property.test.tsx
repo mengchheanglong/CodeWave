@@ -14,38 +14,44 @@ import type { ShellPanelsState } from '../lib/shell-panels-state';
 describe('RecentSessionList - Context Menu Properties', () => {
   const mockSessions: ShellPanelsState['recentSessions'] = [
     {
-      sessionId: 'session-1',
+      id: 'session-1',
       workspacePath: '/workspace/project-a',
-      createdAt: new Date('2024-01-01').toISOString(),
-      updatedAt: new Date('2024-01-02').toISOString(),
-      title: 'Session 1',
-      provider: 'qwen',
+      providerId: 'freebuff',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
+      latestRunPrompt: 'Session 1',
+      recovery: null,
+      orchestration: null,
     },
     {
-      sessionId: 'session-2',
+      id: 'session-2',
       workspacePath: '/workspace/project-a',
-      createdAt: new Date('2024-01-03').toISOString(),
-      updatedAt: new Date('2024-01-04').toISOString(),
-      title: 'Session 2',
-      provider: 'gemini',
+      providerId: 'opencode',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
+      latestRunPrompt: 'Session 2',
+      recovery: null,
+      orchestration: null,
     },
     {
-      sessionId: 'session-3',
+      id: 'session-3',
       workspacePath: '/workspace/project-b',
-      createdAt: new Date('2024-01-05').toISOString(),
-      updatedAt: new Date('2024-01-06').toISOString(),
-      title: 'Session 3',
-      provider: 'qwen',
+      providerId: 'freebuff',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
+      latestRunPrompt: 'Session 3',
+      recovery: null,
+      orchestration: null,
     },
   ];
 
   const defaultProps = {
     sessions: mockSessions,
     selectedSessionId: null,
+    emptyMessage: 'No sessions',
     onSelectSession: vi.fn(),
     onDeleteSession: vi.fn(),
-    onArchiveSession: vi.fn(),
-    onDeleteWorkspaceFolder: vi.fn(),
+    onDeleteWorkspaceGroup: vi.fn(),
   };
 
   beforeEach(() => {
@@ -68,9 +74,8 @@ describe('RecentSessionList - Context Menu Properties', () => {
     it('should ensure only one context menu is open at a time', async () => {
       await fc.assert(
         fc.asyncProperty(
-          fc.integer({ min: 0, max: 1 }), // First menu index (session or folder)
-          fc.integer({ min: 0, max: 1 }), // Second menu index (session or folder)
-          async (firstMenuIndex, secondMenuIndex) => {
+          fc.constantFrom([0, 1] as const, [1, 0] as const),
+          async ([firstMenuIndex, secondMenuIndex]) => {
             const { container, unmount } = render(<RecentSessionList {...defaultProps} />);
 
             try {

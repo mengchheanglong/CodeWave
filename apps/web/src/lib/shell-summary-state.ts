@@ -11,6 +11,7 @@ export type ShellSummaryState = {
   runStatusLabel: string;
   runStatusClassName: string;
   runStateNote: string;
+  runUpdateFeedback: string | null;
   orchestratorNote: string;
   daemonConnectionLabel: DaemonConnectionLabel;
 };
@@ -28,6 +29,7 @@ export const emptyShellSummaryState: ShellSummaryState = {
   runStatusLabel: 'idle',
   runStatusClassName: 'status-pill status-idle',
   runStateNote: 'Select a session and start a run.',
+  runUpdateFeedback: null,
   orchestratorNote:
     'Select a session and enter a prompt to preview daemon-owned provider routing.',
   daemonConnectionLabel: 'connecting',

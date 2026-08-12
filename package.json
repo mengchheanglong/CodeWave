@@ -1,5 +1,5 @@
 {
-  "name": "qwemini",
+  "name": "codewave",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -9,10 +9,14 @@
   ],
   "scripts": {
     "dev": "npm run build:web && tsx apps/daemon/src/index.ts",
-    "dev:web": "npm run dev -w @qwemini/web",
-    "build:web": "npm run build -w @qwemini/web",
+    "dev:web": "npm run dev -w @codewave/web",
+    "build:web": "npm run build -w @codewave/web",
     "check": "tsc --noEmit",
     "check:shell": "tsx scripts/validate-shell-usability.ts",
+    "check:providers": "tsx scripts/validate-provider-policy.ts",
+    "check:runtime": "tsx scripts/validate-provider-runtime.ts",
+    "check:transport": "tsx scripts/validate-structured-transport.ts",
+    "check:harness": "node scripts/validate-daemon-harness.mjs",
     "check:registrations": "node scripts/validate-registration-signals.mjs",
     "check:registrations:json": "node scripts/validate-registration-signals.mjs --summary-json artifacts/registration-summary.json"
   },

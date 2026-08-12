@@ -3,7 +3,7 @@
  * Copyright 2025 Qwen Team
  * SPDX-License-Identifier: Apache-2.0
  *
- * Adapted for Qwemini from:
+ * Adapted for CodeWave from:
  * QwenLM/qwen-code
  * packages/cli/src/nonInteractive/io/StreamJsonInputReader.ts
  * commit 92f7549bdc684f264ae09dc4a6f8e7398363f53e

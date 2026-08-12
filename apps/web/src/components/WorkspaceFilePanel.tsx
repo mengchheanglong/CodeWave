@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { EmptyState } from './EmptyState';
 import { PromptModal } from './PromptModal';
 import { FileTextIcon, FolderIcon } from './icons';
+import { daemonFetch } from '../lib/daemon-api';
 
 type WorkspaceEntryKind = 'file' | 'folder';
 
@@ -102,7 +103,9 @@ async function requestWorkspaceJson<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(path, options);
+  const response = await daemonFetch(path, options, {
+    negotiateBeforeRequest: false,
+  });
   if (!response.ok) {
     const payload = (await response
       .json()
@@ -148,7 +151,14 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
       const response = await requestWorkspaceJson<WorkspaceEntriesResponse>(
         `/api/workspace/entries?${params.toString()}`,
       );
-      setRelativePath(response.relativePath);
+      if (!response || !Array.isArray(response.entries)) {
+        throw new Error('Workspace response did not include an entries list.');
+      }
+      setRelativePath(
+        typeof response.relativePath === 'string'
+          ? response.relativePath
+          : normalizedRelativePath,
+      );
       setEntries(response.entries);
     } catch (loadError) {
       const message =

@@ -2,22 +2,38 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+  CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
   type ArchiveSessionSummary,
   type ApprovalPolicy,
   type ApprovalRecord,
   type ArtifactRecord,
   type CheckpointRecord,
   type ProviderId,
+  type RunSteeringInput,
+  type RunSteeringStatus,
   type RunStatus,
   type SessionToolRegistration,
   type SessionOrchestrationMetadata,
   type SessionRecoveryMetadata,
   type ToolInvocationRecord,
   type ToolInvocationStatus,
+  type TranscriptMessage,
+  type TranscriptRole,
+  type TranscriptWindow,
   type WorkbenchEvent,
   type WorkbenchRun,
   type WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
+
+export type MutationReceipt = {
+  key: string;
+  operation: string;
+  requestHash: string;
+  statusCode: number;
+  responseJson: string;
+  createdAt: string;
+};
 
 function parseJson<T>(value: string | null): T {
   if (!value) {
@@ -40,7 +56,7 @@ function toJson(value: unknown): string {
 }
 
 export function resolveDataDirectory(rootPath: string): string {
-  return path.join(rootPath, '.qwemini');
+  return path.join(rootPath, '.codewave');
 }
 
 export class SQLiteStateStore {
@@ -60,6 +76,7 @@ export class SQLiteStateStore {
         id TEXT PRIMARY KEY,
         workspace_path TEXT NOT NULL,
         provider_id TEXT NOT NULL,
+        provider_configuration_revision TEXT NOT NULL DEFAULT 'legacy-unversioned',
         created_at TEXT NOT NULL,
         provider_session_id TEXT,
         approval_policy TEXT NOT NULL DEFAULT 'manual',
@@ -79,6 +96,7 @@ export class SQLiteStateStore {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         provider_id TEXT NOT NULL,
+        provider_configuration_revision TEXT NOT NULL DEFAULT 'legacy-unversioned',
         prompt TEXT NOT NULL,
         status TEXT NOT NULL,
         mode TEXT NOT NULL DEFAULT 'execute',
@@ -93,10 +111,25 @@ export class SQLiteStateStore {
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL DEFAULT 0,
         timestamp TEXT NOT NULL,
         source TEXT NOT NULL,
         type TEXT NOT NULL,
         payload_json TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS transcript_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        parent_message_id TEXT REFERENCES transcript_messages(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        source_event_id TEXT UNIQUE,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(session_id, sequence)
       );
 
       CREATE TABLE IF NOT EXISTS artifacts (
@@ -163,6 +196,41 @@ export class SQLiteStateStore {
         metadata_json TEXT NOT NULL DEFAULT '{}',
         UNIQUE(session_id, provider_id, tool_name)
       );
+
+      CREATE TABLE IF NOT EXISTS mutation_receipts (
+        idempotency_key TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS run_steering_inputs (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        target_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        expected_run_id TEXT NOT NULL,
+        provider_configuration_revision TEXT NOT NULL DEFAULT 'legacy-unversioned',
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        applied_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+        applied_at TEXT,
+        error_message TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS run_steering_target_status_idx
+      ON run_steering_inputs(target_run_id, status, created_at);
+
+      CREATE INDEX IF NOT EXISTS mutation_receipts_created_at_idx
+      ON mutation_receipts(created_at);
+
+      CREATE INDEX IF NOT EXISTS transcript_messages_session_sequence_idx
+      ON transcript_messages(session_id, sequence);
+
+      CREATE INDEX IF NOT EXISTS transcript_messages_run_sequence_idx
+      ON transcript_messages(run_id, sequence);
     `);
 
     this.ensureColumn('sessions', 'provider_session_id', 'TEXT');
@@ -170,6 +238,11 @@ export class SQLiteStateStore {
       'sessions',
       'approval_policy',
       "TEXT NOT NULL DEFAULT 'manual'",
+    );
+    this.ensureColumn(
+      'sessions',
+      'provider_configuration_revision',
+      "TEXT NOT NULL DEFAULT 'legacy-unversioned'",
     );
     this.ensureColumn('sessions', 'recovery_kind', 'TEXT');
     this.ensureColumn('sessions', 'source_session_id', 'TEXT');
@@ -183,6 +256,17 @@ export class SQLiteStateStore {
     this.ensureColumn('sessions', 'orchestration_source_provider_id', 'TEXT');
     this.ensureColumn('runs', 'mode', "TEXT NOT NULL DEFAULT 'execute'");
     this.ensureColumn('runs', 'pre_run_commit', 'TEXT');
+    this.ensureColumn(
+      'runs',
+      'provider_configuration_revision',
+      "TEXT NOT NULL DEFAULT 'legacy-unversioned'",
+    );
+    this.ensureColumn('events', 'sequence', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn(
+      'run_steering_inputs',
+      'provider_configuration_revision',
+      "TEXT NOT NULL DEFAULT 'legacy-unversioned'",
+    );
     this.ensureColumn('approvals', 'tool_use_id', 'TEXT');
     this.ensureColumn(
       'approvals',
@@ -203,6 +287,112 @@ export class SQLiteStateStore {
       'metadata_json',
       "TEXT NOT NULL DEFAULT '{}'",
     );
+
+    this.database.exec(`
+      WITH ranked_events AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY run_id
+            ORDER BY timestamp ASC, id ASC
+          ) AS run_sequence
+        FROM events
+      )
+      UPDATE events
+      SET sequence = (
+        SELECT run_sequence
+        FROM ranked_events
+        WHERE ranked_events.id = events.id
+      )
+      WHERE sequence = 0;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS events_run_sequence_idx
+      ON events(run_id, sequence);
+
+      WITH transcript_candidates AS (
+        SELECT
+          'transcript:run:' || runs.id || ':prompt' AS id,
+          runs.session_id,
+          runs.id AS run_id,
+          'user' AS role,
+          TRIM(runs.prompt) AS content,
+          runs.created_at,
+          NULL AS source_event_id,
+          '{"origin":"run.prompt","migration":"transcript-v1"}' AS metadata_json,
+          0 AS source_order
+        FROM runs
+        WHERE TRIM(runs.prompt) <> ''
+        UNION ALL
+        SELECT
+          'transcript:event:' || events.id AS id,
+          events.session_id,
+          events.run_id,
+          json_extract(events.payload_json, '$.role') AS role,
+          TRIM(json_extract(events.payload_json, '$.content')) AS content,
+          events.timestamp AS created_at,
+          events.id AS source_event_id,
+          '{"origin":"message.created","migration":"transcript-v1"}' AS metadata_json,
+          1 AS source_order
+        FROM events
+        WHERE events.type = 'message.created'
+          AND json_extract(events.payload_json, '$.role') IN ('user', 'assistant', 'system')
+          AND TRIM(COALESCE(json_extract(events.payload_json, '$.content'), '')) <> ''
+      ),
+      ranked_transcript AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY session_id
+            ORDER BY created_at ASC, source_order ASC, id ASC
+          ) AS transcript_sequence
+        FROM transcript_candidates
+      ),
+      linked_transcript AS (
+        SELECT
+          *,
+          LAG(id) OVER (
+            PARTITION BY session_id
+            ORDER BY transcript_sequence ASC
+          ) AS parent_id
+        FROM ranked_transcript
+      )
+      INSERT OR IGNORE INTO transcript_messages (
+        id,
+        session_id,
+        run_id,
+        sequence,
+        parent_message_id,
+        role,
+        content,
+        created_at,
+        source_event_id,
+        metadata_json
+      )
+      SELECT
+        id,
+        session_id,
+        run_id,
+        transcript_sequence,
+        parent_id,
+        role,
+        content,
+        created_at,
+        source_event_id,
+        metadata_json
+      FROM linked_transcript;
+    `);
+  }
+
+  private withImmediateTransaction<T>(work: () => T): T {
+    this.database.exec('BEGIN IMMEDIATE;');
+    try {
+      const result = work();
+      this.database.exec('COMMIT;');
+      return result;
+    } catch (error) {
+      this.database.exec('ROLLBACK;');
+      throw error;
+    }
   }
 
   private ensureColumn(
@@ -227,6 +417,9 @@ export class SQLiteStateStore {
       id: String(row.id),
       workspacePath: String(row.workspace_path),
       providerId: String(row.provider_id) as ProviderId,
+      providerConfigurationRevision: row.provider_configuration_revision
+        ? String(row.provider_configuration_revision)
+        : 'legacy-unversioned',
       createdAt: String(row.created_at),
       providerSessionId: row.provider_session_id
         ? String(row.provider_session_id)
@@ -273,6 +466,7 @@ export class SQLiteStateStore {
             id,
             workspace_path,
             provider_id,
+            provider_configuration_revision,
             created_at,
             provider_session_id,
             approval_policy,
@@ -287,13 +481,14 @@ export class SQLiteStateStore {
             orchestration_source_run_id,
             orchestration_source_provider_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         session.id,
         session.workspacePath,
         session.providerId,
+        session.providerConfigurationRevision,
         session.createdAt,
         session.providerSessionId,
         session.approvalPolicy,
@@ -320,6 +515,7 @@ export class SQLiteStateStore {
             id,
             workspace_path,
             provider_id,
+            provider_configuration_revision,
             created_at,
             provider_session_id,
             approval_policy,
@@ -363,6 +559,7 @@ export class SQLiteStateStore {
             id,
             workspace_path,
             provider_id,
+            provider_configuration_revision,
             created_at,
             provider_session_id,
             approval_policy,
@@ -408,6 +605,7 @@ export class SQLiteStateStore {
       providerSessionId?: string | null;
       approvalPolicy?: ApprovalPolicy;
       providerId?: ProviderId;
+      providerConfigurationRevision?: string;
     } = {},
   ): void {
     const current = this.getSession(sessionId);
@@ -422,7 +620,8 @@ export class SQLiteStateStore {
           SET
             provider_session_id = ?,
             approval_policy = ?,
-            provider_id = ?
+            provider_id = ?,
+            provider_configuration_revision = ?
           WHERE id = ?
         `,
       )
@@ -430,43 +629,67 @@ export class SQLiteStateStore {
         updates.providerSessionId ?? current.providerSessionId,
         updates.approvalPolicy ?? current.approvalPolicy,
         updates.providerId ?? current.providerId,
+        updates.providerConfigurationRevision ??
+          current.providerConfigurationRevision,
         sessionId,
       );
   }
 
   createRun(run: WorkbenchRun): WorkbenchRun {
-    this.database
-      .prepare(
-        `
-          INSERT INTO runs (
-            id,
-            session_id,
-            provider_id,
-            prompt,
-            status,
-            mode,
-            pre_run_commit,
-            created_at,
-            started_at,
-            completed_at,
-            error_message
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        run.id,
-        run.sessionId,
-        run.providerId,
-        run.prompt,
-        run.status,
-        run.mode,
-        run.preRunCommit ?? null,
-        run.createdAt,
-        run.startedAt,
-        run.completedAt,
-        run.errorMessage,
-      );
+    this.withImmediateTransaction(() => {
+      this.database
+        .prepare(
+          `
+            INSERT INTO runs (
+              id,
+              session_id,
+              provider_id,
+              provider_configuration_revision,
+              prompt,
+              status,
+              mode,
+              pre_run_commit,
+              created_at,
+              started_at,
+              completed_at,
+              error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          run.id,
+          run.sessionId,
+          run.providerId,
+          run.providerConfigurationRevision,
+          run.prompt,
+          run.status,
+          run.mode,
+          run.preRunCommit ?? null,
+          run.createdAt,
+          run.startedAt,
+          run.completedAt,
+          run.errorMessage,
+        );
+
+      const prompt = run.prompt.trim();
+      if (prompt) {
+        this.insertTranscriptMessage({
+          id: `transcript:run:${run.id}:prompt`,
+          sessionId: run.sessionId,
+          runId: run.id,
+          role: 'user',
+          content: prompt,
+          createdAt: run.createdAt,
+          sourceEventId: null,
+          metadata: {
+            origin: 'run.prompt',
+            providerId: run.providerId,
+            providerConfigurationRevision: run.providerConfigurationRevision,
+          },
+        });
+      }
+    });
 
     return run;
   }
@@ -475,7 +698,7 @@ export class SQLiteStateStore {
     const rows = this.database
       .prepare(
         `
-          SELECT id, session_id, provider_id, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
+          SELECT id, session_id, provider_id, provider_configuration_revision, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
           FROM runs
           WHERE session_id = ?
           ORDER BY created_at DESC
@@ -486,11 +709,29 @@ export class SQLiteStateStore {
     return rows.map((row) => this.mapRunRow(row));
   }
 
+  listNonTerminalRuns(sessionId?: string): WorkbenchRun[] {
+    const where = sessionId
+      ? "WHERE session_id = ? AND status IN ('queued', 'running', 'awaiting_approval')"
+      : "WHERE status IN ('queued', 'running', 'awaiting_approval')";
+    const statement = this.database.prepare(
+      `
+        SELECT id, session_id, provider_id, provider_configuration_revision, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
+        FROM runs
+        ${where}
+        ORDER BY created_at ASC, id ASC
+      `,
+    );
+    const rows = (sessionId ? statement.all(sessionId) : statement.all()) as Array<
+      Record<string, unknown>
+    >;
+    return rows.map((row) => this.mapRunRow(row));
+  }
+
   getRun(runId: string): WorkbenchRun | null {
     const row = this.database
       .prepare(
         `
-          SELECT id, session_id, provider_id, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
+          SELECT id, session_id, provider_id, provider_configuration_revision, prompt, status, mode, pre_run_commit, created_at, started_at, completed_at, error_message
           FROM runs
           WHERE id = ?
         `,
@@ -521,6 +762,9 @@ export class SQLiteStateStore {
       id: String(row.id),
       sessionId: String(row.session_id),
       providerId: String(row.provider_id) as ProviderId,
+      providerConfigurationRevision: String(
+        row.provider_configuration_revision ?? 'legacy-unversioned',
+      ),
       prompt: String(row.prompt),
       status: String(row.status) as RunStatus,
       mode: row.mode === 'plan' ? 'plan' : 'execute',
@@ -562,41 +806,322 @@ export class SQLiteStateStore {
       );
   }
 
-  appendEvent(event: WorkbenchEvent): WorkbenchEvent {
+  private mapTranscriptRow(row: Record<string, unknown>): TranscriptMessage {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      runId: String(row.run_id),
+      sequence: Number(row.sequence),
+      parentMessageId: row.parent_message_id
+        ? String(row.parent_message_id)
+        : null,
+      role: String(row.role) as TranscriptRole,
+      content: String(row.content),
+      createdAt: String(row.created_at),
+      sourceEventId: row.source_event_id ? String(row.source_event_id) : null,
+      metadata: parseJson<Record<string, unknown>>(String(row.metadata_json)),
+    };
+  }
+
+  private insertTranscriptMessage(
+    message: Omit<TranscriptMessage, 'sequence' | 'parentMessageId'>,
+  ): TranscriptMessage {
+    const previous = this.database
+      .prepare(
+        `
+          SELECT id, sequence
+          FROM transcript_messages
+          WHERE session_id = ?
+          ORDER BY sequence DESC
+          LIMIT 1
+        `,
+      )
+      .get(message.sessionId) as Record<string, unknown> | undefined;
+    const persisted: TranscriptMessage = {
+      ...message,
+      sequence: previous ? Number(previous.sequence) + 1 : 1,
+      parentMessageId: previous ? String(previous.id) : null,
+    };
+
     this.database
       .prepare(
         `
-          INSERT INTO events (id, session_id, run_id, timestamp, source, type, payload_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO transcript_messages (
+            id,
+            session_id,
+            run_id,
+            sequence,
+            parent_message_id,
+            role,
+            content,
+            created_at,
+            source_event_id,
+            metadata_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
-        event.id,
-        event.sessionId,
-        event.runId,
-        event.timestamp,
-        event.source,
-        event.type,
-        toJson(event.payload),
+        persisted.id,
+        persisted.sessionId,
+        persisted.runId,
+        persisted.sequence,
+        persisted.parentMessageId,
+        persisted.role,
+        persisted.content,
+        persisted.createdAt,
+        persisted.sourceEventId,
+        toJson(persisted.metadata),
       );
 
-    return event;
+    return persisted;
   }
 
-  listEvents(runId: string): WorkbenchEvent[] {
+  listTranscriptMessages(
+    sessionId: string,
+    options: { beforeSequence?: number; limit?: number } = {},
+  ): TranscriptWindow {
+    const limit = Math.max(
+      1,
+      Math.min(
+        Math.trunc(
+          options.limit ?? CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+        ),
+        CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
+      ),
+    );
+    const beforeSequence =
+      typeof options.beforeSequence === 'number'
+        ? Math.max(1, Math.trunc(options.beforeSequence))
+        : null;
     const rows = this.database
       .prepare(
         `
-          SELECT id, session_id, run_id, timestamp, source, type, payload_json
-          FROM events
-          WHERE run_id = ?
-          ORDER BY timestamp ASC, id ASC
+          SELECT *
+          FROM (
+            SELECT
+              id,
+              session_id,
+              run_id,
+              sequence,
+              parent_message_id,
+              role,
+              content,
+              created_at,
+              source_event_id,
+              metadata_json
+            FROM transcript_messages
+            WHERE session_id = ?
+              AND (? IS NULL OR sequence < ?)
+            ORDER BY sequence DESC
+            LIMIT ?
+          )
+          ORDER BY sequence ASC
         `,
       )
-      .all(runId) as Array<Record<string, unknown>>;
+      .all(sessionId, beforeSequence, beforeSequence, limit) as Array<
+      Record<string, unknown>
+    >;
+    const messages = rows.map((row) => this.mapTranscriptRow(row));
+    const totalCount = Number(
+      (
+        this.database
+          .prepare(
+            `
+              SELECT COUNT(*) AS total_count
+              FROM transcript_messages
+              WHERE session_id = ?
+            `,
+          )
+          .get(sessionId) as Record<string, unknown>
+      ).total_count,
+    );
+    const oldestSequence = messages[0]?.sequence ?? null;
+    const newestSequence = messages.at(-1)?.sequence ?? null;
+    const hasMoreBefore =
+      oldestSequence !== null &&
+      Boolean(
+        this.database
+          .prepare(
+            `
+              SELECT 1
+              FROM transcript_messages
+              WHERE session_id = ? AND sequence < ?
+              LIMIT 1
+            `,
+          )
+          .get(sessionId, oldestSequence),
+      );
+
+    return {
+      sessionId,
+      messages,
+      hasMoreBefore,
+      oldestSequence,
+      newestSequence,
+      totalCount,
+    };
+  }
+
+  getLatestTranscriptSequenceForRun(runId: string): number | null {
+    const row = this.database
+      .prepare(
+        `
+          SELECT MAX(sequence) AS latest_sequence
+          FROM transcript_messages
+          WHERE run_id = ?
+        `,
+      )
+      .get(runId) as Record<string, unknown>;
+    return row.latest_sequence === null || row.latest_sequence === undefined
+      ? null
+      : Number(row.latest_sequence);
+  }
+
+  appendEvent(event: WorkbenchEvent): WorkbenchEvent {
+    const persistedEvent = this.withImmediateTransaction(() => {
+      const nextSequence = Number(
+        (
+          this.database
+            .prepare(
+              `
+                SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+                FROM events
+                WHERE run_id = ?
+              `,
+            )
+            .get(event.runId) as Record<string, unknown>
+        ).next_sequence,
+      );
+      const nextEvent = {
+        ...event,
+        sequence:
+          typeof event.sequence === 'number' && event.sequence > 0
+            ? event.sequence
+            : nextSequence,
+      };
+
+      this.database
+        .prepare(
+          `
+            INSERT INTO events (
+              id,
+              session_id,
+              run_id,
+              sequence,
+              timestamp,
+              source,
+              type,
+              payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          nextEvent.id,
+          nextEvent.sessionId,
+          nextEvent.runId,
+          nextEvent.sequence,
+          nextEvent.timestamp,
+          nextEvent.source,
+          nextEvent.type,
+          toJson(nextEvent.payload),
+        );
+
+      if (nextEvent.type === 'message.created') {
+        const role = nextEvent.payload.role;
+        const content =
+          typeof nextEvent.payload.content === 'string'
+            ? nextEvent.payload.content.trim()
+            : '';
+        if (
+          (role === 'user' || role === 'assistant' || role === 'system') &&
+          content
+        ) {
+          this.insertTranscriptMessage({
+            id: `transcript:event:${nextEvent.id}`,
+            sessionId: nextEvent.sessionId,
+            runId: nextEvent.runId,
+            role,
+            content,
+            createdAt: nextEvent.timestamp,
+            sourceEventId: nextEvent.id,
+            metadata: {
+              origin: 'message.created',
+              eventSource: nextEvent.source,
+            },
+          });
+        }
+      }
+
+      return nextEvent;
+    });
+
+    return persistedEvent;
+  }
+
+  listEvents(
+    runId: string,
+    options: { afterSequence?: number; limit?: number } = {},
+  ): WorkbenchEvent[] {
+    const limit = options.limit
+      ? Math.max(1, Math.min(Math.trunc(options.limit), 1000))
+      : null;
+    const afterSequence =
+      typeof options.afterSequence === 'number'
+        ? Math.max(0, Math.trunc(options.afterSequence))
+        : null;
+
+    let rows: Array<Record<string, unknown>>;
+    if (afterSequence !== null) {
+      rows = this.database
+        .prepare(
+          `
+            SELECT
+              id, session_id, run_id, sequence, timestamp, source, type, payload_json
+            FROM events
+            WHERE run_id = ? AND sequence > ?
+            ORDER BY sequence ASC
+            ${limit === null ? '' : 'LIMIT ?'}
+          `,
+        )
+        .all(...(limit === null ? [runId, afterSequence] : [runId, afterSequence, limit])) as Array<
+        Record<string, unknown>
+      >;
+    } else if (limit !== null) {
+      rows = this.database
+        .prepare(
+          `
+            SELECT *
+            FROM (
+              SELECT
+                id, session_id, run_id, sequence, timestamp, source, type, payload_json
+              FROM events
+              WHERE run_id = ?
+              ORDER BY sequence DESC
+              LIMIT ?
+            )
+            ORDER BY sequence ASC
+          `,
+        )
+        .all(runId, limit) as Array<Record<string, unknown>>;
+    } else {
+      rows = this.database
+        .prepare(
+          `
+            SELECT
+              id, session_id, run_id, sequence, timestamp, source, type, payload_json
+            FROM events
+            WHERE run_id = ?
+            ORDER BY sequence ASC
+          `,
+        )
+        .all(runId) as Array<Record<string, unknown>>;
+    }
 
     return rows.map((row) => ({
       id: String(row.id),
+      sequence: Number(row.sequence),
       sessionId: String(row.session_id),
       runId: String(row.run_id),
       timestamp: String(row.timestamp),
@@ -604,6 +1129,210 @@ export class SQLiteStateStore {
       type: String(row.type) as WorkbenchEvent['type'],
       payload: parseJson<Record<string, unknown>>(String(row.payload_json)),
     }));
+  }
+
+  createSteeringInput(input: RunSteeringInput): RunSteeringInput {
+    this.database
+      .prepare(
+        `
+          INSERT INTO run_steering_inputs (
+            id,
+            session_id,
+            target_run_id,
+            expected_run_id,
+            provider_configuration_revision,
+            prompt,
+            status,
+            created_at,
+            applied_run_id,
+            applied_at,
+            error_message
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        input.id,
+        input.sessionId,
+        input.targetRunId,
+        input.expectedRunId,
+        input.providerConfigurationRevision,
+        input.prompt,
+        input.status,
+        input.createdAt,
+        input.appliedRunId,
+        input.appliedAt,
+        input.errorMessage,
+      );
+    return input;
+  }
+
+  listSteeringInputs(targetRunId: string): RunSteeringInput[] {
+    const rows = this.database
+      .prepare(
+        `
+          SELECT id, session_id, target_run_id, expected_run_id, provider_configuration_revision, prompt, status, created_at, applied_run_id, applied_at, error_message
+          FROM run_steering_inputs
+          WHERE target_run_id = ?
+          ORDER BY created_at ASC, id ASC
+        `,
+      )
+      .all(targetRunId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSteeringInputRow(row));
+  }
+
+  listQueuedSteeringInputs(targetRunId?: string): RunSteeringInput[] {
+    const where = targetRunId
+      ? "WHERE target_run_id = ? AND status = 'queued'"
+      : "WHERE status = 'queued'";
+    const statement = this.database.prepare(
+      `
+        SELECT id, session_id, target_run_id, expected_run_id, provider_configuration_revision, prompt, status, created_at, applied_run_id, applied_at, error_message
+        FROM run_steering_inputs
+        ${where}
+        ORDER BY created_at ASC, id ASC
+      `,
+    );
+    const rows = (targetRunId
+      ? statement.all(targetRunId)
+      : statement.all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapSteeringInputRow(row));
+  }
+
+  updateSteeringInputStatus(
+    steeringId: string,
+    status: RunSteeringStatus,
+    updates: {
+      appliedRunId?: string | null;
+      appliedAt?: string | null;
+      errorMessage?: string | null;
+    } = {},
+  ): void {
+    this.database
+      .prepare(
+        `
+          UPDATE run_steering_inputs
+          SET status = ?, applied_run_id = ?, applied_at = ?, error_message = ?
+          WHERE id = ?
+        `,
+      )
+      .run(
+        status,
+        updates.appliedRunId ?? null,
+        updates.appliedAt ?? null,
+        updates.errorMessage ?? null,
+        steeringId,
+      );
+  }
+
+  transitionQueuedSteeringInput(
+    steeringId: string,
+    status: Exclude<RunSteeringStatus, 'queued'>,
+    updates: {
+      appliedRunId?: string | null;
+      appliedAt?: string | null;
+      errorMessage?: string | null;
+    } = {},
+  ): boolean {
+    const result = this.database
+      .prepare(
+        `
+          UPDATE run_steering_inputs
+          SET status = ?, applied_run_id = ?, applied_at = ?, error_message = ?
+          WHERE id = ? AND status = 'queued'
+        `,
+      )
+      .run(
+        status,
+        updates.appliedRunId ?? null,
+        updates.appliedAt ?? null,
+        updates.errorMessage ?? null,
+        steeringId,
+      );
+    return result.changes === 1;
+  }
+
+  private mapSteeringInputRow(row: Record<string, unknown>): RunSteeringInput {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      targetRunId: String(row.target_run_id),
+      expectedRunId: String(row.expected_run_id),
+      providerConfigurationRevision: String(
+        row.provider_configuration_revision ?? 'legacy-unversioned',
+      ),
+      prompt: String(row.prompt),
+      status: String(row.status) as RunSteeringStatus,
+      createdAt: String(row.created_at),
+      appliedRunId: row.applied_run_id ? String(row.applied_run_id) : null,
+      appliedAt: row.applied_at ? String(row.applied_at) : null,
+      errorMessage: row.error_message ? String(row.error_message) : null,
+    };
+  }
+
+  getMutationReceipt(key: string): MutationReceipt | null {
+    const row = this.database
+      .prepare(
+        `
+          SELECT idempotency_key, operation, request_hash, status_code, response_json, created_at
+          FROM mutation_receipts
+          WHERE idempotency_key = ?
+        `,
+      )
+      .get(key) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      key: String(row.idempotency_key),
+      operation: String(row.operation),
+      requestHash: String(row.request_hash),
+      statusCode: Number(row.status_code),
+      responseJson: String(row.response_json),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  createMutationReceipt(receipt: MutationReceipt): MutationReceipt {
+    this.database
+      .prepare(
+        `
+          INSERT INTO mutation_receipts (
+            idempotency_key, operation, request_hash, status_code, response_json, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        receipt.key,
+        receipt.operation,
+        receipt.requestHash,
+        receipt.statusCode,
+        receipt.responseJson,
+        receipt.createdAt,
+      );
+    return receipt;
+  }
+
+  finalizeMutationReceipt(
+    key: string,
+    statusCode: number,
+    responseJson: string,
+  ): void {
+    this.database
+      .prepare(
+        `
+          UPDATE mutation_receipts
+          SET status_code = ?, response_json = ?
+          WHERE idempotency_key = ?
+        `,
+      )
+      .run(statusCode, responseJson, key);
+  }
+
+  pruneMutationReceipts(olderThan: string): number {
+    const result = this.database
+      .prepare('DELETE FROM mutation_receipts WHERE created_at < ?')
+      .run(olderThan);
+    return Number(result.changes ?? 0);
   }
 
   createToolInvocation(invocation: ToolInvocationRecord): ToolInvocationRecord {

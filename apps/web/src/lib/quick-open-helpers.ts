@@ -1,4 +1,4 @@
-import type { RunStatus } from '@qwemini/protocol';
+import type { RunStatus } from '@codewave/protocol';
 
 export function getWorkspaceLabel(workspacePath: string) {
   const segments = workspacePath.split(/[\\/]/).filter(Boolean);

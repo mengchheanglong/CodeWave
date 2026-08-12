@@ -1,5 +1,5 @@
 import { useMemo, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
-import type { ApprovalPolicy, ProviderId } from '@qwemini/protocol';
+import type { ApprovalPolicy, ProviderId } from '@codewave/protocol';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { ShellSummaryState } from '../../lib/shell-summary-state';
@@ -17,6 +17,7 @@ type ComposerProps = {
   shellSummaryState: ShellSummaryState;
   hasActiveSession: boolean;
   hasActiveRun: boolean;
+  runAcceptsSteering: boolean;
   conversationWorkspace: string;
   activeProviderId: ProviderId;
   activeApprovalPolicy: ApprovalPolicy;
@@ -38,6 +39,7 @@ export function Composer({
   shellSummaryState,
   hasActiveSession,
   hasActiveRun,
+  runAcceptsSteering,
   conversationWorkspace,
   activeProviderId,
   activeApprovalPolicy,
@@ -100,6 +102,9 @@ export function Composer({
   const modeLocked = hasActiveSession
     ? shellControlsState.selectedSessionApprovalPolicyDisabled
     : shellControlsState.sessionApprovalPolicyDisabled;
+  const updateFeedback = hasActiveRun
+    ? shellSummaryState.runUpdateFeedback
+    : null;
 
   return (
     <form
@@ -141,6 +146,18 @@ export function Composer({
         onKeyDown={handleComposerKeyDown}
       ></textarea>
 
+      {updateFeedback ? (
+        <div
+          className="composer-run-feedback"
+          role="status"
+          aria-live="polite"
+          title={updateFeedback}
+        >
+          <span className="composer-run-feedback-dot" aria-hidden="true"></span>
+          <span>{updateFeedback}</span>
+        </div>
+      ) : null}
+
       <div className="composer-footer">
         <div className="composer-footer-top">
           <div className="composer-footer-meta">
@@ -169,6 +186,7 @@ export function Composer({
           <ComposerActions
             contextUsagePercent={contextUsagePercent}
             hasActiveRun={hasActiveRun}
+            runAcceptsSteering={runAcceptsSteering}
             hasPromptDraft={hasPromptDraft}
             sendHelperPrimary={sendHelperPrimary}
             sendHelperSecondary={sendHelperSecondary}

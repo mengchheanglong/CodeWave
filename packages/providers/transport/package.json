@@ -1,0 +1,12 @@
+{
+  "name": "@codewave/provider-transport",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.18.0",
+    "@codewave/protocol": "file:../../protocol"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

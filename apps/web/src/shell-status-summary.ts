@@ -6,7 +6,7 @@ import type {
   ProviderId,
   RunStatus,
   WorkbenchRun,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 type SessionLike = {
   providerId: ProviderId;
@@ -50,7 +50,13 @@ export function formatProviderCapabilities(
   const checkpointMode = capabilities.checkpointEvents
     ? 'checkpoints'
     : 'no checkpoints';
-  return [approvalMode, resumeMode, checkpointMode].join(', ');
+  const steeringMode =
+    capabilities.inFlightSteering === 'native'
+      ? 'live steering'
+      : capabilities.inFlightSteering === 'runtime-negotiated'
+        ? 'bridge-negotiated steering'
+        : 'queued steering';
+  return [approvalMode, resumeMode, checkpointMode, steeringMode].join(', ');
 }
 
 export function formatProviderHealthSummary(
@@ -148,6 +154,13 @@ export function buildSessionProviderNote({
       ? 'Provider checkpoint events can be recovered directly.'
       : 'Provider checkpoint events are not emitted; use session recovery instead.',
   );
+  notes.push(
+    capabilities.inFlightSteering === 'native'
+      ? 'Updates can steer an active run directly.'
+      : capabilities.inFlightSteering === 'runtime-negotiated'
+        ? 'Active-run updates use live steering when the runtime negotiates it, with a durable queued fallback.'
+        : 'Active-run updates are preserved as queued follow-ups.',
+  );
 
   return notes.join(' ');
 }
@@ -186,6 +199,13 @@ export function buildSelectedSessionNote({
     capabilities.resumableSessions
       ? 'Session recovery is available when provider resume metadata exists.'
       : 'Session recovery is not available for this provider.',
+  );
+  notes.push(
+    capabilities.inFlightSteering === 'native'
+      ? 'Updates can steer the active run directly.'
+      : capabilities.inFlightSteering === 'runtime-negotiated'
+        ? 'The runtime may accept live updates; CodeWave safely queues any update it cannot acknowledge.'
+        : 'Updates sent during a run continue as durable follow-ups.',
   );
 
   if (providerUnavailableDetail) {

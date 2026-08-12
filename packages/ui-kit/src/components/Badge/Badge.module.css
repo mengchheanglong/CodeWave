@@ -1,69 +1,22 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  gap: 5px;
+  min-height: 20px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.025em;
   line-height: 1;
   white-space: nowrap;
-  border: 1px solid transparent;
 }
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.9;
-}
-
-/* tones */
-.neutral {
-  color: var(--text-secondary, #8b949e);
-  background: color-mix(in srgb, var(--text-secondary, #8b949e) 12%, transparent);
-  border-color: color-mix(in srgb, var(--text-secondary, #8b949e) 22%, transparent);
-}
-
-.info {
-  color: var(--status-info, #58a6ff);
-  background: color-mix(in srgb, var(--status-info, #58a6ff) 12%, transparent);
-  border-color: color-mix(in srgb, var(--status-info, #58a6ff) 25%, transparent);
-}
-
-.success {
-  color: var(--status-success, #3fb950);
-  background: color-mix(in srgb, var(--status-success, #3fb950) 12%, transparent);
-  border-color: color-mix(in srgb, var(--status-success, #3fb950) 25%, transparent);
-}
-
-.warning {
-  color: var(--status-warning, #d29922);
-  background: color-mix(in srgb, var(--status-warning, #d29922) 12%, transparent);
-  border-color: color-mix(in srgb, var(--status-warning, #d29922) 25%, transparent);
-}
-
-.error {
-  color: var(--status-error, #f85149);
-  background: color-mix(in srgb, var(--status-error, #f85149) 12%, transparent);
-  border-color: color-mix(in srgb, var(--status-error, #f85149) 25%, transparent);
-}
-
-.running {
-  color: var(--status-running, #a371f7);
-  background: color-mix(in srgb, var(--status-running, #a371f7) 12%, transparent);
-  border-color: color-mix(in srgb, var(--status-running, #a371f7) 25%, transparent);
-}
-
-.accent {
-  color: var(--accent-active, #ff8a3d);
-  background: color-mix(in srgb, var(--accent-active, #ff8a3d) 12%, transparent);
-  border-color: color-mix(
-    in srgb,
-    var(--accent-active, #ff8a3d) 28%,
-    transparent
-  );
-}
+.dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
+.neutral { color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 8%, transparent); border-color: color-mix(in srgb, var(--text-secondary) 14%, transparent); }
+.info { color: var(--status-info); background: color-mix(in srgb, var(--status-info) 9%, transparent); border-color: color-mix(in srgb, var(--status-info) 22%, transparent); }
+.success { color: var(--status-success); background: color-mix(in srgb, var(--status-success) 9%, transparent); border-color: color-mix(in srgb, var(--status-success) 22%, transparent); }
+.warning { color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 9%, transparent); border-color: color-mix(in srgb, var(--status-warning) 22%, transparent); }
+.error { color: var(--status-error); background: color-mix(in srgb, var(--status-error) 9%, transparent); border-color: color-mix(in srgb, var(--status-error) 22%, transparent); }
+.running { color: var(--status-running); background: color-mix(in srgb, var(--status-running) 9%, transparent); border-color: color-mix(in srgb, var(--status-running) 22%, transparent); }
+.accent { color: var(--accent-active); background: var(--accent-soft); border-color: var(--accent-border); }

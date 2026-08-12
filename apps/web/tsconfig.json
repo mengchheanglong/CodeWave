@@ -9,7 +9,7 @@
     "checkJs": false,
     "strict": false,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node", "vitest/globals"]
   },
   "include": ["src"]
 }

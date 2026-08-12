@@ -4,7 +4,7 @@ import type {
   ProviderId,
   RoutingToolRequirement,
   RunMode,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 export type FollowUpKind = 'review' | 'verify';
 export type DelegateRole = Exclude<OrchestrationRole, 'main'>;
@@ -34,7 +34,7 @@ export type ShellControlsState = {
 
 export const emptyShellControlsState: ShellControlsState = {
   workspacePath: '',
-  providerId: 'qwen',
+  providerId: 'freebuff',
   sessionApprovalPolicy: 'manual',
   sessionApprovalPolicyDisabled: false,
   runMode: 'execute',

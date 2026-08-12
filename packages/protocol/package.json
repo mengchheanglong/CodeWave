@@ -1,9 +1,8 @@
 {
-  "name": "@qwemini/protocol",
+  "name": "@codewave/protocol",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   }
 }
-

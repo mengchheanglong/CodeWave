@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileTextIcon, FolderIcon } from './icons';
+import { daemonFetch } from '../lib/daemon-api';
 
 type WorkspaceEntryRecord = {
   name: string;
@@ -81,7 +82,9 @@ export function MentionPicker({
 
     const params = new URLSearchParams();
     params.set('workspacePath', normalizedWorkspacePath);
-    void fetch(`/api/workspace/entries?${params.toString()}`)
+    void daemonFetch(`/api/workspace/entries?${params.toString()}`, {}, {
+      negotiateBeforeRequest: false,
+    })
       .then((response) => {
         if (!response.ok) {
           throw new Error(`Listing failed (${response.status}).`);

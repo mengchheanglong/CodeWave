@@ -1,4 +1,4 @@
-import { ApprovalCard } from '@qwemini/ui-kit';
+import { ApprovalCard } from '@codewave/ui-kit';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
 
 type InlineApprovalCardsProps = {

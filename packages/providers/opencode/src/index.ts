@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -15,8 +15,13 @@ import type {
   RoutingToolRequirement,
   ToolDescriptorSource,
   WorkbenchEvent,
-} from '@qwemini/protocol';
-import { inferRoutingToolRequirement } from '@qwemini/protocol';
+} from '@codewave/protocol';
+import { inferRoutingToolRequirement } from '@codewave/protocol';
+import {
+  parseProviderCommand,
+  spawnProviderCommand,
+} from '@codewave/provider-runtime';
+import { createRunEventPublisher } from '@codewave/provider-transport';
 import { startOpenCodeAcpRun, type OpenCodeAcpRunHandle } from './acp.js';
 
 type CommandResult = {
@@ -29,7 +34,7 @@ type OpenCodeMode = 'acp' | 'run';
 
 type OpenCodeLaunchSpec = {
   command: string;
-  shell: boolean;
+  argsPrefix: string[];
   description: string;
   source: 'override' | 'external';
 };
@@ -45,12 +50,14 @@ const OPENCODE_ACP_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: true,
   resumableSessions: true,
   checkpointEvents: false,
+  inFlightSteering: 'unsupported',
 };
 
 const OPENCODE_RUN_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: false,
   resumableSessions: true,
   checkpointEvents: false,
+  inFlightSteering: 'unsupported',
 };
 
 const OPENCODE_TOOL_CATALOG: ProviderToolCapability[] = [
@@ -167,7 +174,7 @@ type OpenCodeJsonEvent = {
 };
 
 function getConnectedToolProbeTimeoutMs(): number {
-  const configured = Number(process.env.QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
+  const configured = Number(process.env.CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
   if (!Number.isFinite(configured) || configured <= 0) {
     return DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS;
   }
@@ -176,17 +183,17 @@ function getConnectedToolProbeTimeoutMs(): number {
 }
 
 function resolveMode(): OpenCodeMode {
-  const configured = String(process.env.QWEMINI_OPENCODE_MODE ?? '').trim();
+  const configured = String(process.env.CODEWAVE_OPENCODE_MODE ?? '').trim();
   return configured === 'run' ? 'run' : 'acp';
 }
 
 function getAutoApproveEnabled(): boolean {
-  const configured = String(process.env.QWEMINI_OPENCODE_AUTO ?? '').trim();
+  const configured = String(process.env.CODEWAVE_OPENCODE_AUTO ?? '').trim();
   return configured === '1' || configured.toLowerCase() === 'true';
 }
 
 function getModelOverride(): string | null {
-  const configured = String(process.env.QWEMINI_OPENCODE_MODEL ?? '').trim();
+  const configured = String(process.env.CODEWAVE_OPENCODE_MODEL ?? '').trim();
   return configured || null;
 }
 
@@ -359,21 +366,21 @@ function resolveWindowsExeInvocation(
 
 function buildSpawnSpec(spec: OpenCodeLaunchSpec): {
   command: string;
-  shell: boolean;
+  argsPrefix: string[];
   description: string;
 } {
   const resolved = resolveWindowsExeInvocation(spec);
   if (resolved) {
     return {
       command: resolved.command,
-      shell: false,
+      argsPrefix: spec.argsPrefix,
       description: `${spec.description} via direct executable`,
     };
   }
 
   return {
     command: spec.command,
-    shell: spec.shell,
+    argsPrefix: spec.argsPrefix,
     description: spec.description,
   };
 }
@@ -386,11 +393,13 @@ async function runCommand(
   const spawnSpec = buildSpawnSpec(spec);
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(spawnSpec.command, args, {
-      env: process.env,
-      shell: spawnSpec.shell,
-      windowsHide: true,
-    });
+    const child = spawnProviderCommand(
+      { command: spawnSpec.command, baseArgs: spawnSpec.argsPrefix },
+      args,
+      {
+        env: process.env,
+      },
+    );
 
     let output = '';
     const resolveOnce = (result: CommandResult): void => {
@@ -494,7 +503,7 @@ export class OpenCodeCliProvider implements ProviderAdapter {
   private readonly mode: OpenCodeMode;
 
   constructor(options: OpenCodeCliProviderOptions = {}) {
-    const commandOverride = options.command ?? process.env.QWEMINI_OPENCODE_COMMAND;
+    const commandOverride = options.command ?? process.env.CODEWAVE_OPENCODE_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
     this.rootPath = path.resolve(options.rootPath ?? process.cwd());
     this.mode = resolveMode();
@@ -595,25 +604,11 @@ export class OpenCodeCliProvider implements ProviderAdapter {
     const launchSpec = this.resolveLaunchSpec();
     const spawnSpec = buildSpawnSpec(launchSpec);
 
-    let terminalEmitted = false;
-    const publish = async (
-      type: WorkbenchEvent['type'],
-      payload: Record<string, unknown>,
-    ): Promise<void> => {
-      if (
-        type === 'run.completed' ||
-        type === 'run.failed' ||
-        type === 'run.cancelled'
-      ) {
-        terminalEmitted = true;
-      }
-
-      await context.emitEvent(createEvent(context, type, payload));
-    };
+    const publisher = createRunEventPublisher(context, 'opencode');
 
     const workspacePath = context.session.workspacePath.trim();
     if (!workspacePath || !existsSync(workspacePath)) {
-      await publish('run.failed', {
+      await publisher.publish('run.failed', {
         message: 'Workspace path does not exist',
         detail:
           workspacePath || 'The session workspace path is empty, so OpenCode cannot start.',
@@ -621,15 +616,33 @@ export class OpenCodeCliProvider implements ProviderAdapter {
       return { cancel: async () => {} };
     }
 
-    const child = spawn(spawnSpec.command, ['acp'], {
-      cwd: workspacePath,
-      env: process.env,
-      shell: spawnSpec.shell,
-      windowsHide: true,
-    });
+    const child = spawnProviderCommand(
+      { command: spawnSpec.command, baseArgs: spawnSpec.argsPrefix },
+      ['acp'],
+      {
+        cwd: workspacePath,
+        env: process.env,
+      },
+    );
+    const publish = async (
+      type: WorkbenchEvent['type'],
+      payload: Record<string, unknown>,
+    ): Promise<void> => {
+      const published = await publisher.publish(type, payload);
+      if (
+        published &&
+        (type === 'run.completed' ||
+          type === 'run.failed' ||
+          type === 'run.cancelled') &&
+        child.exitCode === null &&
+        !child.killed
+      ) {
+        child.kill();
+      }
+    };
 
     child.on('error', async (error) => {
-      if (terminalEmitted) {
+      if (publisher.terminalEventType || publisher.cancellationRequested) {
         return;
       }
 
@@ -640,7 +653,7 @@ export class OpenCodeCliProvider implements ProviderAdapter {
     });
 
     child.on('close', async (code) => {
-      if (terminalEmitted) {
+      if (publisher.terminalEventType || publisher.cancellationRequested) {
         return;
       }
 
@@ -666,7 +679,7 @@ export class OpenCodeCliProvider implements ProviderAdapter {
     try {
       acpHandle = await startOpenCodeAcpRun({ child, context, publish });
     } catch (error) {
-      if (terminalEmitted) {
+      if (publisher.terminalEventType) {
         return { cancel: async () => {} };
       }
 
@@ -680,6 +693,7 @@ export class OpenCodeCliProvider implements ProviderAdapter {
 
     return {
       cancel: async () => {
+        publisher.requestCancellation();
         if (acpHandle) {
           await acpHandle.cancel();
         } else if (child.exitCode === null && !child.killed) {
@@ -729,12 +743,14 @@ export class OpenCodeCliProvider implements ProviderAdapter {
       context.run.prompt,
     ];
 
-    const child = spawn(spawnSpec.command, args, {
-      cwd: context.session.workspacePath,
-      env: process.env,
-      shell: spawnSpec.shell,
-      windowsHide: true,
-    });
+    const child = spawnProviderCommand(
+      { command: spawnSpec.command, baseArgs: spawnSpec.argsPrefix },
+      args,
+      {
+        cwd: context.session.workspacePath,
+        env: process.env,
+      },
+    );
 
     const publish = async (
       type: WorkbenchEvent['type'],
@@ -1024,9 +1040,13 @@ export class OpenCodeCliProvider implements ProviderAdapter {
 
   private resolveLaunchSpec(): OpenCodeLaunchSpec {
     if (this.commandOverride) {
+      const parsed = parseProviderCommand(
+        this.commandOverride,
+        'OpenCode command',
+      );
       return {
-        command: this.commandOverride,
-        shell: false,
+        command: parsed.command,
+        argsPrefix: parsed.baseArgs,
         description: `command override via ${this.commandOverride}`,
         source: 'override',
       };
@@ -1034,7 +1054,7 @@ export class OpenCodeCliProvider implements ProviderAdapter {
 
     return {
       command: 'opencode',
-      shell: process.platform === 'win32',
+      argsPrefix: [],
       description: 'external opencode on PATH',
       source: 'external',
     };

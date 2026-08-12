@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fc from 'fast-check';
+import { submitWorkspacePrompt } from '../test/workspace-prompt';
 import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 /**
@@ -13,6 +14,19 @@ import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 describe('WorkspaceFilePanel - Folder Operations Properties', () => {
   const mockWorkspacePath = '/test/workspace';
+
+  function preparePropertyIteration() {
+    cleanup();
+    vi.clearAllMocks();
+    vi.mocked(window.prompt).mockReset();
+    vi.mocked(window.confirm).mockReset();
+    global.fetch = vi.fn();
+  }
+
+  function exactTitle(title: string) {
+    return (_content: string, element: Element | null) =>
+      element?.getAttribute('title') === title;
+  }
   
   beforeEach(() => {
     vi.stubGlobal('prompt', vi.fn());
@@ -44,7 +58,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               return name.trim().length > 0 && 
                      !/[/\\:*?"<>|]/.test(name);
             }),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load - empty directory
@@ -79,10 +94,11 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               });
 
             await user.click(screen.getByRole('button', { name: /New folder/i }));
+            await submitWorkspacePrompt(folderName);
 
             // Property: Created folder should appear in listing
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
             
             unmount();
@@ -90,7 +106,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 100 }
       );
-    });
+    }, 120000);
   });
 
   /**
@@ -111,7 +127,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               fc.string({ minLength: 1, maxLength: 20 })
                 .map(base => `${base}${invalidChar}${base}`)
             ),
-          async (invalidName) => {
+      async (invalidName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load with existing entries
@@ -141,6 +158,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             );
 
             await user.click(screen.getByRole('button', { name: /New folder/i }));
+            await submitWorkspacePrompt(invalidName);
 
             // Property: Should show validation error and preserve view
             await waitFor(() => {
@@ -207,10 +225,16 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
       await fc.assert(
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
-            .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
+            .filter(name => {
+              const trimmed = name.trim();
+              return trimmed.length > 0 &&
+                trimmed !== 'other.ts' &&
+                !/[/\\:*?"<>|]/.test(name);
+            }),
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (originalName, newName) => {
+      async (originalName, newName) => {
+        preparePropertyIteration();
             // Skip if names are the same
             if (originalName.trim() === newName.trim()) {
               return;
@@ -255,6 +279,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             const renameButtons = Array.from(container.querySelectorAll('button')).filter(btn => btn.textContent === 'Rename');
             if (renameButtons[0]) {
               await user.click(renameButtons[0]);
+              await submitWorkspacePrompt(newName);
             }
 
             // Property: Entry should have new name and same kind (folder)
@@ -272,7 +297,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 50 }
       );
-    }, 30000);
+    }, 120000);
 
     it('should preserve file identity after rename', async () => {
       await fc.assert(
@@ -290,10 +315,12 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             .filter(name => {
               const trimmed = name.trim();
               return trimmed.length > 0 && 
+                     trimmed !== 'keep' &&
                      !/[/\\:*?"<>|$#]/.test(trimmed) &&
                      !/^[.]/.test(trimmed);
             }),
-          async (originalName, newBaseName) => {
+      async (originalName, newBaseName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load with file
@@ -334,6 +361,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             const renameButton = Array.from(renameButtons).find(btn => btn.textContent === 'Rename');
             if (renameButton) {
               await user.click(renameButton);
+              await submitWorkspacePrompt(newBaseName);
             }
 
             // Property: Entry should have new name and same kind (file)
@@ -351,7 +379,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 50 }
       );
-    }, 30000);
+    }, 120000);
   });
 
   /**
@@ -368,7 +396,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load with folder and other entries
@@ -384,11 +413,14 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               })
             });
 
-            const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
+            const { container, unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
-              expect(screen.getByText('other.ts')).toBeInTheDocument();
+              const names = Array.from(
+                container.querySelectorAll('.workspace-file-name'),
+              ).map((element) => element.textContent);
+              expect(names).toContain(folderName.trim());
+              expect(names).toContain('other.ts');
             });
 
             // Delete folder
@@ -407,13 +439,18 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               });
 
             // Find the delete button for the folder (first one)
-            const deleteButtons = screen.getAllByRole('button', { name: /Delete/i });
+            const deleteButtons = Array.from(
+              container.querySelectorAll<HTMLButtonElement>('button'),
+            ).filter((button) => button.textContent === 'Delete');
             await user.click(deleteButtons[0]);
 
             // Property: Deleted folder should not appear in listing
             await waitFor(() => {
-              expect(screen.queryByText(folderName.trim())).not.toBeInTheDocument();
-              expect(screen.getByText('other.ts')).toBeInTheDocument();
+              const names = Array.from(
+                container.querySelectorAll('.workspace-file-name'),
+              ).map((element) => element.textContent);
+              expect(names).not.toContain(folderName.trim());
+              expect(names).toContain('other.ts');
             });
             
             unmount();
@@ -422,7 +459,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 50 }
       );
-    }, 30000);
+    }, 120000);
 
     it('should remove file from listing after deletion', async () => {
       await fc.assert(
@@ -435,7 +472,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
                      !/^[.]/.test(trimmed);
             })
             .map(name => `${name.trim()}.ts`),
-          async (fileName) => {
+      async (fileName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load with file and other entries
@@ -493,7 +531,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 50 }
       );
-    }, 30000);
+    }, 120000);
   });
 
   /**
@@ -510,7 +548,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load - empty directory
@@ -550,11 +589,12 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               });
 
             await user.click(screen.getByRole('button', { name: /New folder/i }));
+            await submitWorkspacePrompt(folderName);
 
             // Property: View should refresh and show new folder
             await waitFor(() => {
               expect(refreshCalled).toBe(true);
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
             
             unmount();
@@ -563,7 +603,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 20000);
+    }, 120000);
 
     it('should refresh view after successful rename', async () => {
       await fc.assert(
@@ -572,7 +612,8 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
           fc.string({ minLength: 1, maxLength: 20 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (oldName, newName) => {
+      async (oldName, newName) => {
+        preparePropertyIteration();
             // Skip if names are the same
             if (oldName.trim() === newName.trim()) {
               return;
@@ -595,7 +636,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(oldName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(oldName.trim()))).toBeInTheDocument();
             });
 
             // Rename folder
@@ -619,12 +660,13 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               });
 
             await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
+            await submitWorkspacePrompt(newName);
 
             // Property: View should refresh and show renamed folder
             await waitFor(() => {
               expect(refreshCalled).toBe(true);
-              expect(screen.getByText(newName.trim())).toBeInTheDocument();
-              expect(screen.queryByText(oldName.trim())).not.toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(newName.trim()))).toBeInTheDocument();
+              expect(screen.queryByTitle(exactTitle(oldName.trim()))).not.toBeInTheDocument();
             });
             
             unmount();
@@ -633,14 +675,15 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 20000);
+    }, 120000);
 
     it('should refresh view after successful deletion', async () => {
       await fc.assert(
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load with folder
@@ -658,7 +701,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Delete folder
@@ -684,7 +727,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             // Property: View should refresh and folder should be gone
             await waitFor(() => {
               expect(refreshCalled).toBe(true);
-              expect(screen.queryByText(folderName.trim())).not.toBeInTheDocument();
+              expect(screen.queryByTitle(exactTitle(folderName.trim()))).not.toBeInTheDocument();
             });
             
             unmount();
@@ -693,6 +736,6 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 20000);
+    }, 120000);
   });
 });

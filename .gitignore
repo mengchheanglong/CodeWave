@@ -1,5 +1,6 @@
 node_modules/
-.qwemini/
+autoresearch-results.tsv
+.codewave/
 .tmp/
 agent-control/
 dist/

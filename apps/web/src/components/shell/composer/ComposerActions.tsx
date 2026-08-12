@@ -1,10 +1,11 @@
-import { ContextMeter } from '@qwemini/ui-kit';
+import { ContextMeter } from '@codewave/ui-kit';
 import { requestPromptDraftChange } from '../../../app-controller';
 import { ScaleIcon, SendIcon } from '../../icons';
 
 type ComposerActionsProps = {
   contextUsagePercent: number;
   hasActiveRun: boolean;
+  runAcceptsSteering: boolean;
   hasPromptDraft: boolean;
   sendHelperPrimary: string;
   sendHelperSecondary: string;
@@ -16,6 +17,7 @@ type ComposerActionsProps = {
 export function ComposerActions({
   contextUsagePercent,
   hasActiveRun,
+  runAcceptsSteering,
   hasPromptDraft,
   sendHelperPrimary,
   sendHelperSecondary,
@@ -64,13 +66,15 @@ export function ComposerActions({
           id="start-run-button"
           className="composer-send-button"
           type="submit"
-          aria-label="Send prompt"
+          aria-label={runAcceptsSteering ? 'Queue update' : 'Send prompt'}
           disabled={startRunDisabled}
         >
           <span className="composer-send-icon" aria-hidden="true">
             <SendIcon size={13} />
           </span>
-          <span className="composer-send-label">Send</span>
+          <span className="composer-send-label">
+            {runAcceptsSteering ? 'Queue' : 'Send'}
+          </span>
         </button>
       </div>
     </>

@@ -13,6 +13,7 @@ import { CheckIcon, ListIcon } from './icons';
 type RunTranscriptPanelProps = {
   selectedRun: RunViewState['selectedRun'];
   events: RunViewState['events'];
+  transcript: RunViewState['transcript'];
   approvals: ShellPanelsState['approvals'];
   onResolveApproval: (
     approvalId: string,
@@ -27,6 +28,7 @@ type RunTranscriptPanelProps = {
 export function RunTranscriptPanel({
   selectedRun,
   events,
+  transcript,
   approvals,
   onResolveApproval,
   onExecutePlan,
@@ -43,6 +45,38 @@ export function RunTranscriptPanel({
     () => new Set(),
   );
   const [allExpanded, setAllExpanded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  const priorMessages = useMemo(
+    () => {
+      const messages = transcript?.messages ?? [];
+      const currentRunSequence = messages.find(
+        (message) => message.runId === selectedRun?.id,
+      )?.sequence;
+      if (currentRunSequence === undefined) {
+        return [];
+      }
+      return messages.filter(
+        (message) => message.sequence < currentRunSequence,
+      );
+    },
+    [selectedRun?.id, transcript],
+  );
+  const visiblePriorMessages = historyExpanded ? priorMessages : [];
+  const priorSteps = useMemo<TimelineStep[]>(
+    () =>
+      visiblePriorMessages.map((message) => ({
+        kind:
+          message.role === 'user'
+            ? 'user'
+            : message.role === 'assistant'
+              ? 'assistant'
+              : 'system',
+        text: message.content,
+        timestamp: message.createdAt,
+      })),
+    [visiblePriorMessages],
+  );
 
   const toolSteps = useMemo(
     () => steps.filter((step) => step.kind === 'tool'),
@@ -72,6 +106,10 @@ export function RunTranscriptPanel({
 
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
   }, [selectedRun, steps]);
+
+  useEffect(() => {
+    setHistoryExpanded(false);
+  }, [selectedRun?.id]);
 
   function toggleTool(key: string) {
     setExpandedToolIds((current) => {
@@ -110,24 +148,74 @@ export function RunTranscriptPanel({
 
   if (!selectedRun) {
     return (
-      <EmptyState
-        title="No active run selected"
-        message="Select a session and start a run."
-      />
+      <div className="transcript-empty-shell">
+        <EmptyState
+          icon="↗"
+          title="Ready for a new run"
+          message="Describe the change in the composer below. CodeWave will capture the response, tool activity, and artifacts here."
+        />
+      </div>
     );
   }
 
   if (steps.length === 0) {
     return (
-      <EmptyState
-        title="Transcript is idle"
-        message="Live deltas will appear here."
-      />
+      <div className="transcript-empty-shell">
+        <EmptyState
+          icon="·"
+          title="Run is starting"
+          message="The first agent response will appear here as soon as it arrives."
+        />
+      </div>
     );
   }
 
   return (
     <div ref={containerRef} className="transcript-stream terminal-stream">
+      {priorMessages.length > 0 ? (
+        <section
+          className={`session-memory${historyExpanded ? ' expanded' : ' collapsed'}`}
+          aria-label="Recent session memory"
+        >
+          <header className="session-memory-header">
+            <div>
+              <span className="session-memory-eyebrow">Session memory</span>
+              <span className="session-memory-detail">
+                {priorMessages.length} prior message
+                {priorMessages.length === 1 ? '' : 's'} · parent-linked
+                {transcript?.hasMoreBefore
+                  ? ` · ${Math.max(0, (transcript.oldestSequence ?? 1) - 1)} earlier on disk`
+                  : ''}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="transcript-toolbar-button session-memory-toggle"
+              aria-expanded={historyExpanded}
+              onClick={() => setHistoryExpanded((current) => !current)}
+            >
+              {historyExpanded ? 'Hide context' : 'View context'}
+            </button>
+          </header>
+          {historyExpanded ? (
+            <>
+              <div className="session-memory-feed">
+                <StepTimeline
+                  steps={priorSteps}
+                  showThinking={false}
+                  expandedToolIds={new Set()}
+                  onToggleTool={() => {}}
+                  formatTimestamp={formatTimestamp}
+                />
+              </div>
+              <div className="session-memory-current">
+                <span>Current run</span>
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
       {toolSteps.length > 0 ? (
         <div className="transcript-toolbar">
           <span className="transcript-toolbar-label">

@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from 'react';
-import type { ApprovalPolicy, ProviderId } from '@qwemini/protocol';
+import type { ApprovalPolicy, ProviderId } from '@codewave/protocol';
 import type { ShellControlsState } from '../../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../../lib/shell-panels-state';
 import type { ShellSummaryState } from '../../../lib/shell-summary-state';
@@ -28,7 +28,7 @@ import {
   PlusIcon,
 } from '../../icons';
 
-const PROVIDER_OPTIONS: ProviderId[] = ['qwen', 'gemini', 'opencode', 'freebuff'];
+const PROVIDER_OPTIONS: ProviderId[] = ['freebuff', 'opencode', 'qwen', 'gemini'];
 const POLICY_OPTIONS: ApprovalPolicy[] = ['manual', 'allow', 'deny'];
 const ROUTING_TOOL_OPTIONS = [
   'workspace-read',
@@ -64,6 +64,15 @@ export function ComposerConfig({
   const composerPlusMenuRef = useRef<HTMLDetailsElement | null>(null);
   const composerProviderMenuRef = useRef<HTMLDetailsElement | null>(null);
   const composerAccessMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const providerOptions = PROVIDER_OPTIONS.map((providerId) => ({
+    providerId,
+    configuration: shellPanelsState.providerRegistry?.providers.find(
+      (provider) => provider.providerId === providerId,
+    ),
+    health: shellPanelsState.providerHealth.find(
+      (provider) => provider.providerId === providerId,
+    ),
+  }));
 
   function closeComposerPlusMenu() {
     if (composerPlusMenuRef.current) {
@@ -223,26 +232,44 @@ export function ComposerConfig({
           </span>
         </summary>
         <div className="composer-choice-popover">
-          {PROVIDER_OPTIONS.map((providerId) => (
+          {providerOptions.map(({ providerId, configuration, health }) => {
+            const selectable = Boolean(configuration?.enabled && health?.available);
+            return (
             <button
               key={providerId}
               type="button"
               className={`composer-choice-option${
                 activeProviderId === providerId ? ' active' : ''
               }`}
+              disabled={!selectable}
+              title={health?.detail ?? 'Provider status unavailable'}
               onClick={() => {
                 closeComposerProviderMenu();
                 void requestSessionDraftChange({ providerId });
               }}
             >
-              <span>{renderProviderLabel(providerId)}</span>
+              <span className="composer-provider-option-copy">
+                <span>{renderProviderLabel(providerId)}</span>
+                <small>
+                  {health?.available
+                    ? configuration?.accessMode === 'free-cloud'
+                      ? 'Free cloud'
+                      : configuration?.accessMode === 'local-or-byok'
+                        ? 'Local / BYOK'
+                        : 'Paid / BYOK'
+                    : configuration?.enabled
+                      ? 'Setup required'
+                      : 'Disabled'}
+                </small>
+              </span>
               {activeProviderId === providerId ? (
                 <span className="composer-choice-check" aria-hidden="true">
                   <CheckIcon size={12} />
                 </span>
               ) : null}
             </button>
-          ))}
+            );
+          })}
         </div>
       </details>
 

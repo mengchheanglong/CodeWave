@@ -49,6 +49,22 @@ const EXPECTED_PROVIDER_RUNTIME_SURFACES = {
   gemini: 'gemini.acp.session_update.tool_call',
 };
 const PROVIDER_IDS = ['qwen', 'gemini'];
+const CLIENT_SCOPES = [
+  'runtime:read',
+  'providers:read',
+  'providers:write',
+  'sessions:read',
+  'sessions:write',
+  'runs:read',
+  'runs:write',
+  'orchestration:read',
+  'orchestration:write',
+  'tools:read',
+  'workspace:read',
+  'workspace:write',
+  'approvals:write',
+];
+const connectionIdsByBaseUrl = new Map();
 const SCENARIOS = [
   {
     id: 'failure',
@@ -57,8 +73,8 @@ const SCENARIOS = [
       gemini: 'failed',
     },
     envOverrides: {
-      QWEMINI_FAKE_QWEN_MCP_LIST_FAIL: '1',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_FAIL: '1',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_FAIL: '1',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_FAIL: '1',
     },
   },
   {
@@ -68,11 +84,11 @@ const SCENARIOS = [
       gemini: 'timeout',
     },
     envOverrides: {
-      QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
-      QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT: '1',
-      QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT_MS: '2000',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT: '1',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS: '2000',
+      CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT: '1',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT_MS: '2000',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT: '1',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS: '2000',
     },
   },
   {
@@ -82,10 +98,10 @@ const SCENARIOS = [
       gemini: 'failed',
     },
     envOverrides: {
-      QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
-      QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT: '1',
-      QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT_MS: '2000',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_FAIL: '1',
+      CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT: '1',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT_MS: '2000',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_FAIL: '1',
     },
   },
   {
@@ -95,10 +111,10 @@ const SCENARIOS = [
       gemini: 'timeout',
     },
     envOverrides: {
-      QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
-      QWEMINI_FAKE_QWEN_MCP_LIST_FAIL: '1',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT: '1',
-      QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS: '2000',
+      CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '250',
+      CODEWAVE_FAKE_QWEN_MCP_LIST_FAIL: '1',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT: '1',
+      CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS: '2000',
     },
   },
 ];
@@ -136,7 +152,7 @@ for (const result of scenarioResults) {
 }
 
 async function runScenario(scenario) {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'qwemini-registration-'));
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'codewave-registration-'));
   const daemonRoot = path.join(tempRoot, 'daemon-root');
   const workspacePath = path.join(tempRoot, 'workspace');
   mkdirSync(daemonRoot, { recursive: true });
@@ -149,13 +165,13 @@ async function runScenario(scenario) {
     cwd: daemonRoot,
     env: {
       ...process.env,
-      QWEMINI_PORT: String(port),
-      QWEMINI_QWEN_COMMAND: QWEN_FIXTURE,
-      QWEMINI_GEMINI_COMMAND: GEMINI_FIXTURE,
-      QWEMINI_GEMINI_MODE: 'acp',
-      QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '500',
-      QWEMINI_FAKE_QWEN_RUNTIME_TOOLS: ALL_FIXTURE_TOOL_NAMES.join(','),
-      QWEMINI_FAKE_GEMINI_TOOL_TITLES: ALL_FIXTURE_TOOL_NAMES.join(','),
+      CODEWAVE_PORT: String(port),
+      CODEWAVE_QWEN_COMMAND: QWEN_FIXTURE,
+      CODEWAVE_GEMINI_COMMAND: GEMINI_FIXTURE,
+      CODEWAVE_GEMINI_MODE: 'acp',
+      CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS: '500',
+      CODEWAVE_FAKE_QWEN_RUNTIME_TOOLS: ALL_FIXTURE_TOOL_NAMES.join(','),
+      CODEWAVE_FAKE_GEMINI_TOOL_TITLES: ALL_FIXTURE_TOOL_NAMES.join(','),
       ...scenario.envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -175,6 +191,7 @@ async function runScenario(scenario) {
 
   try {
     await waitForHealth(baseUrl, 15000);
+    await ensureConnection(baseUrl);
 
     const runtime = await requestJson(baseUrl, 'GET', '/api/runtime');
     const qwenHealth = runtime.providers.find(
@@ -201,6 +218,7 @@ async function runScenario(scenario) {
       baseUrl,
       workspacePath,
       providerId: 'qwen',
+      providerRevision: runtime.providerRegistry.revision,
     });
 
     const gemini = await runAndValidateProvider({
@@ -210,6 +228,7 @@ async function runScenario(scenario) {
       baseUrl,
       workspacePath,
       providerId: 'gemini',
+      providerRevision: runtime.providerRegistry.revision,
     });
 
     return {
@@ -231,6 +250,7 @@ async function runScenario(scenario) {
     ]);
 
     await cleanupTempRoot(tempRoot);
+    connectionIdsByBaseUrl.delete(baseUrl);
   }
 }
 
@@ -634,6 +654,7 @@ async function runAndValidateProvider({
   baseUrl,
   workspacePath,
   providerId,
+  providerRevision,
 }) {
   const expectedSurface = EXPECTED_PROVIDER_RUNTIME_SURFACES[providerId];
   if (!expectedSurface) {
@@ -645,6 +666,7 @@ async function runAndValidateProvider({
   const sessionResponse = await requestJson(baseUrl, 'POST', '/api/sessions', {
     workspacePath,
     providerId,
+    expectedProviderRevision: providerRevision,
     approvalPolicy: 'manual',
   });
 
@@ -654,6 +676,7 @@ async function runAndValidateProvider({
     `/api/sessions/${sessionResponse.id}/runs`,
     {
       prompt: `deterministic registration probe (${providerId})`,
+      expectedProviderRevision: providerRevision,
     },
   );
 
@@ -918,14 +941,16 @@ async function waitForRun(baseUrl, runId, timeoutMs) {
 }
 
 async function requestJson(baseUrl, method, pathname, body) {
+  const connectionId =
+    pathname === '/api/health' || pathname === '/api/handshake'
+      ? null
+      : await ensureConnection(baseUrl);
+  const headers = new Headers();
+  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  if (connectionId) headers.set('X-CodeWave-Connection', connectionId);
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
-    headers:
-      body === undefined
-        ? undefined
-        : {
-            'Content-Type': 'application/json',
-          },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
@@ -941,6 +966,27 @@ async function requestJson(baseUrl, method, pathname, body) {
   }
 
   return payload;
+}
+
+async function ensureConnection(baseUrl) {
+  const current = connectionIdsByBaseUrl.get(baseUrl);
+  if (current) return current;
+  const response = await fetch(`${baseUrl}/api/handshake`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientName: 'registration-harness',
+      clientVersion: '1.0.0-test',
+      protocolVersion: 1,
+      requestedScopes: CLIENT_SCOPES,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload?.connectionId) {
+    throw new Error(payload?.error || 'Daemon handshake failed.');
+  }
+  connectionIdsByBaseUrl.set(baseUrl, payload.connectionId);
+  return payload.connectionId;
 }
 
 function sleep(ms) {

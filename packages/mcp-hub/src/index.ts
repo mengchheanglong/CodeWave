@@ -16,8 +16,8 @@ import type {
   ToolPlaneProviderSignal,
   ToolPlaneSnapshot,
   ToolRegistryEntry,
-} from '@qwemini/protocol';
-import { inferRoutingToolRequirement } from '@qwemini/protocol';
+} from '@codewave/protocol';
+import { inferRoutingToolRequirement } from '@codewave/protocol';
 
 const ALL_TOOL_REQUIREMENTS: RoutingToolRequirement[] = [
   'workspace-read',
@@ -129,7 +129,7 @@ function isCommandAvailable(command: string): boolean {
 
 function getRegistryCandidates(workspacePath: string): string[] {
   return [
-    path.join(workspacePath, '.qwemini', 'mcp.json'),
+    path.join(workspacePath, '.codewave', 'mcp.json'),
     path.join(workspacePath, '.mcp.json'),
   ];
 }

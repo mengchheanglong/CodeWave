@@ -2,7 +2,7 @@ import type {
   ApprovalPolicy,
   ProviderId,
   RoutingToolRequirement,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 type QuickOpenItem = {
   id: string;

@@ -1,9 +1,9 @@
 {
-  "name": "@qwemini/orchestrator",
+  "name": "@codewave/orchestrator",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@qwemini/protocol": "file:../protocol"
+    "@codewave/protocol": "file:../protocol"
   }
 }
