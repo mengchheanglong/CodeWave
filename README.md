@@ -1,27 +1,27 @@
-# Qwemini
+# CodeWave
 
-**One workspace for Qwen and Gemini**
+**The visual workspace for AI coding agents**
 
-Qwemini is an open-source agent workspace that brings **Qwen CLI** and **Gemini CLI** into one unified environment. Instead of using each tool separately in raw terminal flows, Qwemini provides a shared workspace for sessions, tools, context, and orchestration, so both engines can work inside the same system with a cleaner developer experience.
+CodeWave is an open-source, local-first agent workspace that harnesses **Qwen CLI**, **Gemini CLI**, **OpenCode**, **Freebuff**, and future AI coding CLIs into one unified environment. Instead of using each tool separately in raw terminal flows, CodeWave provides a shared visual workspace for sessions, tools, context, and orchestration, so all engines operate inside the same system with a cleaner developer experience.
 
-Qwemini is designed to be:
+CodeWave is designed to be:
 
-- **Open-source** — lightweight, hackable, and community-friendly  
-- **Unified** — one place to run and manage both Qwen and Gemini  
-- **Extensible** — ready for more tools, plugins, and providers over time  
-- **Practical** — focused on real developer workflows, not just chat  
+- **Open-source & Local-first** — lightweight, privacy-focused, hackable, and community-friendly  
+- **Unified & Provider-flexible** — one visual shell to run Qwen, Gemini, OpenCode, Freebuff, and future engines  
+- **Extensible** — ready for more tools, MCP plugins, and provider engines over time  
+- **Practical** — focused on real developer workflows, step inspectors, and diff reviews  
 
 ---
 
 ## Overview
 
-Today, Qwen CLI and Gemini CLI are powerful on their own, but using them separately can feel fragmented. Qwemini aims to solve that by creating a shared environment where multiple agent backends can operate inside one workspace.
+Today, AI coding CLIs like Qwen, Gemini, OpenCode, and Freebuff are powerful on their own, but using them separately in terminal tabs feels fragmented. CodeWave solves that by creating a single control center where multiple agent backends operate inside one visual environment.
 
-The goal is not just to wrap two CLIs in a thin shell, but to build a real developer environment with:
+The goal is not just to wrap CLIs in a thin shell, but to build a real developer environment with:
 
-- shared sessions
+- shared sessions & history
 - shared context
-- shared tools
+- shared MCP tools
 - orchestration across engines
 - room for plugins and future providers
 
@@ -29,10 +29,10 @@ The goal is not just to wrap two CLIs in a thin shell, but to build a real devel
 
 ## Vision
 
-Qwemini starts with **Qwen** and **Gemini**, but the long-term direction is bigger:
+CodeWave harnesses **Qwen**, **Gemini**, **OpenCode**, and **Freebuff**, but the long-term direction is bigger:
 
 - a unified agent workspace
-- a shared protocol for tools and events
+- a shared protocol for tools, approvals, and events
 - orchestration across multiple coding agents
 - local-first and open by default
 - extensible enough to support future engines and plugins
@@ -41,21 +41,21 @@ Qwemini starts with **Qwen** and **Gemini**, but the long-term direction is bigg
 
 ## Core Idea
 
-Instead of thinking of Qwen CLI and Gemini CLI as separate tools, Qwemini treats them as **engines inside one workspace**.
+Instead of thinking of AI coding CLIs as separate terminal tools, CodeWave treats them as **engines inside one workspace**.
 
-That workspace can provide:
+That workspace provides:
 
 - a common session layer
 - a shared tool plane
 - orchestration and routing
 - persistent state and history
-- a better interface than raw terminal-only workflows
+- a visual interface with rich Markdown and diff inspection
 
 ---
 
 ## Initial Goals
 
-- Integrate **Qwen CLI** and **Gemini CLI** into one environment
+- Integrate **Qwen CLI**, **Gemini CLI**, **OpenCode**, and **Freebuff** into one environment
 - Provide a shared session and context model
 - Support tool integration through a common interface
 - Build an orchestration layer for switching or routing work between engines
@@ -65,19 +65,21 @@ That workspace can provide:
 
 ## Planned Architecture
 
-Qwemini will likely be structured around a few core layers:
+CodeWave is structured around core layers:
 
 ### 1. Provider Adapters
-Adapters for each backend engine, starting with:
+Adapters for each backend engine:
 
 - Qwen
 - Gemini
+- OpenCode
+- Freebuff
 
 ### 2. Shared Workspace Layer
 A common runtime for:
 
 - session management
-- state
+- state & checkpoints
 - history
 - artifacts
 - approvals
@@ -89,15 +91,15 @@ A shared place to connect tools and external capabilities.
 Logic for deciding how work flows between engines, tools, and future agents.
 
 ### 5. UI / Shell
-A cleaner environment than raw terminal usage, while still keeping CLI power.
+A clean visual environment with Markdown rendering, diff inspection, and approval controls.
 
 ---
 
-## Why Qwemini
+## Why CodeWave
 
-Because powerful open tools should not feel isolated.
+Because powerful open AI coding tools should not feel isolated.
 
-Qwemini is about making free and open agent tooling feel like a real environment:
+CodeWave makes open agent tooling feel like a unified environment:
 simple, composable, and built for experimentation.
 
 ---

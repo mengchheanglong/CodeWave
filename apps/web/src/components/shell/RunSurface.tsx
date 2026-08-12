@@ -123,7 +123,7 @@ export function RunSurface({
           </strong>
           <span className="workspace-empty-message">
             {!shellControlsState.workspacePath.trim()
-              ? 'Open a folder to choose where Qwemini works, then send your first prompt.'
+              ? 'Open a folder to choose where CodeWave works, then send your first prompt.'
               : hasPromptDraft
                 ? 'Press Enter or click Send — your thread is created automatically.'
                 : 'Type your message below and press Enter to start — your thread is created automatically.'}

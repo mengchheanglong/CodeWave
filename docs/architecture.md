@@ -1,8 +1,8 @@
-# Qwemini — Architecture v1
+# CodeWave — Architecture v1
 
 ## 1) Product intent
 
-Qwemini is a local-first multi-engine coding-agent environment.
+CodeWave is a local-first multi-engine coding-agent environment.
 
 Its goal is to provide a Codex/Claude-Code-like experience while remaining provider-flexible and tool-pluggable.
 

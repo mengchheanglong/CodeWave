@@ -69,15 +69,15 @@ export function notifyAttention(kind: AttentionKind, detail: string): void {
 
   const title =
     kind === 'approval'
-      ? 'Qwemini needs a decision'
+      ? 'CodeWave needs a decision'
       : kind === 'run-failed'
-        ? 'Qwemini run failed'
-        : 'Qwemini run completed';
+        ? 'CodeWave run failed'
+        : 'CodeWave run completed';
 
   try {
     const notification = new window.Notification(title, {
       body: detail,
-      tag: `qwemini-${kind}`,
+      tag: `codewave-${kind}`,
       silent: false,
     });
     notification.onclick = () => {

@@ -515,7 +515,7 @@ export default function App() {
   );
   const composerPlaceholder = hasActiveSession
     ? 'Ask for follow-up changes'
-    : 'Ask Qwemini to work on this workspace';
+    : 'Ask CodeWave to work on this workspace';
   const sendHelperPrimary = hasActiveSession
     ? 'Enter to send'
     : 'Enter to send and create the session';
@@ -859,7 +859,7 @@ export default function App() {
       <PromptModal
         isOpen={isFolderModalOpen}
         title="Open Folder Workspace"
-        subtitle="Specify the local directory where Qwemini should run agent tasks."
+        subtitle="Specify the local directory where CodeWave should run agent tasks."
         placeholder="e.g. C:\Users\User\archive\retired\qwemini"
         defaultValue={shellControlsState.workspacePath}
         confirmLabel="Open Folder"

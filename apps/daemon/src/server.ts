@@ -2360,7 +2360,7 @@ export class QweminiDaemon {
         ? { behavior: 'allow' }
         : {
             behavior: 'deny',
-            message: body.reason ?? 'Tool execution denied in Qwemini.',
+            message: body.reason ?? 'Tool execution denied in CodeWave.',
           };
 
     if (pending) {

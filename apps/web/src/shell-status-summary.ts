@@ -131,7 +131,7 @@ export function buildSessionProviderNote({
   }
 
   if (capabilities.daemonApprovalMediation) {
-    notes.push(`${providerLabel} exposes daemon-owned tool approvals in Qwemini.`);
+    notes.push(`${providerLabel} exposes daemon-owned tool approvals in CodeWave.`);
   } else {
     notes.push(
       `${providerLabel} does not expose daemon-owned approvals yet, so approval policy is inactive for new sessions.`,
