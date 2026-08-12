@@ -156,6 +156,7 @@ export function createControllerRuntimeSessionFlows(
 
     state.selectedSession = snapshot.session;
     state.runs = snapshot.runs;
+    state.workspacePathDraft = snapshot.session.workspacePath;
     state.providerSessionLabel = snapshot.session.providerSessionId || 'unbound';
     clearRunSelectionView(`Session ${snapshot.session.id.slice(0, 8)}`);
 

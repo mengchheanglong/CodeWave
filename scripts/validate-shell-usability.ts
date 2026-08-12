@@ -22,6 +22,7 @@ import type {
 import type { DaemonApi } from '../apps/web/src/lib/daemon-api.js';
 import { createControllerRunActionFlows } from '../apps/web/src/lib/controller-run-action-flows.js';
 import { createControllerRequesters } from '../apps/web/src/lib/controller-requesters.js';
+import { createControllerRuntimeSessionFlows } from '../apps/web/src/lib/controller-runtime-session-flows.js';
 import { createInitialShellState } from '../apps/web/src/lib/controller-shell-state.js';
 import { createControllerUiSync } from '../apps/web/src/lib/controller-ui-sync.js';
 
@@ -305,6 +306,64 @@ async function validateRequestersResyncRunAvailability() {
   assert.equal(loadToolPlaneArg, 'C:/workspace/demo');
 }
 
+async function validateSelectedSessionRestoresItsWorkspace() {
+  const state = createInitialShellState();
+  state.runtime = makeRuntime();
+  state.workspacePathDraft = 'C:/daemon/startup-root';
+  const session = makeSession({ workspacePath: 'C:/workspace/restored-thread' });
+  const api: DaemonApi = {
+    ...createUnusedDaemonApi(),
+    getSession: async () => ({ session, runs: [] }),
+    getToolPlane: async (query) => {
+      loadedToolPlanePath = query?.workspacePath;
+      return {
+        snapshot: {
+          generatedAt: NOW,
+          scope: 'session',
+          sessionId: session.id,
+          workspacePath: query?.workspacePath ?? '',
+          registryPath: null,
+          registryEntries: [],
+          mcpServers: [],
+          registeredSessionTools: [],
+          tools: [],
+          providers: [],
+        },
+      };
+    },
+  };
+  let loadedToolPlanePath: string | undefined;
+
+  const flows = createControllerRuntimeSessionFlows({
+    state,
+    api,
+    emitRunViewState: () => {},
+    emitShellPanelsState: () => {},
+    syncResumeAction: () => {},
+    syncApprovalPolicyControls: () => {},
+    syncFollowUpActions: () => {},
+    syncRunAction: () => {},
+    syncSessionCreationControls: () => {},
+    syncCancelAction: () => {},
+    setSessionsUnavailableState: () => {},
+    setArchiveUnavailableState: () => {},
+    setToolPlaneUnavailableState: () => {},
+    clearSessionSelectionState: () => {},
+    clearRunSelectionView: () => {},
+    closeStream: () => {},
+    refreshRecommendation: async () => {},
+    selectRun: async () => {},
+    transitionToNewSession: async () => true,
+  });
+
+  const selected = await flows.selectSession(session.id);
+
+  assert.equal(selected, true);
+  assert.equal(state.selectedSession?.workspacePath, 'C:/workspace/restored-thread');
+  assert.equal(state.workspacePathDraft, 'C:/workspace/restored-thread');
+  assert.equal(loadedToolPlanePath, 'C:/workspace/restored-thread');
+}
+
 async function validateStartRunCreatesSessionOnDemand() {
   const state = createInitialShellState();
   state.runtime = makeRuntime();
@@ -484,6 +543,7 @@ async function main() {
   const checks: Array<[string, () => Promise<void>]> = [
     ['controls enable from draft state', validateControlsEnableFromDraftState],
     ['requesters resync run availability', validateRequestersResyncRunAvailability],
+    ['selected session restores its workspace', validateSelectedSessionRestoresItsWorkspace],
     ['start run creates session on demand', validateStartRunCreatesSessionOnDemand],
     ['draft routing works without a selected session', validateDraftRoutingWithoutSelectedSession],
   ];
