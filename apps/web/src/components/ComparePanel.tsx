@@ -80,6 +80,33 @@ export function ComparePanel({
   const [started, setStarted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sourceRefs = useRef<EventSource[]>([]);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      onCloseRef.current();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    closeButtonRef.current?.focus();
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -225,6 +252,7 @@ export function ComparePanel({
             Compare providers
           </span>
           <button
+            ref={closeButtonRef}
             type="button"
             className="compare-panel-close"
             onClick={onClose}
