@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import type { ApprovalPolicy, ProviderId } from '@qwemini/protocol';
-import { Badge } from '@qwemini/ui-kit';
+import type { ApprovalPolicy, ProviderId } from '@codewave/protocol';
+import { Badge } from '@codewave/ui-kit';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { RunViewState } from '../../lib/run-view-state';

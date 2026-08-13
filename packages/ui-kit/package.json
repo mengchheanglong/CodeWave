@@ -1,5 +1,5 @@
 {
-  "name": "@qwemini/ui-kit",
+  "name": "@codewave/ui-kit",
   "private": true,
   "type": "module",
   "dependencies": {

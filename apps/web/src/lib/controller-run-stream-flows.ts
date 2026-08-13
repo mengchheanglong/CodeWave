@@ -1,7 +1,7 @@
 import type {
   RunSnapshot,
   WorkbenchEvent,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type { DaemonApi } from './daemon-api.js';
 import { notifyAttention } from './attention-notifications.js';
 import { buildRunPresentation } from '../shell-status-summary.js';
@@ -27,6 +27,33 @@ type ControllerRunStreamFlowDeps = {
   loadArchive: LoadArchive;
   refreshRecommendation: RefreshRecommendation;
 };
+
+function buildRunUpdateFeedback(snapshot: RunSnapshot): string | null {
+  if (!['queued', 'running', 'awaiting_approval'].includes(snapshot.run.status)) {
+    return null;
+  }
+
+  const latestSteeringEvent = [...snapshot.events]
+    .reverse()
+    .find(
+      (event) =>
+        event.type === 'run.steering.queued' ||
+        event.type === 'run.steering.applied' ||
+        event.type === 'run.steering.failed',
+    );
+  if (!latestSteeringEvent) return null;
+
+  if (
+    latestSteeringEvent.type === 'run.steering.applied' &&
+    latestSteeringEvent.payload.delivery === 'native'
+  ) {
+    return 'Update delivered to the active run.';
+  }
+  if (latestSteeringEvent.type === 'run.steering.queued') {
+    return 'Update queued safely. CodeWave will continue it in this thread if the provider cannot acknowledge it.';
+  }
+  return null;
+}
 
 export function createControllerRunStreamFlows(
   deps: ControllerRunStreamFlowDeps,
@@ -67,6 +94,7 @@ export function createControllerRunStreamFlows(
 
     state.selectedRun = snapshot.run;
     state.events = snapshot.events;
+    state.transcript = snapshot.transcript;
     state.contextChars = snapshot.contextChars ?? 0;
     state.undoAvailable = Boolean(snapshot.undo?.available);
     state.undoDetail = snapshot.undo?.detail ?? null;
@@ -82,6 +110,7 @@ export function createControllerRunStreamFlows(
     state.runStatusLabel = runPresentation.statusLabel;
     state.runStatusClassName = runPresentation.statusClassName;
     state.runStateNoteMessage = runPresentation.stateNote;
+    state.runUpdateFeedbackMessage = buildRunUpdateFeedback(snapshot);
     emitRunViewState();
     emitShellPanelsState();
     syncCancelAction();
@@ -199,7 +228,34 @@ export function createControllerRunStreamFlows(
       return;
     }
 
-    const eventSource = new EventSource(`/api/runs/${runId}/stream`);
+    const replayCursor = snapshot.events.reduce(
+      (latest, event) =>
+        typeof event.sequence === 'number'
+          ? Math.max(latest, event.sequence)
+          : latest,
+      0,
+    );
+    let streamUrl: string;
+    try {
+      streamUrl = await api.getRunStreamUrl(runId, replayCursor);
+    } catch {
+      if (
+        selectionToken === state.runSelectionToken &&
+        state.selectedRun?.id === runId
+      ) {
+        setRunRefreshWarning(
+          'Run loaded, but live-stream negotiation failed. Showing the persisted snapshot.',
+        );
+      }
+      return;
+    }
+    if (
+      selectionToken !== state.runSelectionToken ||
+      state.selectedRun?.id !== runId
+    ) {
+      return;
+    }
+    const eventSource = new EventSource(streamUrl);
     eventSource.onmessage = (message) => {
       if (
         selectionToken !== state.runSelectionToken ||
@@ -216,6 +272,10 @@ export function createControllerRunStreamFlows(
         return;
       }
 
+      if (state.events.some((existing) => existing.id === event.id)) {
+        return;
+      }
+
       state.events.push(event);
 
       if (event.type === 'approval.requested') {
@@ -228,6 +288,17 @@ export function createControllerRunStreamFlows(
         notifyAttention('run-failed', 'The run failed. Check the transcript.');
       }
 
+      if (event.type === 'run.steering.applied') {
+        const appliedRunId =
+          typeof event.payload.appliedRunId === 'string'
+            ? event.payload.appliedRunId
+            : null;
+        if (appliedRunId && appliedRunId !== runId) {
+          void selectRun(appliedRunId).catch(() => {});
+          return;
+        }
+      }
+
       if (
         event.type.startsWith('tool.') ||
         event.type.startsWith('approval.') ||
@@ -235,7 +306,8 @@ export function createControllerRunStreamFlows(
         event.type === 'artifact.created' ||
         event.type === 'run.completed' ||
         event.type === 'run.failed' ||
-        event.type === 'run.cancelled'
+        event.type === 'run.cancelled' ||
+        event.type.startsWith('run.steering.')
       ) {
         void refreshRun(runId).catch(() => {});
         return;

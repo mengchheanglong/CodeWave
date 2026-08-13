@@ -1,47 +1,53 @@
-/* ============================================================
-   Qwemini design tokens — colors
-   Cool blue-gray base (GitHub-dark family), provider-aware accent.
-   ============================================================ */
+/* CodeWave color system: low-glare ocean chrome with calm provider tints. */
 
 :root {
-  /* Base surfaces */
-  --surface-0: #0d1117; /* deepest background */
-  --surface-1: #161b22; /* primary surface */
-  --surface-2: #1c2128; /* elevated surface */
-  --surface-3: #21262d; /* card/panel surface */
+  color-scheme: dark;
 
-  /* Ink hierarchy */
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-tertiary: #59636e;
+  --canvas: #050d15;
+  --surface-0: #07121c;
+  --surface-1: #0a1722;
+  --surface-2: #0f202e;
+  --surface-3: #152a3a;
+  --surface-raised: #1a3142;
+  --surface-overlay: rgba(8, 21, 32, 0.95);
+  --surface-glass: rgba(7, 19, 29, 0.84);
 
-  /* Provider accents — the active one wins via [data-accent] */
-  --accent-qwen: #ff8a3d; /* warm amber */
-  --accent-gemini: #4285f4; /* google blue */
-  --accent-opencode: #10b981; /* emerald */
-  --accent-freebuff: #00f2fe; /* electric cyan */
+  --text-primary: #deebf0;
+  --text-secondary: #93aab5;
+  --text-tertiary: #66818e;
+  --text-disabled: #435f6b;
+  --text-on-accent: #06131b;
 
-  /* Status colors */
-  --status-success: #3fb950;
-  --status-error: #f85149;
-  --status-warning: #d29922;
-  --status-info: #58a6ff;
-  --status-running: #a371f7;
+  --accent-qwen: #75aec1;
+  --accent-gemini: #779bc2;
+  --accent-opencode: #6ca79e;
+  --accent-freebuff: #62a8bc;
+  --accent-active: var(--accent-qwen);
+  --accent-soft: color-mix(in srgb, var(--accent-active) 10%, transparent);
+  --accent-muted: color-mix(in srgb, var(--accent-active) 19%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent-active) 32%, var(--border-muted));
+  --accent-glow: color-mix(in srgb, var(--accent-active) 13%, transparent);
 
-  /* Diff colors */
-  --diff-add-bg: rgba(63, 185, 80, 0.14);
-  --diff-add-text: #3fb950;
-  --diff-del-bg: rgba(248, 81, 73, 0.14);
-  --diff-del-text: #f85149;
-  --diff-hunk-bg: rgba(88, 166, 255, 0.1);
-  --diff-hunk-text: #58a6ff;
+  --status-success: #69ad8d;
+  --status-error: #d77d88;
+  --status-warning: #c5a66c;
+  --status-info: #75a4c9;
+  --status-running: #8d9fc2;
 
-  /* Borders */
-  --border-default: #30363d;
-  --border-muted: #21262d;
+  --diff-add-bg: rgba(105, 173, 141, 0.1);
+  --diff-add-text: #86c6a6;
+  --diff-del-bg: rgba(215, 125, 136, 0.1);
+  --diff-del-text: #df98a0;
+  --diff-hunk-bg: rgba(117, 164, 201, 0.09);
+  --diff-hunk-text: #8eb4d2;
 
-  /* Overlays / elevation */
-  --overlay-scrim: rgba(1, 4, 9, 0.62);
+  --border-subtle: rgba(176, 216, 230, 0.04);
+  --border-muted: #142938;
+  --border-default: #203b4c;
+  --border-strong: #31556a;
+  --overlay-scrim: rgba(2, 8, 13, 0.76);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent-active) 22%, transparent);
+  --selection: color-mix(in srgb, var(--accent-active) 30%, transparent);
 }
 
 :root[data-accent='gemini'] {
@@ -61,27 +67,35 @@
   --accent-active: var(--accent-qwen);
 }
 
-/* Light theme */
 html[data-theme='light'] {
-  --surface-0: #ffffff;
-  --surface-1: #f6f8fa;
-  --surface-2: #f0f2f5;
-  --surface-3: #e8eaed;
-  --text-primary: #1f2328;
-  --text-secondary: #59636e;
-  --text-tertiary: #8c959f;
-  --status-success: #1a7f37;
-  --status-error: #d1242f;
-  --status-warning: #9a6700;
-  --status-info: #0969da;
-  --status-running: #8250df;
-  --diff-add-bg: rgba(26, 127, 55, 0.12);
-  --diff-add-text: #1a7f37;
-  --diff-del-bg: rgba(209, 36, 47, 0.12);
-  --diff-del-text: #d1242f;
-  --diff-hunk-bg: rgba(9, 105, 218, 0.08);
-  --diff-hunk-text: #0969da;
-  --border-default: #d0d7de;
-  --border-muted: #e8eaed;
-  --overlay-scrim: rgba(31, 35, 40, 0.4);
+  color-scheme: light;
+  --canvas: #edf1f5;
+  --surface-0: #f7f9fb;
+  --surface-1: #ffffff;
+  --surface-2: #f4f6f8;
+  --surface-3: #edf1f5;
+  --surface-raised: #ffffff;
+  --surface-overlay: rgba(255, 255, 255, 0.96);
+  --surface-glass: rgba(255, 255, 255, 0.86);
+  --text-primary: #171b21;
+  --text-secondary: #566170;
+  --text-tertiary: #808b99;
+  --text-disabled: #a4acb7;
+  --text-on-accent: #111317;
+  --status-success: #198754;
+  --status-error: #d83b4d;
+  --status-warning: #a66b00;
+  --status-info: #296fd4;
+  --status-running: #7857d6;
+  --diff-add-bg: rgba(25, 135, 84, 0.1);
+  --diff-add-text: #18794e;
+  --diff-del-bg: rgba(216, 59, 77, 0.1);
+  --diff-del-text: #c83243;
+  --diff-hunk-bg: rgba(41, 111, 212, 0.08);
+  --diff-hunk-text: #2867bd;
+  --border-subtle: rgba(23, 27, 33, 0.05);
+  --border-muted: #e3e7ec;
+  --border-default: #d3d9e1;
+  --border-strong: #b9c2ce;
+  --overlay-scrim: rgba(20, 25, 32, 0.46);
 }

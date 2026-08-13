@@ -10,7 +10,7 @@ import type {
   RoutingToolRequirement,
   ToolPlaneSnapshot,
   WorkbenchRun,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 export interface RecommendProviderRouteInput {
   prompt: string;
@@ -96,16 +96,52 @@ function clampConfidence(value: number): number {
   return Math.max(0.5, Math.min(0.98, Number(value.toFixed(2))));
 }
 
+function providerPriority(provider: ProviderHealth): number {
+  return provider.priority ?? 500;
+}
+
+function sortAvailableProviders(providers: ProviderHealth[]): ProviderHealth[] {
+  return providers
+    .filter((provider) => provider.available)
+    .sort(
+      (left, right) =>
+        providerPriority(left) - providerPriority(right) ||
+        left.providerId.localeCompare(right.providerId),
+    );
+}
+
 function getFallbackProvider(
   providers: ProviderHealth[],
   primaryProviderId: ProviderId,
 ): ProviderId | null {
   return (
-    providers.find(
+    sortAvailableProviders(providers).find(
       (provider) =>
         provider.available && provider.providerId !== primaryProviderId,
     )?.providerId ?? null
   );
+}
+
+function getBestProviderForTools(
+  providers: ProviderHealth[],
+  toolPlane: ToolPlaneSnapshot | null | undefined,
+  requiredTools: RoutingToolRequirement[],
+): { provider: ProviderHealth; score: number } | null {
+  const ranked = sortAvailableProviders(providers)
+    .map((provider) => ({
+      provider,
+      score: getToolRequirementCoverageScore(
+        toolPlane,
+        provider.providerId,
+        requiredTools,
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        providerPriority(left.provider) - providerPriority(right.provider),
+    );
+  return ranked[0] ?? null;
 }
 
 function getToolPlaneProviderSignal(
@@ -235,7 +271,7 @@ function buildRecommendation(
 export function recommendProviderRoute(
   input: RecommendProviderRouteInput,
 ): OrchestrationRecommendation {
-  const availableProviders = input.providers.filter((provider) => provider.available);
+  const availableProviders = sortAvailableProviders(input.providers);
   if (availableProviders.length === 0) {
     throw new Error('No providers are currently available for orchestration.');
   }
@@ -259,144 +295,99 @@ export function recommendProviderRoute(
       ) ?? null
     : null;
   const toolPlane = input.toolPlane ?? null;
-  const qwen = availableProviders.find((provider) => provider.providerId === 'qwen');
-  const gemini = availableProviders.find(
-    (provider) => provider.providerId === 'gemini',
-  );
 
   if (toolPlane && requiredTools.length > 0) {
-    const scoredProviders = availableProviders
-      .map((provider) => ({
-        providerId: provider.providerId,
-        score: getToolRequirementCoverageScore(
-          toolPlane,
-          provider.providerId,
-          requiredTools,
-        ),
-      }))
-      .sort((left, right) => right.score - left.score);
-    const [best, secondBest] = scoredProviders;
+    const best = getBestProviderForTools(
+      availableProviders,
+      toolPlane,
+      requiredTools,
+    );
 
-    if (best && best.score > 0 && (!secondBest || best.score > secondBest.score)) {
+    if (best && best.score > 0) {
       const strategy =
         requiredTools.includes('workspace-write') || requiredTools.includes('shell')
           ? 'tool-first'
           : 'analysis-first';
       return buildRecommendation(
         input,
-        best.providerId,
+        best.provider.providerId,
         strategy,
         0.9,
-        `${best.providerId} is preferred because the daemon-owned tool plane currently offers the strongest coverage for the required tool signals.`,
-        buildSignalLines(toolPlane, best.providerId, requiredTools),
+        `${best.provider.providerId} is preferred because it has the strongest ready-tool coverage; policy priority breaks equivalent-coverage ties without selecting a paid provider implicitly.`,
+        buildSignalLines(toolPlane, best.provider.providerId, requiredTools),
       );
     }
 
     if (hasToolRequirement(requiredTools, 'mcp')) {
       throw new Error(
-        'No provider currently has MCP ready for this workspace. Add an enabled MCP server in .qwemini/mcp.json or .mcp.json first.',
+        'No provider currently has MCP ready for this workspace. Add an enabled MCP server in .codewave/mcp.json or .mcp.json first.',
       );
     }
   }
 
-  if (hasToolRequirement(requiredTools, 'mcp') && gemini && !toolPlane) {
+  if (requiredTools.length > 0 && preferredProvider) {
     return buildRecommendation(
       input,
-      'gemini',
-      'analysis-first',
-      0.91,
-      'Gemini is preferred because the route explicitly requires MCP-aware tooling and Gemini is the stronger MCP-first provider surface today.',
-      buildSignalLines(toolPlane, 'gemini', requiredTools),
+      preferredProvider.providerId,
+      requiredTools.some((tool) => tool === 'workspace-write' || tool === 'shell')
+        ? 'tool-first'
+        : 'analysis-first',
+      0.72,
+      `${preferredProvider.providerId} remains selected because no live tool-plane snapshot was available to justify changing providers.`,
+      buildSignalLines(toolPlane, preferredProvider.providerId, requiredTools),
     );
   }
 
-  if (
-    (hasToolRequirement(requiredTools, 'workspace-write') ||
-      hasToolRequirement(requiredTools, 'shell')) &&
-    qwen
-  ) {
-    return buildRecommendation(
-      input,
-      'qwen',
-      'tool-first',
-      0.92,
-      'Qwen is preferred because the route explicitly requires write or shell tooling and its tool-control plus checkpoint path is stronger for execution-heavy work.',
-      buildSignalLines(toolPlane, 'qwen', requiredTools),
+  if (CHECKPOINT_PATTERN.test(normalizedPrompt)) {
+    const checkpointProvider = availableProviders.find(
+      (provider) => provider.capabilities.checkpointEvents,
     );
+    if (checkpointProvider) {
+      return buildRecommendation(
+        input,
+        checkpointProvider.providerId,
+        'checkpoint-first',
+        0.9,
+        `${checkpointProvider.providerId} is preferred because it advertises checkpoint events for this recovery-sensitive task.`,
+        buildSignalLines(toolPlane, checkpointProvider.providerId, requiredTools),
+      );
+    }
   }
 
-  if (hasToolRequirement(requiredTools, 'network') && gemini) {
-    return buildRecommendation(
-      input,
-      'gemini',
-      'analysis-first',
-      0.86,
-      'Gemini is preferred because the route explicitly requires network-style tool work and its current extension and MCP posture is the better fit.',
-      buildSignalLines(toolPlane, 'gemini', requiredTools),
+  if (TOOL_PATTERN.test(normalizedPrompt) && toolPlane) {
+    const best = getBestProviderForTools(
+      availableProviders,
+      toolPlane,
+      ['workspace-write', 'shell'],
     );
+    if (best && best.score > 0) {
+      return buildRecommendation(
+        input,
+        best.provider.providerId,
+        'tool-first',
+        0.86,
+        `${best.provider.providerId} is preferred for execution-heavy work based on live workspace-write and shell readiness.`,
+        buildSignalLines(toolPlane, best.provider.providerId, []),
+      );
+    }
   }
 
-  if (hasToolRequirement(requiredTools, 'workspace-read') && gemini) {
-    return buildRecommendation(
-      input,
-      'gemini',
-      'analysis-first',
-      0.82,
-      'Gemini is preferred because the route is read-heavy without a stronger execution signal.',
-      buildSignalLines(toolPlane, 'gemini', requiredTools),
+  if (ANALYSIS_PATTERN.test(normalizedPrompt) && toolPlane) {
+    const best = getBestProviderForTools(
+      availableProviders,
+      toolPlane,
+      ['workspace-read', 'network', 'mcp'],
     );
-  }
-
-  if (CHECKPOINT_PATTERN.test(normalizedPrompt) && qwen) {
-    return buildRecommendation(
-      input,
-      'qwen',
-      'checkpoint-first',
-      0.9,
-      'Qwen is preferred for checkpoint-heavy or recovery-sensitive work because its runtime currently emits richer checkpoint and session-control signals.',
-      buildSignalLines(toolPlane, 'qwen', requiredTools),
-    );
-  }
-
-  if (
-    TOOL_PATTERN.test(normalizedPrompt) &&
-    qwen &&
-    (!toolPlane ||
-      getToolRequirementCoverageScore(toolPlane, 'qwen', ['workspace-write', 'shell']) >=
-        getToolRequirementCoverageScore(toolPlane, 'gemini', [
-          'workspace-write',
-          'shell',
-        ]))
-  ) {
-    return buildRecommendation(
-      input,
-      'qwen',
-      'tool-first',
-      0.87,
-      'Qwen is preferred for tool-heavy coding work because its daemon-owned control path and checkpoint surfaces are more mature.',
-      buildSignalLines(toolPlane, 'qwen', []),
-    );
-  }
-
-  if (
-    ANALYSIS_PATTERN.test(normalizedPrompt) &&
-    gemini &&
-    (!toolPlane ||
-      getToolRequirementCoverageScore(toolPlane, 'gemini', ['mcp', 'network', 'workspace-read']) >=
-        getToolRequirementCoverageScore(toolPlane, 'qwen', [
-          'mcp',
-          'network',
-          'workspace-read',
-        ]))
-  ) {
-    return buildRecommendation(
-      input,
-      'gemini',
-      'analysis-first',
-      0.84,
-      'Gemini is preferred for analysis-heavy prompts when no stronger tool or checkpoint signal is present.',
-      buildSignalLines(toolPlane, 'gemini', []),
-    );
+    if (best && best.score > 0) {
+      return buildRecommendation(
+        input,
+        best.provider.providerId,
+        'analysis-first',
+        0.82,
+        `${best.provider.providerId} is preferred for analysis-heavy work based on live read, network, and MCP readiness.`,
+        buildSignalLines(toolPlane, best.provider.providerId, []),
+      );
+    }
   }
 
   if (preferredProvider) {
@@ -404,47 +395,31 @@ export function recommendProviderRoute(
       input,
       preferredProvider.providerId,
       'balanced',
-      0.72,
-      `No strong routing signal was detected, so orchestration stays close to the current ${preferredProvider.providerId} session context.`,
+      0.76,
+      `No stronger routing signal was detected, so orchestration preserves the current ${preferredProvider.providerId} session context.`,
       buildSignalLines(toolPlane, preferredProvider.providerId, requiredTools),
     );
   }
 
-  if (qwen) {
-    return buildRecommendation(
-      input,
-      'qwen',
-      'balanced',
-      0.68,
-      'No strong routing signal was detected, so orchestration uses Qwen as the default implementation-first runtime and keeps Gemini as fallback.',
-      buildSignalLines(toolPlane, 'qwen', requiredTools),
-    );
-  }
-
+  const policyPreferred = availableProviders[0]!;
   return buildRecommendation(
     input,
-    gemini ? 'gemini' : availableProviders[0]!.providerId,
+    policyPreferred.providerId,
     'balanced',
-    0.66,
-    'No strong routing signal was detected, so orchestration uses the healthiest available provider.',
-    buildSignalLines(
-      toolPlane,
-      gemini ? 'gemini' : availableProviders[0]!.providerId,
-      requiredTools,
-    ),
+    0.74,
+    `${policyPreferred.providerId} is the highest-priority ready provider in the daemon-owned registry. Paid providers are never selected unless the user explicitly enables them.`,
+    buildSignalLines(toolPlane, policyPreferred.providerId, requiredTools),
   );
 }
 
 export function recommendFollowUpRoute(
   input: RecommendFollowUpRouteInput,
 ): OrchestrationRecommendation {
-  const availableProviders = input.providers.filter((provider) => provider.available);
+  const availableProviders = sortAvailableProviders(input.providers);
   if (availableProviders.length === 0) {
     throw new Error('No providers are currently available for orchestration.');
   }
 
-  const gemini = availableProviders.find((provider) => provider.providerId === 'gemini');
-  const qwen = availableProviders.find((provider) => provider.providerId === 'qwen');
   const preferredProvider = input.preferredProviderId
     ? availableProviders.find(
         (provider) => provider.providerId === input.preferredProviderId,
@@ -453,11 +428,13 @@ export function recommendFollowUpRoute(
 
   if (input.kind === 'review') {
     const reviewProvider =
-      gemini?.providerId !== input.sourceRun.providerId
-        ? gemini
-        : qwen?.providerId !== input.sourceRun.providerId
-          ? qwen
-          : gemini ?? qwen ?? availableProviders[0];
+      (preferredProvider?.providerId !== input.sourceRun.providerId
+        ? preferredProvider
+        : null) ??
+      availableProviders.find(
+        (provider) => provider.providerId !== input.sourceRun.providerId,
+      ) ??
+      availableProviders[0];
     if (!reviewProvider) {
       throw new Error('No providers are currently available for review routing.');
     }
@@ -473,15 +450,12 @@ export function recommendFollowUpRoute(
       reviewProvider.providerId,
       'analysis-first',
       preferredProvider?.providerId === reviewProvider.providerId ? 0.83 : 0.88,
-      `${reviewProvider.providerId} is preferred for a reviewer follow-up because review work should be separated from the source run when another healthy provider is available.`,
+      `${reviewProvider.providerId} is preferred for review because CodeWave separates the reviewer from the source provider when another explicitly enabled runtime is ready.`,
     );
   }
 
   const verifyProvider =
-    qwen ??
-    (gemini?.providerId !== input.sourceRun.providerId
-      ? gemini
-      : gemini ?? availableProviders[0]);
+    preferredProvider ?? availableProviders[0];
   if (!verifyProvider) {
     throw new Error('No providers are currently available for verify routing.');
   }
@@ -497,7 +471,7 @@ export function recommendFollowUpRoute(
     verifyProvider.providerId,
     'tool-first',
     preferredProvider?.providerId === verifyProvider.providerId ? 0.84 : 0.89,
-    `${verifyProvider.providerId} is preferred for a verifier follow-up because verification should stay close to the tool and execution path while still avoiding unnecessary provider lock-in.`,
+    `${verifyProvider.providerId} is preferred for verification by the current provider policy; explicit preferences are preserved and paid providers are not activated implicitly.`,
   );
 }
 
@@ -508,7 +482,7 @@ export function buildFollowUpPrompt(
 
   if (input.kind === 'review') {
     return [
-      'You are the reviewer for a Qwemini follow-up run.',
+      'You are the reviewer for a CodeWave follow-up run.',
       'Review the prior result for correctness, regressions, missing checks, and risky assumptions.',
       "If you find issues, list them clearly. If you do not find issues, say 'No review findings.'",
       '',
@@ -521,7 +495,7 @@ export function buildFollowUpPrompt(
   }
 
   return [
-    'You are the verifier for a Qwemini follow-up run.',
+    'You are the verifier for a CodeWave follow-up run.',
     'Verify the prior result and state what appears validated versus what still needs checking.',
     "If verification is incomplete, say exactly what remains. If it appears sound, say 'Verification looks clean.'",
     '',
@@ -542,7 +516,7 @@ export function getFollowUpRole(
 export function recommendDelegatedRoute(
   input: RecommendDelegatedRouteInput,
 ): OrchestrationRecommendation {
-  const availableProviders = input.providers.filter((provider) => provider.available);
+  const availableProviders = sortAvailableProviders(input.providers);
   if (availableProviders.length === 0) {
     throw new Error('No providers are currently available for orchestration.');
   }
@@ -563,57 +537,33 @@ export function recommendDelegatedRoute(
     };
   }
 
-  const qwen = availableProviders.find((provider) => provider.providerId === 'qwen');
-  const gemini = availableProviders.find(
-    (provider) => provider.providerId === 'gemini',
+  const roleTools: RoutingToolRequirement[] =
+    input.role === 'planner' || input.role === 'researcher'
+      ? ['workspace-read', 'network']
+      : input.role === 'verifier'
+        ? ['workspace-read', 'shell']
+        : ['workspace-write', 'shell'];
+  const preferredFromPolicy = input.preferredProviderId
+    ? availableProviders.find(
+        (provider) => provider.providerId === input.preferredProviderId,
+      ) ?? null
+    : null;
+  const bestForRole = getBestProviderForTools(
+    availableProviders,
+    input.toolPlane,
+    roleTools,
   );
-
-  if (input.role === 'planner' || input.role === 'researcher') {
-    const preferred = gemini ?? qwen ?? availableProviders[0];
-    if (!preferred) {
-      throw new Error('No providers are currently available for delegation.');
-    }
-    return buildRecommendation(
-      {
-        prompt: input.prompt,
-        workspacePath: input.workspacePath,
-        providers: input.providers,
-        preferredProviderId: input.preferredProviderId ?? null,
-        requiredTools: input.requiredTools ?? [],
-        toolPlane: input.toolPlane ?? null,
-      },
-      preferred.providerId,
-      'analysis-first',
-      0.86,
-      `${preferred.providerId} is preferred for ${input.role} delegation because that role is analysis-heavy and benefits from an explicit subtask boundary.`,
-    );
-  }
-
-  if (input.role === 'verifier') {
-    const preferred = qwen ?? gemini ?? availableProviders[0];
-    if (!preferred) {
-      throw new Error('No providers are currently available for delegation.');
-    }
-    return buildRecommendation(
-      {
-        prompt: input.prompt,
-        workspacePath: input.workspacePath,
-        providers: input.providers,
-        preferredProviderId: input.preferredProviderId ?? null,
-        requiredTools: input.requiredTools ?? [],
-        toolPlane: input.toolPlane ?? null,
-      },
-      preferred.providerId,
-      'tool-first',
-      0.87,
-      `${preferred.providerId} is preferred for verifier delegation because verification often needs the stronger implementation and tool-execution path.`,
-    );
-  }
-
-  const preferred = qwen ?? gemini ?? availableProviders[0];
+  const preferred =
+    (bestForRole && bestForRole.score > 0 ? bestForRole.provider : null) ??
+    preferredFromPolicy ??
+    availableProviders[0];
   if (!preferred) {
     throw new Error('No providers are currently available for delegation.');
   }
+  const strategy =
+    input.role === 'planner' || input.role === 'researcher'
+      ? 'analysis-first'
+      : 'tool-first';
   return buildRecommendation(
       {
         prompt: input.prompt,
@@ -622,11 +572,12 @@ export function recommendDelegatedRoute(
         preferredProviderId: input.preferredProviderId ?? null,
         requiredTools: input.requiredTools ?? [],
         toolPlane: input.toolPlane ?? null,
-      },
+    },
     preferred.providerId,
-    'tool-first',
-    0.82,
-    `${preferred.providerId} is preferred for ${input.role} delegation because this subtask looks implementation-oriented.`,
+    strategy,
+    0.84,
+    `${preferred.providerId} is preferred for ${input.role} delegation from live tool readiness plus the daemon-owned provider priority.`,
+    buildSignalLines(input.toolPlane, preferred.providerId, roleTools),
   );
 }
 
@@ -636,7 +587,7 @@ export function buildDelegatedPrompt(
   const sourceOutput = input.sourceOutput.trim() || 'No final assistant output was captured.';
 
   return [
-    `You are the ${input.role} for a delegated Qwemini subtask.`,
+    `You are the ${input.role} for a delegated CodeWave subtask.`,
     'Complete only the delegated scope and keep the result concise and inspectable.',
     '',
     `Source provider: ${input.sourceProviderId}`,
@@ -667,7 +618,7 @@ export function buildHandoffPrompt(
   const sourceOutput = input.sourceOutput.trim() || 'No final assistant output was captured.';
 
   return [
-    'You are continuing a handed-off Qwemini task in a new main session.',
+    'You are continuing a handed-off CodeWave task in a new main session.',
     'Continue from the prior result instead of restarting from scratch.',
     '',
     `Source provider: ${input.sourceProviderId}`,

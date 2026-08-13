@@ -2,7 +2,7 @@ import type {
   ApprovalPolicy,
   RoutingToolRequirement,
   RunMode,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type { ShellPanelsState } from './shell-panels-state.js';
 import type {
   DelegateRole,
@@ -27,6 +27,7 @@ let shellSummaryListener: ((nextState: ShellSummaryState) => void) | null =
 const noopAsync = async () => {};
 const requesters: ControllerRequesterMap = {
   runSelectionRequester: noopAsync,
+  runtimeRefreshRequester: noopAsync,
   sessionSelectionRequester: async () => false,
   approvalResolutionRequester: noopAsync,
   checkpointRecoveryRequester: noopAsync,
@@ -117,6 +118,10 @@ export function subscribeShellSummaryState(
 
 export async function requestRunSelection(runId: string): Promise<void> {
   await requesters.runSelectionRequester(runId);
+}
+
+export async function requestRuntimeRefresh(): Promise<void> {
+  await requesters.runtimeRefreshRequester();
 }
 
 export async function requestSessionSelection(

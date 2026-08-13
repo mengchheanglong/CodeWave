@@ -2,7 +2,7 @@ import type {
   ApprovalPolicy,
   RoutingToolRequirement,
   RunMode,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type {
   DelegateRole,
   FollowUpKind,
@@ -17,6 +17,7 @@ import type {
   RecoverFromCheckpoint,
   RecoverSelectedSession,
   RefreshRecommendation,
+  RefreshRuntime,
   ResolveApproval,
   RoutePrompt,
   DeleteSession,
@@ -57,6 +58,7 @@ type ControllerRequesterDeps = {
   executePlanRun: (planText: string) => Promise<void>;
   undoSelectedRun: () => Promise<void>;
   updateRunMode: (mode: RunMode) => void;
+  refreshRuntime: RefreshRuntime;
 };
 
 export function createControllerRequesters(
@@ -89,13 +91,27 @@ export function createControllerRequesters(
     executePlanRun,
     undoSelectedRun,
     updateRunMode,
+    refreshRuntime,
   } = deps;
 
   function toApprovalPolicy(value: string): ApprovalPolicy {
     return value === 'allow' || value === 'deny' ? value : 'manual';
   }
 
+  function requireProviderRevision(): string {
+    const revision = state.runtime?.providerRegistry.revision;
+    if (!revision) {
+      throw new Error(
+        'Provider policy is unavailable. Refresh the runtime, review the provider settings, and retry.',
+      );
+    }
+    return revision;
+  }
+
   return {
+    runtimeRefreshRequester: async () => {
+      await refreshRuntime();
+    },
     approvalResolutionRequester: async (
       approvalId: string,
       decision: ApprovalDecision,
@@ -172,21 +188,33 @@ export function createControllerRequesters(
       if (typeof patch.providerId === 'string') {
         state.providerIdDraft = patch.providerId;
         try {
-          localStorage.setItem('qwemini.preferred_provider', patch.providerId);
+          localStorage.setItem('codewave.preferred_provider', patch.providerId);
         } catch {}
         if (state.selectedSession) {
+          const selectedSessionId = state.selectedSession.id;
+          const previousProviderId = state.selectedSession.providerId;
+          const expectedProviderRevision = requireProviderRevision();
           state.selectedSession.providerId = patch.providerId;
           void api
-            .updateSession(state.selectedSession.id, {
+            .updateSession(selectedSessionId, {
               providerId: patch.providerId,
+              expectedProviderRevision,
             })
             .then((updatedSession) => {
-              if (updatedSession && state.selectedSession) {
-                state.selectedSession.approvalPolicy = updatedSession.approvalPolicy;
+              if (state.selectedSession?.id === selectedSessionId) {
+                state.selectedSession = updatedSession;
                 emitShellControlsState();
               }
             })
-            .catch(() => {});
+            .catch(() => {
+              if (
+                state.selectedSession?.id === selectedSessionId &&
+                state.selectedSession.providerId === patch.providerId
+              ) {
+                state.selectedSession.providerId = previousProviderId;
+                emitShellControlsState();
+              }
+            });
         }
         syncSessionCreationControls();
       }

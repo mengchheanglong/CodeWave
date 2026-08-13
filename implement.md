@@ -1,17 +1,18 @@
-# Qwemini Implementation Plan
+# CodeWave Implementation Plan
 
 Date: 2026-04-03
-Status: first executable slice extended with daemon-owned approvals, explicit approval-wait state, persisted checkpoints, cross-session recovery actions, richer run inspection, a first-class tool invocation ledger, a lineage-aware archive view, live Qwen resume metadata, a vendoring-ready Qwen launch seam, a deeper bounded Qwen session/control vendor import, a non-blocking Qwen control loop, a product-owned cancel flow, a session-level approval policy surface, a second live Gemini adapter on the same daemon/session seam, a Gemini ACP default path, a provider-owned Windows Gemini PTY patch, a direct-entrypoint Windows Qwen launch path, a Qwen session-id refresh hardening pass, the first daemon-owned orchestration package above both providers, explicit reviewer/verifier follow-up sessions, daemon-owned delegate/handoff child runs, MCP-aware routing signals, a daemon-backed orchestration board, a first shared mcp-hub signal layer, a workspace-scoped MCP/tool registry, provider-owned tool catalogs feeding workspace-local tool-plane signals, session-aware tool-plane scope, daemon-owned live session tool registration signals, provider-connected Qwen/Gemini tool enumeration feeding explicit session registration records, provider-runtime registration ingestion from Qwen `system.tools` plus Gemini ACP tool metadata, bounded timeout fallback for provider `mcp list` connected-tool probes, hardened requirement inference so `run_shell_command` maps to `shell` deterministically, clearer shell evidence breakdown by `confirmedBy` source, a modularized shell tool-plane evidence panel, an extracted run-inspector module for transcript/messages/timeline rendering, extracted shell status/summary presentation helpers into `apps/web/src/shell-status-summary.js`, shell/daemon selection-refresh hardening with stale stream/snapshot guards in `apps/web/src/app.js`, additional shell/daemon race hardening for session-switch and recommendation/tool-plane refresh ordering in `apps/web/src/app.js`, a queue-based shell toast system inspired by Panes replacing the old single-slot notice flow, a shared protocol-owned requirement classifier consumed by daemon/providers/mcp-hub, a deterministic registration validation script under `scripts/`, a Gemini launch hardening path that accepts direct Node-script command overrides, extended edge-case deterministic probe fixtures for shell/workspace-read/mcp plus negative naming assertions, explicit provider-cli `mcp list` fallback metadata on connected-tool registrations, deterministic failure-and-timeout-path assertions that keep runtime and CLI evidence distinguishable, mixed-outcome deterministic fallback assertions for both provider permutations where one provider times out while the other fails, deterministic cross-scenario provider-summary assertions that validate observed provider-cli fallback metadata against the expected scenario matrix, optional machine-readable deterministic registration summaries for CI via `--summary-json` and `npm run check:registrations:json`, an explicit expected-vs-observed scenario matrix block in the JSON artifact with drift diagnostics and evidence partitioning across provider-runtime/provider-cli/event-observed signals, operator-loop runbook wiring for `npm run check:registrations`, typed React-rendered session/archive/orchestration, checkpoints, approvals, artifacts, tool-plane, shell summary/status, and shell control/form state surfaces driven by controller-owned state bridges, extracted controller state-mapper helpers so UI-facing coercion/build logic no longer bloats `apps/web/src/app-controller.ts`, extracted controller runtime/session loading helpers so session/runtime action flow no longer accumulates inline inside the controller shell bridge, extracted controller recommendation/run/follow-up action helpers so orchestration and mutation actions no longer accumulates inline inside the controller bridge, extracted controller run selection/refresh/stream lifecycle helpers so the remaining live-run transport path no longer accumulates inline inside the controller bridge, extracted controller UI sync helpers so derived provider/session notes and control-state mutations no longer accumulate inline inside the controller bootstrap, extracted controller requester/draft wiring so repetitive callback assignment no longer accumulates inline inside the controller bootstrap, extracted controller shell-state scaffolding so state shape/default initialization no longer accumulates inline inside the controller bootstrap, extracted controller bridge slot storage so exported React bridge subscriptions/requesters no longer accumulate inline inside the controller bootstrap, extracted controller bootstrap/reset helpers so the remaining session-transition and inspector-reset logic no longer accumulates inline inside the controller bridge, a Panes-inspired three-column shell redesign with persisted resizable columns and simple Qwemini-owned tab/navigation naming, a grouped quick-open command layer with session/run filtering plus a compact shortcut strip on top of the workbench, a donor-driven docked shell pass that borrows Panes' dark rail plus unified content-card layout while preserving the daemon-owned API and controller contracts, a new `@qwemini/ui-kit` design system package with tokens + CSS modules, dynamic provider-aware accent switching (`qwen` amber, `gemini` blue, `opencode` emerald), card-based conversation stream rendering (`UserCard`, `AssistantCard`, `ToolCard`, `DiffCard`, `ThinkingBlock`, `ApprovalCard`), a modularized prompt composer decomposed into `ComposerConfig` and `ComposerActions`, and a centralized `useKeyboardShortcuts` hook
+Status: first executable slice extended with daemon-owned approvals, explicit approval-wait state, persisted checkpoints, cross-session recovery actions, richer run inspection, a first-class tool invocation ledger, a lineage-aware archive view, live Qwen resume metadata, a vendoring-ready Qwen launch seam, a deeper bounded Qwen session/control vendor import, a non-blocking Qwen control loop, a product-owned cancel flow, a session-level approval policy surface, a second live Gemini adapter on the same daemon/session seam, a Gemini ACP default path, a provider-owned Windows Gemini PTY patch, a direct-entrypoint Windows Qwen launch path, a Qwen session-id refresh hardening pass, the first daemon-owned orchestration package above both providers, explicit reviewer/verifier follow-up sessions, daemon-owned delegate/handoff child runs, MCP-aware routing signals, a daemon-backed orchestration board, a first shared mcp-hub signal layer, a workspace-scoped MCP/tool registry, provider-owned tool catalogs feeding workspace-local tool-plane signals, session-aware tool-plane scope, daemon-owned live session tool registration signals, provider-connected Qwen/Gemini tool enumeration feeding explicit session registration records, provider-runtime registration ingestion from Qwen `system.tools` plus Gemini ACP tool metadata, bounded timeout fallback for provider `mcp list` connected-tool probes, hardened requirement inference so `run_shell_command` maps to `shell` deterministically, clearer shell evidence breakdown by `confirmedBy` source, a modularized shell tool-plane evidence panel, an extracted run-inspector module for transcript/messages/timeline rendering, extracted shell status/summary presentation helpers into `apps/web/src/shell-status-summary.js`, shell/daemon selection-refresh hardening with stale stream/snapshot guards in `apps/web/src/app.js`, additional shell/daemon race hardening for session-switch and recommendation/tool-plane refresh ordering in `apps/web/src/app.js`, a queue-based shell toast system inspired by Panes replacing the old single-slot notice flow, a shared protocol-owned requirement classifier consumed by daemon/providers/mcp-hub, a deterministic registration validation script under `scripts/`, a Gemini launch hardening path that accepts direct Node-script command overrides, extended edge-case deterministic probe fixtures for shell/workspace-read/mcp plus negative naming assertions, explicit provider-cli `mcp list` fallback metadata on connected-tool registrations, deterministic failure-and-timeout-path assertions that keep runtime and CLI evidence distinguishable, mixed-outcome deterministic fallback assertions for both provider permutations where one provider times out while the other fails, deterministic cross-scenario provider-summary assertions that validate observed provider-cli fallback metadata against the expected scenario matrix, optional machine-readable deterministic registration summaries for CI via `--summary-json` and `npm run check:registrations:json`, an explicit expected-vs-observed scenario matrix block in the JSON artifact with drift diagnostics and evidence partitioning across provider-runtime/provider-cli/event-observed signals, operator-loop runbook wiring for `npm run check:registrations`, typed React-rendered session/archive/orchestration, checkpoints, approvals, artifacts, tool-plane, shell summary/status, and shell control/form state surfaces driven by controller-owned state bridges, extracted controller state-mapper helpers so UI-facing coercion/build logic no longer bloats `apps/web/src/app-controller.ts`, extracted controller runtime/session loading helpers so session/runtime action flow no longer accumulates inline inside the controller shell bridge, extracted controller recommendation/run/follow-up action helpers so orchestration and mutation actions no longer accumulates inline inside the controller bridge, extracted controller run selection/refresh/stream lifecycle helpers so the remaining live-run transport path no longer accumulates inline inside the controller bridge, extracted controller UI sync helpers so derived provider/session notes and control-state mutations no longer accumulate inline inside the controller bootstrap, extracted controller requester/draft wiring so repetitive callback assignment no longer accumulates inline inside the controller bootstrap, extracted controller shell-state scaffolding so state shape/default initialization no longer accumulates inline inside the controller bootstrap, extracted controller bridge slot storage so exported React bridge subscriptions/requesters no longer accumulate inline inside the controller bootstrap, extracted controller bootstrap/reset helpers so the remaining session-transition and inspector-reset logic no longer accumulates inline inside the controller bridge, a Panes-inspired three-column shell redesign with persisted resizable columns and simple CodeWave-owned tab/navigation naming, a grouped quick-open command layer with session/run filtering plus a compact shortcut strip on top of the workbench, a donor-driven docked shell pass that borrows Panes' dark rail plus unified content-card layout while preserving the daemon-owned API and controller contracts, a new `@codewave/ui-kit` design system package with tokens + CSS modules, dynamic provider-aware accent switching (`qwen` amber, `gemini` blue, `opencode` emerald), card-based conversation stream rendering (`UserCard`, `AssistantCard`, `ToolCard`, `DiffCard`, `ThinkingBlock`, `ApprovalCard`), a modularized prompt composer decomposed into `ComposerConfig` and `ComposerActions`, and a centralized `useKeyboardShortcuts` hook
 
 ## Loop Queue
 
 ### Now
 
-- keep orchestration on the daemon/package boundary while the Panes-derived shell pass stays wrapped, and continue trimming shell-side duplication and untyped shared helpers without changing routes or provider behavior
+- extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
 
 ### Next
 
-- continue the typed shell cleanup by collapsing the remaining projection/mapping duplication where protocol-owned shapes can be used directly or projected once, without changing daemon routes, provider behavior, or shell UX
+- add task-level trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
+- add deterministic visual fixtures for specialty run states so UI-kit and shell polish can be regression-checked without depending on historical daemon data
 
 ### Blocked
 
@@ -29,7 +30,7 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 
 - The repo now contains the daemon, local web shell, shared protocol/state packages, and live Qwen/Gemini provider adapters.
 - An active `implement.md` now tracks the loop queue and validated slice history.
-- `git rev-parse --show-toplevel` resolved to `C:/Users/User`, so `C:/Users/User/projects/qwemini` is not currently its own git root.
+- `git rev-parse --show-toplevel` resolved to `C:/Users/User`, so `C:/Users/User/projects/codewave` is not currently its own git root.
 
 ### Upstream donors
 
@@ -45,11 +46,11 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 
 ## What Was Decided
 
-- Qwemini remains a new product-owned codebase. It should not become a forked shell around one donor.
+- CodeWave remains a new product-owned codebase. It should not become a forked shell around one donor.
 - Qwen Code is the first runtime donor because it already exposes a host-facing non-interactive session loop and permission control path that is closer to a daemon-owned integration.
-- Gemini CLI is the second runtime donor, but it should not be integrated as a plain wrapped subprocess if Qwemini wants daemon-owned approvals and inspectable tool governance.
+- Gemini CLI is the second runtime donor, but it should not be integrated as a plain wrapped subprocess if CodeWave wants daemon-owned approvals and inspectable tool governance.
 - Codex is the product-shape reference for the daemon/client boundary, event lifecycle, and approval model. It is not the implementation base.
-- The first executable Qwemini slice should prove the daemon, normalized events, SQLite state, and one live provider path before deeper multi-provider work.
+- The first executable CodeWave slice should prove the daemon, normalized events, SQLite state, and one live provider path before deeper multi-provider work.
 
 ## Exact Donors Chosen
 
@@ -101,12 +102,12 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 
 ## Base Strategy
 
-- New Qwemini repo for product code
+- New CodeWave repo for product code
 - Selective vendoring for provider runtimes
 - Reference-only use of Codex for product shape
 - No whole-repo donor fork in the first slice
 
-This keeps Qwemini daemon-centered and provider-flexible while still borrowing the strongest existing runtime pieces instead of rebuilding them.
+This keeps CodeWave daemon-centered and provider-flexible while still borrowing the strongest existing runtime pieces instead of rebuilding them.
 
 ## Bounded Codex-like v1 Plan
 
@@ -128,9 +129,9 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
 
 ### Phase B: prove one live provider
 
-- Vendor the bounded Qwen runtime slice under a Qwemini-owned vendor path
+- Vendor the bounded Qwen runtime slice under a CodeWave-owned vendor path
 - Build a `provider-qwen` adapter that launches that runtime behind the daemon
-- Translate Qwen stream/control events into Qwemini protocol events
+- Translate Qwen stream/control events into CodeWave protocol events
 - Persist sessions, runs, events, approvals, tool invocations, artifacts, and checkpoints in SQLite
 
 ### Phase C: prove the shell
@@ -192,7 +193,7 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
   - a real two-run Gemini session on this machine completed successfully and the second run correctly recalled prior-session context (`GLASSOTTER`)
 - Added and validated explicit recovery above the adapters:
   - a real daemon-backed Gemini session stored `providerSessionId`
-  - `POST /api/sessions/:id/recover` created a new Qwemini session with the same provider session metadata
+  - `POST /api/sessions/:id/recover` created a new CodeWave session with the same provider session metadata
   - a run in that recovered Gemini session correctly recalled prior-session context (`MINTFALCON`)
   - `POST /api/checkpoints/:id/recover-session` created a new session from an existing persisted checkpoint record in shared state
 - Re-checked static shell delivery after splitting the run inspector into dedicated transcript, final-message, and recovery surfaces.
@@ -239,23 +240,23 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
     - the final run status stayed `cancelled`
     - only `run.cancelled` remained in the terminal event set after the daemon started dropping superseded terminal events
 - Added and validated a session-level approval policy surface:
-  - sessions now persist `approvalPolicy` in the shared protocol and SQLite state instead of relying only on `QWEMINI_APPROVAL_POLICY`
+  - sessions now persist `approvalPolicy` in the shared protocol and SQLite state instead of relying only on `CODEWAVE_APPROVAL_POLICY`
   - `PATCH /api/sessions/:id` now updates the selected session policy through the daemon-owned ledger
   - the shell now exposes approval policy selection both at session creation time and for the selected session
   - re-ran `npm run check`
-  - validated the policy behavior through the existing `QWEMINI_QWEN_COMMAND` override seam with a controlled fake-Qwen harness in an isolated temp workspace:
+  - validated the policy behavior through the existing `CODEWAVE_QWEN_COMMAND` override seam with a controlled fake-Qwen harness in an isolated temp workspace:
     - `manual` sessions entered `awaiting_approval` until an explicit `POST /api/approvals/:id/resolve`
     - a session patched to `allow` auto-approved the tool and completed with a persisted approved approval record
     - a session patched to `deny` auto-denied the tool and completed with a persisted denied approval record plus `tool.denied`
 - Added and validated a deeper bounded Qwen control-path donor import:
-  - vendored the pinned stream-json output writer from `packages/cli/src/nonInteractive/io/StreamJsonOutputAdapter.ts`, trimmed to the host-side JSON-line transport Qwemini actually needs
+  - vendored the pinned stream-json output writer from `packages/cli/src/nonInteractive/io/StreamJsonOutputAdapter.ts`, trimmed to the host-side JSON-line transport CodeWave actually needs
   - vendored and adapted the pinned control dispatcher shape from `packages/cli/src/nonInteractive/control/ControlDispatcher.ts` so initialize, interrupt, and `can_use_tool` replies run through a reusable control-plane helper instead of provider-local handwritten response plumbing
   - switched the Qwen provider to use the vendored dispatcher for outbound `initialize` and `interrupt` requests plus inbound `can_use_tool` request handling
   - re-ran `npm run check`
   - re-ran a real daemon-backed Qwen session on a clean port and confirmed:
     - `GET /api/runtime` reports `Qwen CLI 0.13.2 ready (external qwen on PATH).`
     - a real daemon-backed run completed successfully with final result `DISPATCHWIRE`
-  - re-validated host approval handling through the `QWEMINI_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
+  - re-validated host approval handling through the `CODEWAVE_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
     - the run entered `awaiting_approval`
     - the initialize response still updated `providerSessionId`
     - approving the pending daemon record completed the tool invocation and the run with final result `DISPATCH-APPROVAL`
@@ -267,7 +268,7 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
   - re-ran a real daemon-backed Qwen session on a clean port and confirmed:
     - `GET /api/runtime` reports `Qwen CLI 0.13.2 ready (external qwen on PATH).`
     - a real daemon-backed run completed successfully with final result `CONTEXTWIRE`
-  - re-validated host approval handling through the `QWEMINI_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
+  - re-validated host approval handling through the `CODEWAVE_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
     - the run still entered `awaiting_approval`
     - the initialize response still updated `providerSessionId`
     - approving the pending daemon record completed the tool invocation and the run with final result `CONTEXT-APPROVAL`
@@ -296,18 +297,18 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
     - a real Gemini run completed and stored `providerSessionId`
     - `POST /api/sessions/:id/recover` returned a session with `recovery.kind = session`
     - `GET /api/archive` returned the same lineage metadata for that recovered session
-  - validated checkpoint lineage through the existing `QWEMINI_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
+  - validated checkpoint lineage through the existing `CODEWAVE_QWEN_COMMAND` override seam with a controlled fake-Qwen harness:
     - the run emitted and persisted a checkpoint record
     - `POST /api/checkpoints/:id/recover-session` returned a session with `recovery.kind = checkpoint`
     - `sourceCheckpointId` and `sourceRunId` were preserved in the archive summary response
 
 ## Current Implementation Result
 
-- Qwemini still has a product-owned daemon and shell boundary.
+- CodeWave still has a product-owned daemon and shell boundary.
 - Qwen is no longer only a one-shot prompt shell-out; the provider now uses Qwen's stream-json SDK/control path.
 - Tool approvals are now daemon-owned records with an HTTP resolution path and UI surface.
 - Runs can now persist as `awaiting_approval`, which gives the shell and state layer an explicit product-owned pause state instead of overloading generic `running`.
-- Qwemini sessions now persist provider session IDs and use them to resume later Qwen and Gemini runs inside the same product-owned session.
+- CodeWave sessions now persist provider session IDs and use them to resume later Qwen and Gemini runs inside the same product-owned session.
 - Checkpoint events are now promoted into first-class persisted records in shared state.
 - Recovery is now an explicit product-owned action instead of only an implicit side effect of rerunning inside one selected session.
 - The shell now separates live transcript deltas from final assistant messages while keeping checkpoint history in its own recovery pane.
@@ -315,7 +316,7 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
 - Older and recovered sessions are now inspectable through archive summaries and per-session run history, and recovered sessions now keep explicit lineage back to their source session or checkpoint.
 - Gemini is now wired behind the same top-level daemon/session/run contract and can be selected per session without provider-specific UI branches.
 - Gemini still uses a simpler subprocess/event bridge than Qwen, and runtime health now reports that difference explicitly through provider capability flags instead of leaving it implicit.
-- Gemini now also has an experimental ACP bridge path behind `QWEMINI_GEMINI_MODE=acp`, which upgrades Gemini to daemon-owned approvals without vendoring Gemini source yet.
+- Gemini now also has an experimental ACP bridge path behind `CODEWAVE_GEMINI_MODE=acp`, which upgrades Gemini to daemon-owned approvals without vendoring Gemini source yet.
 - The Qwen adapter now has a vendoring-ready launch seam, and the current upstream donor closure is pinned in `vendor/notes/qwen-code.md` instead of living only in chat history.
 - The Qwen adapter now reuses a bounded in-repo donor for the stream-json contract layer plus the first host-side control writer/context/dispatcher helpers, reducing local protocol drift before the deeper runtime/control import.
 - The Qwen adapter now keeps processing stdout while host approval is pending, which moves it closer to the upstream session-loop behavior without importing the full qwen-code session manager.
@@ -327,23 +328,23 @@ This keeps Qwemini daemon-centered and provider-flexible while still borrowing t
 - The daemon now enforces provider capability limits at the API boundary, so unsupported approval policies are rejected even outside the shell.
 - The daemon now preflights provider availability before creating a run, and the shell now disables run start when the selected provider is known-unavailable.
 - The Gemini ACP adapter now keeps tool titles and raw outputs intact in the shared ledger, keeps cancellation terminal, and fails cleanly when the current Windows Gemini terminal helper crashes instead of leaving runs stuck forever.
-- Qwemini now carries a provider-owned Windows Gemini runtime patch that preloads bounded `node-pty` fixes into Gemini ACP, so the product no longer depends on manual edits to the user's global Gemini install for shell-command stability.
-- Gemini ACP is now the default provider path in Qwemini, with `stream-json` retained as an explicit fallback mode instead of the primary runtime path.
-- Qwemini now resolves the global Windows `qwen` shim to the underlying Node entrypoint, so Qwen no longer launches through `qwen.cmd` when the direct runtime is available.
-- Qwemini now has a first shared orchestration package above both providers, so the daemon can recommend a provider and route a prompt into a new session without pushing that decision into adapters or browser-only logic.
+- CodeWave now carries a provider-owned Windows Gemini runtime patch that preloads bounded `node-pty` fixes into Gemini ACP, so the product no longer depends on manual edits to the user's global Gemini install for shell-command stability.
+- Gemini ACP is now the default provider path in CodeWave, with `stream-json` retained as an explicit fallback mode instead of the primary runtime path.
+- CodeWave now resolves the global Windows `qwen` shim to the underlying Node entrypoint, so Qwen no longer launches through `qwen.cmd` when the direct runtime is available.
+- CodeWave now has a first shared orchestration package above both providers, so the daemon can recommend a provider and route a prompt into a new session without pushing that decision into adapters or browser-only logic.
 - Qwen now refreshes `providerSessionId` from later stream-json messages, so resumed sessions and checkpoints keep the freshest provider session metadata instead of only the bootstrap initialize value.
-- Qwemini now supports daemon-owned reviewer and verifier follow-up sessions above the providers, with orchestration metadata persisted on the session record and echoed in `run.started` events for later inspection.
-- Qwemini now supports daemon-owned delegate and handoff runs above the providers, with explicit orchestration role/kind metadata on the child session instead of burying those relationships in prompts alone.
-- Qwemini now routes with explicit tool requirements such as `mcp`, `shell`, and `workspace-write`, so provider selection no longer depends only on prompt keywords.
-- Qwemini now exposes a daemon-backed orchestration board that groups routed and child sessions into inspectable flows, so orchestration lineage is visible as one product-owned surface instead of only separate session and archive rows.
-- Qwemini now exposes a first shared mcp-hub signal layer, so routing can use daemon-owned tool-plane snapshots built from provider health plus recent normalized tool activity instead of relying only on prompt heuristics and manually checked tool hints.
-- Qwemini now supports a workspace-scoped tool registry in `.qwemini/mcp.json` or `.mcp.json`, so MCP routing depends on actual configured server availability for the selected workspace instead of only a hard-coded provider bias.
-- Qwemini now takes provider-owned tool catalogs from the adapters and combines them with workspace-local observed tool history, so the shared tool plane no longer relies on one daemon-global seeded baseline map.
-- Qwemini now distinguishes workspace-scoped and session-scoped tool-plane snapshots, so orchestration can route from the active session’s actual tool history instead of only the broader workspace signal.
+- CodeWave now supports daemon-owned reviewer and verifier follow-up sessions above the providers, with orchestration metadata persisted on the session record and echoed in `run.started` events for later inspection.
+- CodeWave now supports daemon-owned delegate and handoff runs above the providers, with explicit orchestration role/kind metadata on the child session instead of burying those relationships in prompts alone.
+- CodeWave now routes with explicit tool requirements such as `mcp`, `shell`, and `workspace-write`, so provider selection no longer depends only on prompt keywords.
+- CodeWave now exposes a daemon-backed orchestration board that groups routed and child sessions into inspectable flows, so orchestration lineage is visible as one product-owned surface instead of only separate session and archive rows.
+- CodeWave now exposes a first shared mcp-hub signal layer, so routing can use daemon-owned tool-plane snapshots built from provider health plus recent normalized tool activity instead of relying only on prompt heuristics and manually checked tool hints.
+- CodeWave now supports a workspace-scoped tool registry in `.codewave/mcp.json` or `.mcp.json`, so MCP routing depends on actual configured server availability for the selected workspace instead of only a hard-coded provider bias.
+- CodeWave now takes provider-owned tool catalogs from the adapters and combines them with workspace-local observed tool history, so the shared tool plane no longer relies on one daemon-global seeded baseline map.
+- CodeWave now distinguishes workspace-scoped and session-scoped tool-plane snapshots, so orchestration can route from the active session’s actual tool history instead of only the broader workspace signal.
 
-- Qwemini now persists daemon-owned live session tool registrations from normalized `tool.*` events, so session-scoped routing can incorporate what a provider has actually registered during that active session rather than only recent invocation history.
-- Qwemini now adds provider-connected tool enumeration from Qwen/Gemini CLI surfaces at run start and upserts those as explicit session-tool registrations, so session routing can distinguish provider-enumerated availability from event-inferred usage.
-- Qwemini now ingests provider-runtime registration payloads from Qwen `system.tools` messages and Gemini ACP tool metadata through normalized `tool.registered` events, so live session registrations are no longer limited to startup CLI probes and event-inferred invocations.
+- CodeWave now persists daemon-owned live session tool registrations from normalized `tool.*` events, so session-scoped routing can incorporate what a provider has actually registered during that active session rather than only recent invocation history.
+- CodeWave now adds provider-connected tool enumeration from Qwen/Gemini CLI surfaces at run start and upserts those as explicit session-tool registrations, so session routing can distinguish provider-enumerated availability from event-inferred usage.
+- CodeWave now ingests provider-runtime registration payloads from Qwen `system.tools` messages and Gemini ACP tool metadata through normalized `tool.registered` events, so live session registrations are no longer limited to startup CLI probes and event-inferred invocations.
 - The shell now renders session registration evidence (`provider-enumerated` vs `event-observed`) in a dedicated Tool Plane section, and tool-plane rendering logic is extracted into `apps/web/src/tool-plane.js` instead of growing the monolithic `app.js`.
 - The shell now renders transcript/messages/timeline run-inspector views through `apps/web/src/run-inspector.js`, so event splitting and inspector formatting utilities are no longer embedded inline inside `apps/web/src/app.js`.
 - The legacy inline fallback/commented tool activity renderer has been removed from `apps/web/src/app.js` now that `tool-plane.js` is the only active rendering path.
@@ -354,7 +355,7 @@ The next implementation slice should be:
 
 1. Keep orchestration above adapters and take one bounded shell-typing slice: introduce shared typed daemon-response models plus a small typed web API helper for the controller flow modules, without changing daemon routes or product behavior.
 2. Keep shell behavior unchanged on success while preserving existing daemon API/event routes, controller bridge exports, and compatibility IDs that still bridge to controller-managed controls.
-3. Keep the slice narrow and validation-focused (`npm run build:web`, `npm run check`, `npm run check -w @qwemini/web`, and targeted daemon-hosted smoke checks).
+3. Keep the slice narrow and validation-focused (`npm run build:web`, `npm run check`, `npm run check -w @codewave/web`, and targeted daemon-hosted smoke checks).
 
 That keeps the next step narrow: close the controller-decomposition phase and start tightening the typed shell/daemon contract without changing provider boundaries or product architecture.
 
@@ -365,7 +366,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - shallow-cloned `https://github.com/wygoralves/panes.git` at commit `58adc78f50ece0fc0ed827cf3a96fdbe4615f095`
   - inspected `src/components/layout/ThreeColumnLayout.tsx` for persisted resizable three-column layout patterns
   - inspected `src/components/shared/CommandPalette.tsx` to bound the next likely UX donor slice without adopting Panes' app architecture
-- Completed bounded Panes-inspired shell UX slice for Qwemini:
+- Completed bounded Panes-inspired shell UX slice for CodeWave:
   - added `apps/web/src/lib/use-shell-layout.ts` for persisted left/right column widths with product-owned resize handling
   - added `apps/web/src/components/TabBar.tsx` for reusable tab navigation across session, run, and utility surfaces
   - rewired `apps/web/src/App.tsx` into a true three-column workbench with a session rail, central run workspace, utility rail, and tabbed section selection instead of one long dashboard stack
@@ -374,13 +375,13 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Completed bounded keyboard-first shell interaction slice on top of the redesign:
   - added `apps/web/src/components/QuickOpen.tsx` for a product-owned quick-open overlay with search, keyboard selection, and action execution
   - rewired `apps/web/src/App.tsx` to expose `Ctrl/Cmd+K` quick-open, `Ctrl/Cmd+Shift+F` focus-view toggle, and direct quick actions for shell views, sessions, runs, and composer focus
-  - renamed donor-shaped `Pane*` naming in the shell layer to simpler Qwemini-owned names (`TabBar`, `useShellLayout`, `column-resize-handle`, `section-header`, `section-scroll`)
+  - renamed donor-shaped `Pane*` naming in the shell layer to simpler CodeWave-owned names (`TabBar`, `useShellLayout`, `column-resize-handle`, `section-header`, `section-scroll`)
 - Completed validation after the Panes-inspired shell slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - verified the built CSS artifact contains the new `workbench-shell-focus`, `column-resize-handle`, `tab-bar`, and `quick-open` surfaces
-  - clean-port daemon smoke on `QWEMINI_PORT=4210` confirmed `GET /` returned `200` and `GET /api/runtime` still reported `qwen,gemini`
+  - clean-port daemon smoke on `CODEWAVE_PORT=4210` confirmed `GET /` returned `200` and `GET /api/runtime` still reported `qwen,gemini`
 - Completed bounded controller-maintainability slice for shell state scaffolding:
   - added `apps/web/src/lib/controller-shell-state.ts` for the `ShellState` type and `createInitialShellState()` factory
   - rewired `apps/web/src/app-controller.ts` to source its controller state from that shared scaffold instead of keeping the large state type/default object inline
@@ -396,8 +397,8 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Completed validation after the final controller cleanup pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
-  - clean-port daemon smoke on `QWEMINI_PORT=4208` confirmed `GET /` returned `200`, the served HTML still contains `<div id="root"></div>`, and `GET /api/runtime` still reported `qwen,gemini`
+  - `npm run check -w @codewave/web`
+  - clean-port daemon smoke on `CODEWAVE_PORT=4208` confirmed `GET /` returned `200`, the served HTML still contains `<div id="root"></div>`, and `GET /api/runtime` still reported `qwen,gemini`
 - Completed bounded controller-maintainability slice for requester and draft wiring:
   - added `apps/web/src/lib/controller-requesters.ts` for run/session selection requesters, draft update handlers, recovery/approval action callbacks, and user-triggered action requester wrappers
   - rewired `apps/web/src/app-controller.ts` to source requester assignments from `createControllerRequesters(...)`, removing the last repetitive callback-assignment block from the controller bootstrap
@@ -453,15 +454,15 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after edits:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
-  - daemon smoke on clean port `QWEMINI_PORT=4207` probing `/` and `/api/runtime`
-  - daemon smoke on clean port `QWEMINI_PORT=4206` probing `/` and `/api/runtime`
-  - daemon smoke on clean port `QWEMINI_PORT=4205` probing `/` and `/api/runtime`
-  - daemon smoke on clean port `QWEMINI_PORT=4204` probing `/` and `/api/runtime`
-  - daemon smoke on clean port `QWEMINI_PORT=4203` probing `/` and `/api/runtime`
-  - daemon smoke on clean port `QWEMINI_PORT=4200` probing `/` and `/api/runtime`
+  - `npm run check -w @codewave/web`
+  - daemon smoke on clean port `CODEWAVE_PORT=4207` probing `/` and `/api/runtime`
+  - daemon smoke on clean port `CODEWAVE_PORT=4206` probing `/` and `/api/runtime`
+  - daemon smoke on clean port `CODEWAVE_PORT=4205` probing `/` and `/api/runtime`
+  - daemon smoke on clean port `CODEWAVE_PORT=4204` probing `/` and `/api/runtime`
+  - daemon smoke on clean port `CODEWAVE_PORT=4203` probing `/` and `/api/runtime`
+  - daemon smoke on clean port `CODEWAVE_PORT=4200` probing `/` and `/api/runtime`
   - `npm run build:web` re-run after an initial transient Windows `esbuild` spawn failure while loading `vite.config.ts`
-  - daemon smoke on clean ports (`QWEMINI_PORT=4192`, `QWEMINI_PORT=4193`, `QWEMINI_PORT=4194`, `QWEMINI_PORT=4195`, `QWEMINI_PORT=4196`, and `QWEMINI_PORT=4197`) probing `/` and `/api/runtime`
+  - daemon smoke on clean ports (`CODEWAVE_PORT=4192`, `CODEWAVE_PORT=4193`, `CODEWAVE_PORT=4194`, `CODEWAVE_PORT=4195`, `CODEWAVE_PORT=4196`, and `CODEWAVE_PORT=4197`) probing `/` and `/api/runtime`
 - Validation result:
   - all required static build/typecheck commands passed
   - clean-port daemon smoke still returned `ROOT_STATUS=200`, `HAS_REACT_ROOT=True`, and `PROVIDERS=qwen,gemini` after the shell-state extraction
@@ -500,7 +501,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Validation result:
   - all required static commands passed
 - Live daemon smoke checks (feasible and executed):
-  - started daemon with fixture-backed providers (`QWEMINI_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `QWEMINI_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
+  - started daemon with fixture-backed providers (`CODEWAVE_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `CODEWAVE_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
   - exercised successful session creation via `/api/sessions` and verified post-create selection surface via `/api/sessions/:id`
   - forced post-create selection failure by stopping daemon and retrying `/api/sessions/:id` for the newly created session, observing expected network failure (`fetch failed`)
 
@@ -515,7 +516,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Validation result:
   - all required static commands passed
 - Live daemon smoke checks (feasible and executed):
-  - started daemon with fixture-backed providers (`QWEMINI_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `QWEMINI_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
+  - started daemon with fixture-backed providers (`CODEWAVE_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `CODEWAVE_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
   - exercised successful `review` follow-up transition via `/api/runs/:id/follow-up` and verified follow-up session selection surface via `/api/sessions/:id`
   - forced review follow-up post-action selection failure by stopping daemon and retrying `/api/sessions/:id` for the newly created follow-up session, observing expected network failure (`fetch failed`)
 
@@ -531,7 +532,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Validation result:
   - all required static commands passed
 - Live daemon smoke checks (feasible and executed):
-  - started daemon with fixture-backed providers (`QWEMINI_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `QWEMINI_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
+  - started daemon with fixture-backed providers (`CODEWAVE_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `CODEWAVE_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
   - exercised successful route transition via `/api/orchestrator/route` and verified post-action session selection surface with `/api/sessions/:id`
   - forced post-action selection failure by stopping daemon and retrying `/api/sessions/:id` for the newly created routed session, observing expected network failure (`fetch failed`)
 
@@ -548,7 +549,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Validation result:
   - all required static commands passed
 - Live daemon smoke checks (feasible and executed):
-  - started daemon with fixture-backed providers (`QWEMINI_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `QWEMINI_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
+  - started daemon with fixture-backed providers (`CODEWAVE_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `CODEWAVE_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
   - validated normal bootstrap (`/api/runtime`, `/api/sessions`) and created a real session successfully
   - exercised failed session-selection surface via `/api/sessions/00000000-0000-0000-0000-000000000000` and observed expected `404 Not found`
   - forced bootstrap-failure surfaces by stopping daemon and retrying `/api/runtime` and `/api/sessions`, observing expected network failures (`fetch failed`)
@@ -566,7 +567,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Validation result:
   - all required static commands passed
 - Live daemon smoke checks (feasible and executed):
-  - started daemon with fixture-backed Qwen/Gemini commands (`QWEMINI_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `QWEMINI_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
+  - started daemon with fixture-backed Qwen/Gemini commands (`CODEWAVE_QWEN_COMMAND=scripts/fixtures/fake-qwen-runtime.mjs`, `CODEWAVE_GEMINI_COMMAND=scripts/fixtures/fake-gemini-acp-agent.mjs`)
   - exercised one run with live stream updates and observed stream payload data (`streamData true`)
   - forced refresh failure path by stopping daemon and retrying `/api/runs/:id`, observing expected network fetch failure (`fetch failed`)
 
@@ -729,8 +730,8 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - Qwen/Gemini provider `mcpListProbeStatus` now distinguishes `timeout` from `failed`
   - existing fallback metadata (`mcpListProbeSurface`, `mcpListProbeDetail`) remains preserved across all probe outcomes
 - Extended deterministic fixtures for timeout controls:
-  - `scripts/fixtures/fake-qwen-runtime.mjs` now supports `QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT` and `QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT_MS`
-  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now supports `QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT` and `QWEMINI_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS`
+  - `scripts/fixtures/fake-qwen-runtime.mjs` now supports `CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT` and `CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT_MS`
+  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now supports `CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT` and `CODEWAVE_FAKE_GEMINI_MCP_LIST_TIMEOUT_MS`
 - Expanded deterministic validator in `scripts/validate-registration-signals.mjs`:
   - now runs both `failure` and `timeout` scenarios
   - asserts scenario-specific provider-cli fallback status (`failed` vs `timeout`)
@@ -755,8 +756,8 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - provider-cli connected-tool registrations now carry explicit `mcpListProbeStatus`, `mcpListProbeSurface`, and `mcpListProbeDetail` metadata for failed/empty/configured probe outcomes
   - fallback metadata is attached without changing daemon/provider boundaries or introducing new provider architecture
 - Extended deterministic fixture controls:
-  - `scripts/fixtures/fake-qwen-runtime.mjs` now supports forced `mcp list` failure via `QWEMINI_FAKE_QWEN_MCP_LIST_FAIL`
-  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now supports forced `mcp list` failure via `QWEMINI_FAKE_GEMINI_MCP_LIST_FAIL`
+  - `scripts/fixtures/fake-qwen-runtime.mjs` now supports forced `mcp list` failure via `CODEWAVE_FAKE_QWEN_MCP_LIST_FAIL`
+  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now supports forced `mcp list` failure via `CODEWAVE_FAKE_GEMINI_MCP_LIST_FAIL`
 - Expanded deterministic validator assertions in `scripts/validate-registration-signals.mjs`:
   - forced mcp-list failure path for both fake providers
   - positive runtime registration mappings (`shell`, `workspace-read`, `mcp`) still verified
@@ -777,8 +778,8 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `npm run check`
   - `npm run check:registrations`
 - Extended deterministic fixture coverage:
-  - `scripts/fixtures/fake-qwen-runtime.mjs` now accepts configurable runtime tool names via `QWEMINI_FAKE_QWEN_RUNTIME_TOOLS`
-  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now accepts configurable ACP tool titles via `QWEMINI_FAKE_GEMINI_TOOL_TITLES`
+  - `scripts/fixtures/fake-qwen-runtime.mjs` now accepts configurable runtime tool names via `CODEWAVE_FAKE_QWEN_RUNTIME_TOOLS`
+  - `scripts/fixtures/fake-gemini-acp-agent.mjs` now accepts configurable ACP tool titles via `CODEWAVE_FAKE_GEMINI_TOOL_TITLES`
 - Expanded deterministic validator assertions in `scripts/validate-registration-signals.mjs`:
   - positive mappings: `run_shell_command -> shell`, `read_file -> workspace-read`, `mcp__docs__search -> mcp`
   - negative mapping guardrail: unclassified tool names such as `just_list` must not emit/persist `tool.registered`
@@ -815,7 +816,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after edits:
   - `npm run check`
   - `node --check apps/web/src/app.js`
-- Re-ran daemon on clean port (`QWEMINI_PORT=4195`) with deterministic fake Gemini ACP shim and validated via real API calls:
+- Re-ran daemon on clean port (`CODEWAVE_PORT=4195`) with deterministic fake Gemini ACP shim and validated via real API calls:
   - `POST /api/sessions` + `POST /api/sessions/:id/runs` completed successfully for provider `gemini`
   - `GET /api/tool-plane?...sessionId=...` reports `run_shell_command` with `requirement = shell`
   - registration evidence remains runtime-confirmed (`confirmedBy = provider-runtime`) with `registrationKind = provider-enumeration`
@@ -824,9 +825,9 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `npm run check`
   - `node --check apps/web/src/tool-plane.js`
   - `node --check apps/web/src/app.js`
-- Added bounded timeout behavior for provider connected-tool CLI probes in Qwen/Gemini providers via `QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS` (default 2500ms), then re-ran `npm run check`.
+- Added bounded timeout behavior for provider connected-tool CLI probes in Qwen/Gemini providers via `CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS` (default 2500ms), then re-ran `npm run check`.
 - Updated shell registration evidence rendering to show `confirmedBy` source counts (runtime/cli/unknown) alongside provider-enumerated vs event-observed counts.
-- Built a deterministic fake Gemini ACP runtime harness and validated end-to-end on a clean daemon port (`QWEMINI_PORT=4194`) using real API calls:
+- Built a deterministic fake Gemini ACP runtime harness and validated end-to-end on a clean daemon port (`CODEWAVE_PORT=4194`) using real API calls:
   - `POST /api/sessions` + `POST /api/sessions/:id/runs` for provider `gemini` completed successfully against the deterministic ACP harness
   - run events included `tool.registered` with `metadata.providerSurface = gemini.acp.session_update.tool_call`
   - session tool registrations persisted runtime-confirmed metadata (`confirmedBy = provider-runtime`) for the same provider surface
@@ -841,7 +842,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `node --check apps/web/src/run-inspector.js`
 - Added normalized `tool.registered` event support in protocol/daemon and wired provider-runtime registration emitters in Qwen and Gemini ACP adapters.
 - Re-ran `npm run check` after provider/daemon/protocol edits.
-- Re-ran the daemon on a clean probe port (`QWEMINI_PORT=4192`) with a deterministic fake Qwen stream-json harness and confirmed via real API calls:
+- Re-ran the daemon on a clean probe port (`CODEWAVE_PORT=4192`) with a deterministic fake Qwen stream-json harness and confirmed via real API calls:
   - run events include `tool.registered` with `metadata.providerSurface = qwen.system.tools`
   - session tool registry persisted three runtime registrations (`read_file`, `run_shell_command`, `mcp__docs__search`)
   - persisted registrations preserve `registrationKind = provider-enumeration` and `confirmedBy = provider-runtime`
@@ -864,7 +865,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `node --check apps/web/src/app.js`
   - `node --check apps/web/src/run-inspector.js`
   - `node --check apps/web/src/inspector-panels.js`
-- Re-ran the daemon on a clean port (`QWEMINI_PORT=4191`) and probed live behavior:
+- Re-ran the daemon on a clean port (`CODEWAVE_PORT=4191`) and probed live behavior:
   - `GET /`, `GET /app.js`, and `GET /run-inspector.js` all returned `200`
   - `GET /app.js` imports `./run-inspector.js`
   - `GET /run-inspector.js` exports `renderRunInspectorPanels`
@@ -880,41 +881,41 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `POST /api/sessions` accepts `approvalPolicy = allow` for Qwen but rejects the same policy for Gemini with `Provider gemini does not support daemon-managed approval policies.`
   - the served shell HTML includes the new `app-notice`, `session-provider-note`, and `selected-session-note` surfaces
 - Added provider-availability preflight before run creation, so the daemon returns a `409` instead of attempting adapter launch when a provider is already known-unavailable.
-- Re-ran the daemon with `QWEMINI_GEMINI_COMMAND=missing-gemini-cli` and confirmed:
+- Re-ran the daemon with `CODEWAVE_GEMINI_COMMAND=missing-gemini-cli` and confirmed:
   - `/api/runtime` reports `gemini.available = false`
   - `POST /api/sessions/:id/runs` rejects with `Gemini CLI is not ready for runs: spawn missing-gemini-cli ENOENT`
   - the served shell HTML includes the new `start-run-button` surface used by the availability-aware run-form guardrail
-- Added an experimental Gemini ACP bridge behind `QWEMINI_GEMINI_MODE=acp` using `@agentclientprotocol/sdk`.
+- Added an experimental Gemini ACP bridge behind `CODEWAVE_GEMINI_MODE=acp` using `@agentclientprotocol/sdk`.
 - Re-ran `npm install` and `npm run check`.
-- Re-ran the daemon with `QWEMINI_GEMINI_MODE=acp` and confirmed:
+- Re-ran the daemon with `CODEWAVE_GEMINI_MODE=acp` and confirmed:
   - `/api/runtime` reports `Gemini CLI 0.35.3 ready (ACP mode).`
   - `gemini.capabilities.daemonApprovalMediation = true` on that path
   - a real ACP-backed Gemini run completed successfully and returned `ACPBRIDGE`
   - a second real ACP-backed Gemini run requested approval for a shell command, the daemon persisted `approval.requested` and `approval.resolved`, and the normalized tool ledger now contains `tool.requested` and `tool.started` on the approval path
 - Hardened the Gemini ACP adapter so tool titles and raw outputs survive across ACP update packets, cancellation suppresses later provider mutations, and detected `Error: AttachConsole failed` crashes now terminate the run cleanly.
 - Re-ran `npm run check`.
-- Re-ran the daemon with `QWEMINI_GEMINI_MODE=acp` on clean ports and confirmed:
+- Re-ran the daemon with `CODEWAVE_GEMINI_MODE=acp` on clean ports and confirmed:
   - `/api/runtime` still reports `Gemini CLI 0.35.3 ready (ACP mode).`
   - a simple real ACP-backed Gemini prompt completed successfully with final result `ACPPING`
   - a real ACP-backed shell-command run now persists the correct tool title and command output in the shared tool ledger
   - a real ACP-backed shell-command failure on this Windows machine now ends as `run.failed` with `Gemini ACP terminal helper failed.` instead of remaining stuck in `running`
   - the terminal event ordering is now clean for that failure case: `run.failed` is the last event, with no later tool or transcript mutations appended after it
-- Added a provider-owned Windows Gemini runtime patch at `packages/providers/gemini/runtime/win32-node-pty-preload.cjs` and wired the Gemini ACP launch path to preload it automatically when Qwemini resolves the standard Node-based Gemini runtime on Windows.
+- Added a provider-owned Windows Gemini runtime patch at `packages/providers/gemini/runtime/win32-node-pty-preload.cjs` and wired the Gemini ACP launch path to preload it automatically when CodeWave resolves the standard Node-based Gemini runtime on Windows.
 - Re-ran `npm run check`.
-- Re-ran the daemon with `QWEMINI_GEMINI_MODE=acp` on clean ports and confirmed:
-  - `/api/runtime` reports `Gemini CLI 0.35.3 ready (ACP mode, Qwemini Windows PTY patch).`
+- Re-ran the daemon with `CODEWAVE_GEMINI_MODE=acp` on clean ports and confirmed:
+  - `/api/runtime` reports `Gemini CLI 0.35.3 ready (ACP mode, CodeWave Windows PTY patch).`
   - a simple real ACP-backed Gemini prompt completed successfully with final result `PATCHPING`
   - a real ACP-backed shell-command run that previously triggered the Windows PTY failure now completed successfully with final result `PATCHPWD`
   - a second real shell-command run in the same Gemini session also completed successfully and returned `hello`, confirming that the repeated Windows shell-command path is now stable under the provider-owned patch
 - Hardened Gemini ACP resumed-session behavior by waiting for the asynchronous `loadSession` history replay to go quiet before starting the next prompt turn, while also preserving future support for `session/resume` if Gemini advertises it later.
 - Re-ran `npm run check`.
-- Re-ran the daemon with `QWEMINI_GEMINI_MODE=acp` on a clean port and confirmed:
+- Re-ran the daemon with `CODEWAVE_GEMINI_MODE=acp` on a clean port and confirmed:
   - two real ACP-backed Gemini shell-command runs in the same session both completed successfully
   - the second run artifact now contains only `RESUMEFIX2`, instead of replaying prior assistant text from the loaded session history
-- Switched the Gemini provider default from `stream-json` to `acp`, keeping `QWEMINI_GEMINI_MODE=stream-json` as an explicit fallback.
+- Switched the Gemini provider default from `stream-json` to `acp`, keeping `CODEWAVE_GEMINI_MODE=stream-json` as an explicit fallback.
 - Re-ran `npm run check`.
 - Re-ran the daemon without any Gemini mode override and confirmed:
-  - `/api/runtime` reports `Gemini CLI 0.35.3 ready (ACP mode, Qwemini Windows PTY patch).`
+  - `/api/runtime` reports `Gemini CLI 0.35.3 ready (ACP mode, CodeWave Windows PTY patch).`
   - a default-path Gemini run completed successfully with final result `DEFAULTACP`
 - Hardened the Windows Qwen launch seam without adding new donor imports by resolving the global `qwen` shim to `@qwen-code/qwen-code/cli.js` and launching that entrypoint directly.
 - Re-ran `npm run check`.
@@ -929,7 +930,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `/api/orchestrator/recommend` routes a tool-heavy coding prompt to Qwen with `strategy = tool-first`
   - `/api/orchestrator/route` created a new Gemini session and completed a real routed run successfully
   - the served shell HTML includes the new `route-run-button` and `orchestrator-note` surfaces
-- Revalidated Qwen session-id refresh with a controlled fake-Qwen harness through `QWEMINI_QWEN_COMMAND`:
+- Revalidated Qwen session-id refresh with a controlled fake-Qwen harness through `CODEWAVE_QWEN_COMMAND`:
   - the bootstrap control response set `providerSessionId = session-bootstrap`
   - a later provider message updated `session_id = session-updated`
   - the persisted session record and checkpoint record both ended with `providerSessionId = session-updated`
@@ -973,26 +974,26 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `/api/orchestrator/recommend` with `requiredTools = ['shell', 'workspace-write']` routes to `qwen` and returns 2 explicit signal lines
   - `/api/orchestrator/recommend` with `requiredTools = ['mcp']` routes to `gemini` and returns signal evidence based on live tool-plane readiness plus recent completion counts
   - the served shell HTML includes the new `tool-plane-note` surface
-- Extended `packages/mcp-hub` with a workspace-scoped tool registry loader for `.qwemini/mcp.json` and `.mcp.json`, including MCP server command availability checks and per-tool enable/permission overrides.
+- Extended `packages/mcp-hub` with a workspace-scoped tool registry loader for `.codewave/mcp.json` and `.mcp.json`, including MCP server command availability checks and per-tool enable/permission overrides.
 - Updated `/api/tool-plane` to accept `workspacePath`, and updated the shell to load tool-plane state for the selected workspace instead of using one global snapshot.
 - Re-ran `npm run check` and `node --check apps/web/src/app.js`.
 - Re-ran the daemon on clean ports and confirmed:
   - `/api/tool-plane?workspacePath=<temp-ready-workspace>` returned a concrete `registryPath`, 2 configured MCP servers, and `gemini.readyTools` including `mcp`
   - `/api/orchestrator/recommend` with `requiredTools = ['mcp']` on that ready workspace routed to `gemini` and returned 4 evidence lines, including the workspace registry path and ready MCP server id
-  - `/api/orchestrator/recommend` with `requiredTools = ['mcp']` on a second workspace containing only a missing MCP server now rejects with `No provider currently has MCP ready for this workspace. Add an enabled MCP server in .qwemini/mcp.json or .mcp.json first.`
+  - `/api/orchestrator/recommend` with `requiredTools = ['mcp']` on a second workspace containing only a missing MCP server now rejects with `No provider currently has MCP ready for this workspace. Add an enabled MCP server in .codewave/mcp.json or .mcp.json first.`
 - Moved baseline provider tool ownership out of `packages/mcp-hub` and into the provider adapters through `toolCatalog()` on the shared `ProviderAdapter` interface.
 - Updated the daemon tool-plane builder to filter observed tool history by the selected workspace path instead of using one daemon-global recent-tool bucket.
 - Re-ran `npm run check` and `node --check apps/web/src/app.js`.
 - Re-ran the daemon on a clean port and confirmed:
-  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\qwemini` still reports real observed tool history for the repo workspace
+  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\codewave` still reports real observed tool history for the repo workspace
   - `/api/tool-plane?workspacePath=<fresh-temp-workspace>` reports `no recent tool history yet` instead of inheriting the repo workspace's prior tool counts
   - the same fresh workspace shows `gemini:workspace-read.observedInvocationCount = 0`, while the repo workspace still reports the observed count from actual prior runs
 - Extended the tool-plane contract with explicit `scope` and `sessionId`, and updated `/api/tool-plane` plus orchestration recommendation to accept a selected `sessionId`.
 - Added session-scoped recent tool lookup in shared state and updated the shell to request session-aware tool-plane snapshots when a session is selected.
 - Re-ran `npm run check` and `node --check apps/web/src/app.js`.
 - Re-ran the daemon on a clean port and confirmed:
-  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\qwemini` reports `scope = workspace`
-  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\qwemini&sessionId=<existing-session>` reports `scope = session`
+  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\codewave` reports `scope = workspace`
+  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\codewave&sessionId=<existing-session>` reports `scope = session`
   - for the same repo workspace, `gemini:workspace-read.observedInvocationCount` stayed `17` at workspace scope but dropped to `0` for a selected Qwen session with no Gemini history
   - `/api/orchestrator/recommend` with that `sessionId` returned session-local signal evidence and kept routing explanations consistent with the narrowed scope
 - Added daemon-owned live session tool registration persistence:
@@ -1004,7 +1005,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran `npm run check` and `node --check apps/web/src/app.js`.
 - Re-ran the daemon on a clean port and confirmed:
   - a real Qwen run completed with `runStatus = completed`, `toolInvocationCount = 1`, and `registeredSessionToolsCount = 1` on the new session snapshot
-  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\qwemini&sessionId=<new-session>` returned `qwen.sessionRegisteredCount = 1`
+  - `/api/tool-plane?workspacePath=C:\\Users\\User\\projects\\codewave&sessionId=<new-session>` returned `qwen.sessionRegisteredCount = 1`
   - `/api/orchestrator/recommend` with that `sessionId` returned session-registration evidence in `signals` and selected `primaryProviderId = qwen`
 - Added provider-connected tool enumeration on the shared adapter seam:
   - `ProviderAdapter` now exposes `enumerateConnectedTools(query)` in shared protocol
@@ -1051,7 +1052,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the quick-open shell slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - built web assets contain the new `command-strip`, `quick-open-group`, and `Ctrl/Cmd+Shift+J` shell surfaces
   - re-ran the daemon on clean port `4211` and confirmed:
     - `GET /` returned `200`
@@ -1061,7 +1062,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - `src/components/layout/ThreeColumnLayout.tsx`
   - `src/components/shared/CommandPalette.tsx`
   - `src/globals.css`
-- Applied a donor-style shell layout pass in Qwemini without changing controller or daemon contracts:
+- Applied a donor-style shell layout pass in CodeWave without changing controller or daemon contracts:
   - updated `apps/web/src/App.tsx` to group the center and utility panes inside one `content-shell` while keeping the existing React/controller state flow intact
   - updated `apps/web/src/styles.css` to shift from a card-dashboard look toward a Panes-like dark rail + unified content card, with compact signal chips, a subtler command strip, and joined center/right pane chrome
   - kept all run/session/tool/approval interactions on the existing daemon-backed request paths
@@ -1079,7 +1080,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the utility-rail shell slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4215` and confirmed:
     - `GET /` returned `200`
     - `GET /api/runtime` returned the runtime payload normally
@@ -1091,7 +1092,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the shell visual-system slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4216` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1104,7 +1105,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the shell interaction-polish slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4217` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1117,7 +1118,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the Panes-layout reset:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4218` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1130,7 +1131,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the donor-density pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4219` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1143,7 +1144,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the donor-alignment refinement:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4221` and confirmed:
     - `GET /api/runtime` returned the runtime payload normally
     - runtime still reported `qwen` as available
@@ -1151,13 +1152,13 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Switched from approximate Panes styling to a more literal donor-driven shell port:
   - inspected the local Panes donor clone again, specifically `src/components/layout/ThreeColumnLayout.tsx`, `src/components/sidebar/Sidebar.tsx`, `src/components/shared/CommandPalette.tsx`, and `src/globals.css`
   - updated `apps/web/src/App.tsx` so the left rail now uses a more donor-like section hierarchy with a branded header row, compact project-section actions, primary project/session focus, and secondary rows for runs/archive/agents instead of treating every rail view as a top-level tab
-  - updated `apps/web/src/App.tsx` so the right rail header and navigation read more like a Panes inspector frame, while still binding to the same Qwemini utility state and daemon-backed actions
+  - updated `apps/web/src/App.tsx` so the right rail header and navigation read more like a Panes inspector frame, while still binding to the same CodeWave utility state and daemon-backed actions
   - appended a direct donor refinement layer to `apps/web/src/styles.css` so the sidebar, content card, composer, and inspector use flatter Panes-like control surfaces and spacing instead of inheriting older dashboard chrome
   - updated `apps/web/src/lib/use-shell-layout.ts` so fresh shells default to more donor-like rail proportions
 - Re-ran validation after the direct donor-port shell slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4222` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1170,7 +1171,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the donor row/body slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4223` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1183,7 +1184,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the center-pane terminal slice:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4224` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1195,7 +1196,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the terminal spacing/footer pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4225` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1207,7 +1208,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the compact header-controls pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4226` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1219,7 +1220,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the single-row header pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4229` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1233,7 +1234,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the utility-density and tab-rhythm pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4230` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1246,7 +1247,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the left-rail and composer-dock pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4231` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1259,7 +1260,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the left-rail tree and dock-density pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4232` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1272,7 +1273,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the center empty-state and dock simplification pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4233` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1285,7 +1286,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the frame-spacing fidelity pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4234` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1298,7 +1299,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the collapsed-right-rail and font-scale pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4235` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1310,7 +1311,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the center-palette pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4236` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1322,7 +1323,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after removing the legacy center gradients:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4237` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1335,7 +1336,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the native-select dark-theme pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4239` and confirmed:
     - `GET /api/runtime` still returned providers `qwen,gemini`
     - runtime still reported `qwen` as available
@@ -1347,7 +1348,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the final frontend cleanup wrap-up:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4240` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1362,7 +1363,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the typed daemon API seam pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4241` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1377,7 +1378,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the controller draft typing pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `rg -n "\bany\b" apps/web/src -g '!dist'` returned no matches
   - re-ran the daemon on clean port `4242` and confirmed:
     - `GET /` returned `200`
@@ -1393,7 +1394,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the protocol-enum view-model pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4243` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1407,7 +1408,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the protocol-alias simplification pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4244` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1421,7 +1422,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the shared-helper TypeScript conversion:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `rg --files apps/web/src | rg "\.js$"` returned no matches
   - re-ran the daemon on clean port `4245` and confirmed:
     - `GET /` returned `200`
@@ -1436,7 +1437,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the typed protocol projection pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4247` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1453,7 +1454,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the component-facing state-boundary cleanup:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4248` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1469,7 +1470,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the internal projection reuse pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4249` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1485,7 +1486,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the nested metadata typing cleanup:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - re-ran the daemon on clean port `4250` and confirmed:
     - `GET /` returned `200`
     - served HTML still contains `<div id="root"></div>`
@@ -1498,7 +1499,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
   - confirmed the Qwen path can create a session, start a real run, complete normally, emit run events, and produce artifacts/tool-ledger entries from a daemon-owned prompt against this repo
   - fixed the Windows Gemini launch resolver in `packages/providers/gemini/src/index.ts` so global installs that expose `bundle/gemini.js` resolve through the direct Node entrypoint path instead of falling back to broken `.cmd --version` probing
   - re-validated runtime health after that fix and confirmed `GET /api/runtime` now reports both `qwen` and `gemini` as available on this machine
-  - confirmed both providers can complete a real file-writing task in `C:\Users\User\projects\qwemini\.qwemini\usability-sandbox` through the daemon-owned run/session flow
+  - confirmed both providers can complete a real file-writing task in `C:\Users\User\projects\codewave\.codewave\usability-sandbox` through the daemon-owned run/session flow
   - confirmed a manual-approval Qwen run enters `awaiting_approval`, accepts a daemon approval decision through `/api/approvals/:id/resolve`, then resumes and completes with the requested file written
 - Re-ran validation after the Gemini Windows usability fix and end-to-end workspace checks:
   - `npm run build:web`
@@ -1514,7 +1515,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the first-run shell usability fix:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - verified with a direct controller runtime script that first-run send now issues `createSession` followed by `startRun`, clears the prompt draft, and selects the new session
   - verified with a direct controller runtime script that first-run send and route controls become enabled from draft workspace/provider state with an available provider
   - verified with a direct controller runtime script that recommendation and route calls can execute with `sessionId: null` while using the draft workspace/provider state
@@ -1529,7 +1530,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after adding deterministic shell usability coverage:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the remaining repeated web-controller helper contracts so callback and requester signatures are now expressed once instead of drifting across the bridge and flow modules:
   - added `apps/web/src/lib/controller-contracts.ts`
@@ -1542,7 +1543,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the controller contract unification pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Reduced the remaining duplicated shell-local state slice declarations across controller helper modules so controller helpers now project from `ShellState` instead of re-declaring local subset types:
   - added `apps/web/src/lib/controller-state-slices.ts`
@@ -1557,7 +1558,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the controller state-slice consolidation pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Improved the main composer usability so the shell's primary action is obvious instead of hidden in a tiny unlabeled icon:
   - updated `apps/web/src/App.tsx` so the composer now:
@@ -1569,7 +1570,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the composer usability pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Improved the run conversation readability so streamed output no longer appears as token-by-token fragments:
   - updated `apps/web/src/lib/run-inspector-views.ts` to build grouped conversation blocks from the run prompt, streamed deltas, and final assistant messages
@@ -1579,7 +1580,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the transcript readability pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Simplified the main run surface so it looks and behaves more like a coding-agent thread view instead of duplicate terminal/output panes:
   - updated `apps/web/src/App.tsx` so the run tabs are now `Chat` and `Events`, removing the duplicate `Terminal` / `Output` split from the primary surface
@@ -1600,20 +1601,20 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the composer action hierarchy pass:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
-- Shifted the composer footer closer to Codex-style control semantics while reusing Qwemini’s existing provider and approval model:
+- Shifted the composer footer closer to Codex-style control semantics while reusing CodeWave’s existing provider and approval model:
   - updated `apps/web/src/App.tsx` so the footer now shows:
     - a `+` menu for thread config
-    - a visible `Model` pill backed by Qwemini provider selection (`Qwen` / `Gemini`)
-    - a visible permissions/access pill backed by Qwemini approval policy
+    - a visible `Model` pill backed by CodeWave provider selection (`Qwen` / `Gemini`)
+    - a visible permissions/access pill backed by CodeWave approval policy
     - a quieter meta row that emphasizes send guidance and current thread context instead of approvals/tools/artifacts counters
   - updated `apps/web/src/styles.css` to style the `+` menu and the model/access pills closer to Codex footer controls
 - Re-ran validation after the Codex-style footer control pass:
   - `npm run build:web`
   - `npm run check`
   - `npm run check:shell`
-- Pushed the center thread and composer another step closer to Codex while still mapping to Qwemini's provider and approval model:
+- Pushed the center thread and composer another step closer to Codex while still mapping to CodeWave's provider and approval model:
   - updated `apps/web/src/App.tsx` so:
     - the main run tab is now `Thread` instead of `Chat`
     - provider and access are rendered as Codex-like pill menus instead of native footer selects
@@ -1628,7 +1629,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Re-ran validation after the Codex-style thread/composer refinement:
   - `npm run build:web`
   - `npm run check`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the remaining Codex-style shell presentation gaps in the main thread and right inspector:
   - updated `apps/web/src/styles.css` so user messages render on the right side again, closer to Codex thread layout, while assistant output remains left-aligned and thinking stays muted gray
@@ -1639,7 +1640,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
     - tighter inspector preview blocks and approval/tool cards
 - Re-ran validation after the Codex-style thread-side and right-rail refinement:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the composer input surface itself so it reads closer to Codex instead of a terminal textarea:
   - updated `apps/web/src/App.tsx` so the composer placeholder now reads like a Codex-style follow-up prompt
@@ -1650,7 +1651,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
     - a less terminal-like chat input surface overall
 - Re-ran validation after the Codex-style composer input refinement:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the left rail toward a more Codex-like workspace/thread sidebar without changing shell behavior:
   - updated `apps/web/src/App.tsx` so the main left-rail section label is now `Threads` instead of the older project-oriented wording
@@ -1662,17 +1663,17 @@ That keeps the next step narrow: close the controller-decomposition phase and st
     - a more Codex-like navigation hierarchy for thread lists and section switches
 - Re-ran validation after the Codex-style left-rail refinement:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the remaining top-shell and utility-header presentation toward the Codex reference:
-  - updated `apps/web/src/App.tsx` so the top shell bar now reads like a workspace header (`qwemini`, current workspace, more button) instead of a menu mock, and the right rail heading now uses `Context`
+  - updated `apps/web/src/App.tsx` so the top shell bar now reads like a workspace header (`codewave`, current workspace, more button) instead of a menu mock, and the right rail heading now uses `Context`
   - updated `apps/web/src/styles.css` so:
     - the top shell bar has calmer status pills and stronger workspace-title treatment
     - center header icon actions use tighter square Codex-like controls
     - the inspector context chip and collapse control read more like the same shell family
 - Re-ran validation after the Codex-style top/header refinement:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Tightened the remaining left-rail and top-shell chrome that still felt too much like a custom dashboard:
   - updated `apps/web/src/App.tsx` to remove the top runtime/provider status pills from the shell bar
@@ -1684,7 +1685,7 @@ That keeps the next step narrow: close the controller-decomposition phase and st
     - less boxed and less admin-like left/sidebar treatment overall
 - Re-ran validation after the left-rail/top-shell cleanup pass:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
 - Applied a more literal Codex-style layout rewrite across the four shell surfaces that still felt structurally off:
   - updated `apps/web/src/App.tsx` so the top shell bar now uses a desktop-style menu row (`File`, `Edit`, `View`, `Window`, `Help`) plus a separate workspace context cluster, closer to the Codex desktop framing
@@ -1695,7 +1696,173 @@ That keeps the next step narrow: close the controller-decomposition phase and st
     - a tighter utility tab/header presentation so the shell reads as one consistent desktop workspace
 - Re-ran validation after the literal Codex-style layout rewrite:
   - `npm run build:web`
-  - `npm run check -w @qwemini/web`
+  - `npm run check -w @codewave/web`
   - `npm run check:shell`
+- Rebranded the complete product surface from the former working name to **CodeWave**:
+  - renamed npm packages/imports to the `@codewave/*` scope
+  - renamed runtime configuration to `CODEWAVE_*`, persisted browser keys to `codewave.*`, and local state/tool configuration to `.codewave/`
+  - renamed the daemon class, console copy, product prompts, tests, architecture notes, donor notes, and historical implementation references
+  - moved the existing local state directory to `.codewave/` so prior sessions remain available under the canonical path
+- Established the CodeWave brand system:
+  - replaced the old split-block mark with a native ocean-wave symbol combining an open `C` and a flowing `W`
+  - integrated the mark into the favicon, status strip, and first-run workspace stage
+  - retuned the dark shell and shared UI kit to low-glare navy surfaces, sea-glass blue accents, softer semantic colors, and restrained ambient depth
+  - documented the canonical ocean-dark product direction in `README.md` and `docs/architecture.md`
+- Migrated the existing SQLite ledger in place after taking a consistent pre-rebrand backup:
+  - updated 16 stored text values so historical workspaces and sessions resolve to the current `CodeWave` path and label
+  - confirmed the renamed workspace and existing sessions repopulate correctly through the live daemon
+- Re-ran validation after the rebrand and ocean-dark pass:
+  - `npm run check`
+  - `npm run check:shell`
+  - `npm run check:registrations`
+  - `npm run build:web`
+  - `git diff --check`
+  - browser QA at `1440 × 900` and `800 × 700`, with no page or console errors
+  - tracked-content and filename scans report no remaining references to the former working name
 - Next bounded slice:
-  - frontend donor alignment is in a good stopping state; return to the paused controller/helper cleanup track or the next highest-ROI system reliability slice
+  - add deterministic specialty-state fixtures and continue approval, diff, plan, and orchestration polish within the CodeWave ocean-dark system
+
+## Free-first provider policy and harness hardening — 2026-08-13
+
+- Changed the product policy to Freebuff-first while keeping the runtime honest about its current public CLI boundary:
+  - Freebuff is the default policy and first registry entry.
+  - the stock interactive Freebuff CLI is reported as setup-required instead of being launched with a fabricated non-interactive flag.
+  - an explicit command override can point CodeWave at a future or user-supplied JSONL automation bridge.
+  - OpenCode is the enabled local/BYOK fallback and becomes the recommended runtime when Freebuff is not automation-ready.
+  - Qwen Code and Gemini CLI remain available but disabled until a user explicitly enables and configures their paid plan, API key flow, custom endpoint, or compatible local endpoint.
+- Added a daemon-owned, versioned provider registry at `.codewave/providers.json` with validated command overrides, enablement, priorities, environment precedence, and atomic persistence.
+- Added provider registry APIs and richer runtime health metadata, including setup/disabled/ready states, access mode, data boundary, configuration source, default/recommended provider, and cached probe latency.
+- Replaced hard-coded Qwen/Gemini orchestration preferences with capability evidence plus explicit registry priority; disabled providers are removed before routing.
+- Added the ocean-dark Provider registry modal with setup links, enablement switches, command overrides, default selection, live runtime refresh, status feedback, environment-lock messaging, responsive layout, and accessible modal focus management.
+- Added `scripts/validate-provider-policy.ts` plus `npm run check:providers` for deterministic default, persistence, environment-precedence, and routing assertions.
+- Recorded current upstream facts and design donors in `docs/harness-research-2026.md`; aligned `README.md`, `docs/architecture.md`, and `AGENTS.md` with the new provider posture.
+- Validation completed during the slice:
+  - `npm run check`
+  - `npm run check -w @codewave/web`
+  - `npm run build:web`
+  - `npm run check:providers`
+  - `npm run check:shell`
+  - live daemon smoke checks for runtime/provider registry and OpenCode recommendation
+  - browser QA at `1440 × 900` and `800 × 700`, including focus trap, Escape close, focus restoration, responsive overflow, and clean page/console error checks
+- Browser QA found and resolved one medium accessibility defect: the Provider registry initially left focus behind its overlay. Evidence is retained in `.codewave/qa/provider-registry-2026-08-13/`.
+- Repaired the broader web interaction suite after the provider slice exposed stale fixture behavior. Workspace operations now test the product-owned prompt modal instead of `window.prompt`, malformed workspace payloads fail visibly without crashing, context-menu and navigation properties exclude contradictory cases, and arbitrary filter text is inserted without Testing Library keyboard grammar. `npm test -w @codewave/web` now passes all 174 tests across 11 files.
+- Next bounded slice:
+  - formalize the shared provider transport and Freebuff bridge protocol, then add thread steering and idempotent event replay at the daemon boundary.
+
+## Durable daemon lifecycle and queued steering — 2026-08-13
+
+- Added persisted mutation receipts for every keyed daemon POST/PATCH/DELETE request:
+  - canonical JSON hashing makes harmless property-order changes replay-safe
+  - identical retries return the original status/body with `Idempotency-Replayed: true`
+  - key reuse against a different method, path, or payload fails closed with HTTP 409
+  - receipts survive daemon restart and are pruned after 30 days
+  - request bodies are bounded to 2 MiB
+- Enforced exactly one non-terminal run per session; overlapping launches now return an actionable conflict instead of racing provider processes and session ownership.
+- Added startup reconciliation for orphaned `queued`, `running`, and `awaiting_approval` rows. They become explicit `run.failed` events with `code: daemon_restart`, pending approvals are denied, and recoverability is recorded from provider session metadata.
+- Added durable, fenced steering:
+  - `POST /api/runs/:id/steer` requires the expected run id and persists the user's update
+  - updates queue while the provider is active and automatically become the next run after any terminal outcome
+  - multiple queued inputs are ordered and coalesced into one follow-up turn
+  - `run.steering.queued`, `run.steering.applied`, and `run.steering.failed` are normalized, streamed events
+  - queued inputs resume dispatch after daemon restart
+- Updated the composer so active runs remain writable: placeholder, helper text, accessible label, and primary action switch from **Send** to **Queue**. The controller fences the update against the selected run and follows the newly applied run when it starts.
+- Upgraded the Freebuff automation seam from opaque stdout to a bounded JSONL bridge contract. CodeWave normalizes `session`, `output`, `message`, `tool`, `checkpoint`, and `result` records into provider session state, events, approvals/tool evidence, checkpoints, artifacts, and terminal status.
+- Browser QA exposed and resolved two integration defects:
+  - quoted Windows bridge commands were previously launched through a shell, truncating multi-word prompts and producing Node's unsafe-shell warning; command overrides are now tokenized into executable/base arguments and spawned directly
+  - snapshot hydration and SSE history could render the same event twice; event IDs now remain in the UI projection and live history is deduplicated before rendering
+- Added cursor-bounded event replay:
+  - every persisted event receives a monotonic sequence scoped to its run; the SQLite migration deterministically backfills older ledgers before adding the unique `(run_id, sequence)` index
+  - SSE frames carry their sequence as `id`, accept either `?after=` or `Last-Event-ID`, reject malformed cursors, and replay at most 500 ordered events
+  - the web client opens its stream after the newest sequence already present in the run snapshot, eliminating redundant initial history at the transport boundary while retaining event-ID deduplication as a safety net
+- Added `@codewave/provider-runtime`, a shared quote-aware launch layer now used by Freebuff, OpenCode, Qwen, and Gemini. Command overrides retain base arguments, Node scripts launch directly, Windows executable lookup prefers native binaries, and `.cmd`/`.bat` shims use an explicitly quoted `cmd.exe` invocation without Node's unsafe `shell: true` argument concatenation.
+- Added `npm run check:runtime` to assert quoted override parsing, lossless prompts containing spaces/quotes, safe Windows shim launch, and absence of `DEP0190`. The full registration matrix was also rerun under `NODE_OPTIONS=--trace-warnings` with no unsafe-shell warning.
+- Browser-verified the queue lifecycle at `1280 × 800` and `800 × 700`: active copy/action changes, persistent queued-update evidence, cancellation handoff into the next run, normalized Freebuff tool/checkpoint/artifact cards, automatic selection of the applied run, and clean console/page-error checks. Evidence is retained in `.codewave/qa/steering-2026-08-13/`.
+- Added `scripts/validate-daemon-harness.mjs`, `scripts/fixtures/fake-freebuff-bridge.mjs`, and `npm run check:harness`. The test starts a real daemon, migrates a legacy unsequenced ledger, validates durable mutation replay and conflicts, rejects overlaps, applies multiple ordered updates, verifies cursor-specific SSE replay and normalized Freebuff evidence, restarts the daemon mid-run, verifies explicit interruption recovery, and replays a pre-restart receipt.
+- Final verification passed root and standalone-web TypeScript checks, the production Vite build, provider policy, shell usability, provider runtime, daemon harness, trace-enabled registration scenarios, all 174 React tests, and `git diff --check`. `npm audit --omit=dev --audit-level=high` reports zero production vulnerabilities.
+- Next bounded slice:
+  - extract the shared ACP/JSONL transport layer, negotiate provider-native steering capabilities, then add configuration revision fencing and bounded snapshot compaction.
+
+## Provider-policy revision fencing — 2026-08-13
+
+- Added deterministic SHA-256 revisions over the effective provider policy: default provider plus each provider's enablement, priority, and command in stable protocol order.
+- Made provider configuration updates compare-and-set operations. A stale client receives HTTP 409 with the machine-readable `provider_revision_conflict` code and the current revision.
+- Fenced every provider-dependent session, run, route, compare, follow-up, delegation, handoff, steering, and recovery mutation against the exact policy revision reviewed by the client.
+- Persisted the accepted revision on sessions, runs, and queued steering. Legacy rows migrate to the explicit `legacy-unversioned` provenance marker.
+- Prevented steering inputs reviewed under different provider policies from being coalesced into one follow-up run.
+- Added typed web request failures, automatic runtime refresh after revision conflicts, revision-aware provider settings, and a visible policy-revision badge. Compare mode now opens with Freebuff and OpenCode selected.
+- Extended deterministic provider-policy and real-daemon harness validation to cover stable hashes, stale write rejection, conflict payloads, restart persistence, lineage, and legacy migration.
+- Next bounded slice:
+  - add protocol handshake/capability negotiation and bounded append-only transcript hydration before extracting a shared ACP/JSONL transport.
+
+## Scoped daemon protocol handshake — 2026-08-13
+
+- Added protocol-v1 negotiation at `POST /api/handshake` with explicit client identity/version, supported-version failure responses, eight advertised daemon capabilities, thirteen granular scopes, and transport/lifetime ceilings.
+- Made `/api/health` and `/api/handshake` the only public daemon API surfaces. Every protected route now maps to an exact read/write scope and fails closed for missing, expired, restarted, or under-scoped client connections.
+- Bounded ephemeral connections to twelve hours and 256 entries, pruning expired leases and evicting the oldest connection at capacity. Connections are process-local protocol leases, not persisted authentication credentials.
+- Added shared protocol constants for the 2 MiB body ceiling, 500-event SSE replay ceiling, and 20,000-character steering ceiling; runtime snapshots expose the active protocol contract for inspection.
+- Added a singleton web negotiation layer shared by shell APIs, workspace files, mentions, provider settings, and compare mode. Protected requests proactively handshake, preserve idempotency keys across a single retry, and automatically renegotiate after daemon restart.
+- Scoped EventSource URLs to the negotiated connection and made stream creation await successful negotiation without discarding already-loaded run snapshots on failure.
+- Extended the real-daemon harness with incompatible-version 426, missing-handshake 401, insufficient-scope 403, capability/limit discovery, and post-restart renegotiation assertions. Updated every Qwen/Gemini registration scenario to use the same negotiated boundary.
+- Verified with `npm run check`, `npm run build:web`, all 176 web tests, provider-policy/runtime checks, the real-daemon harness, four deterministic registration scenarios covering eight provider runs, shell-usability checks, `npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+- Browser QA confirmed one proactive handshake, scoped API and EventSource traffic, visible protocol/capability/scope status, and transparent `401` → renegotiate → retry recovery after a live daemon restart. Evidence: `.codewave/qa/handshake-2026-08-13/scoped-shell.png`.
+- Next bounded slice:
+  - add append-only, parent-linked transcript storage and bounded hydration so long-running sessions can resume with explicit lineage without replaying an unbounded event history.
+
+## Append-only session transcripts — 2026-08-13
+
+- Added a normalized `TranscriptMessage`/`TranscriptWindow` protocol with user, assistant, and system roles; monotonic per-session sequences; parent-message links; run provenance; source-event provenance; and advertised 100/200-message hydration ceilings.
+- Added a WAL-backed `transcript_messages` ledger. Run prompts commit in the same SQLite transaction as their run, and normalized `message.created` entries commit in the same transaction as their owning event.
+- Migrated existing run prompts and message events into deterministic parent-linked chains without mutating the source event ledger. Legacy migration is idempotent across restarts.
+- Added `GET /api/sessions/:sessionId/transcript` with exclusive backward sequence cursors and bounded pages. Run snapshots hydrate a window ending at the selected run, preventing later conversation turns from appearing while an older run is inspected.
+- Added the `append-only-transcripts` daemon capability and exposed transcript ceilings through the negotiated protocol limits.
+- Added a calm Session memory surface above the current run. It stays compact by default, expands the bounded loaded window on demand, identifies parent-linked history, and reports when older messages remain on disk.
+- Extended the real-daemon harness across legacy backfill, atomic new-run capture, exact non-duplicating idempotent replay, parent links across page boundaries, invalid cursor rejection, and restart hydration. Added focused React coverage for bounded/expanded session memory.
+- Verified with `npm run check`, `npm run build:web`, all 177 web tests, the real-daemon harness, provider-policy/runtime checks, four deterministic registration scenarios covering eight provider runs, shell-usability checks, `npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+- Browser QA confirmed the compact memory header keeps the current run above the fold, expansion hydrates four prior messages, protocol status advertises nine capabilities and thirteen scopes, and browser errors/console remain empty. Evidence: `.codewave/qa/transcript-2026-08-13/session-memory-collapsed.png`.
+- Next bounded slice:
+  - extract the duplicated ACP/JSONL process/session/permission mechanics into a shared structured-agent transport, then add trace fixtures that prove equivalent lifecycle behavior across Freebuff, OpenCode, Qwen, and Gemini adapters.
+
+## Shared structured-agent transport — 2026-08-13
+
+- Added `@codewave/provider-transport`, a provider-neutral runtime boundary for ordered stdout/stderr processing, typed JSON-line parsing, plain-text fallback, 1 MiB line ceilings, isolated handler failures, monotonic lifecycle traces, bounded cancellation, and provider-owned normalized event publication.
+- Added exactly-once terminal ownership. Once a run completes, fails, or is cancelled, late records and close/error races cannot emit a second terminal event. Cancellation mode suppresses late output/failure while still allowing one normalized `run.cancelled` result.
+- Migrated the Freebuff bridge and Gemini stream-JSON path to the shared line transport while retaining their provider-specific record normalizers inside their adapters.
+- Migrated Gemini and OpenCode ACP entry points to the shared terminal/cancellation owner. ACP subprocesses now close immediately after the terminal event is durably accepted, preventing orphan processes after the daemon drops completed run handles; persisted provider session IDs remain available for a fresh-process resume.
+- Added deterministic transport fixtures for delayed handlers, malformed/plain output, oversize lines, stderr, intentional record failures, process close, held-process cancellation, Freebuff normalization, Gemini stream normalization/session capture, and OpenCode ACP lifecycle/tool/message parity.
+- Added `npm run check:transport` as a first-class validation command.
+- Verified with `npm run check`, `npm run check:transport`, `npm run check:harness`, `npm run check:registrations`, `npm run check:providers`, `npm run check:runtime`, `npm run check:shell`, `npm run build:web`, all 177 web tests, `npm audit --omit=dev --audit-level=high`, and `git diff --check`. The randomized workspace tests now reset DOM and mock queues between generated cases and use exact entry-title assertions for whitespace-rich names.
+- Next bounded slice:
+  - extract the nearly identical Gemini/OpenCode ACP client, session-update, tool, and permission mapping into configurable shared transport code, then migrate Qwen's control stream onto the ordered delivery base.
+
+## Shared ACP state machine and ordered Qwen control transport — 2026-08-13
+
+- Replaced the duplicated Gemini/OpenCode ACP clients with one configurable transport-owned implementation covering initialize, new/resume/load session selection, persisted provider session identity, message/thought chunks, permission negotiation, tool registration, tool lifecycle normalization, usage capture, terminal outcomes, and bounded cancellation.
+- Serialized ACP notifications before normalization. Repeated or concurrent terminal tool updates now produce exactly one `tool.completed`/`tool.denied` outcome, and thought chunks retain the normalized `thinking` stream instead of being mislabeled as assistant output.
+- Reduced provider ACP files to thin profiles: Gemini uses shared inference, while OpenCode retains its explicit native-tool requirement map without duplicating protocol behavior.
+- Migrated Qwen stream-JSON/control delivery from independent readline callbacks to the shared ordered, line-bounded transport. Plain diagnostics remain visible, record/handler failures are isolated, lifecycle traces are monotonic, control requests are dispatched in order, cancellation is explicit, and a clean process exit without a result now fails closed.
+- Expanded `check:transport` from three to six adapter lifecycle scenarios: Freebuff JSONL, Gemini stream-JSON, Gemini ACP permissions/tools, OpenCode ACP duplicate-terminal parity, Qwen completion/plain-text fallback, and Qwen bounded cancellation.
+- Verified with `npm run check`, `npm run check:transport`, `npm run check:registrations`, `npm run check:harness`, `npm run check:runtime`, `npm run check:providers`, `npm run check:shell`, `npm run build:web`, all 177 web tests, the production dependency audit, process-leak inspection, and `git diff --check`.
+- Next bounded slice:
+  - implement capability-proven provider-native in-flight steering without weakening the existing durable queued-steering fallback, then add trace evaluations for steering races and restart recovery.
+
+## Capability-proven in-flight steering — 2026-08-13
+
+- Added a normalized steering capability contract with `unsupported`, `runtime-negotiated`, and `native` states plus an optional ID-addressed, acknowledged `ProviderRunHandle.steer` operation.
+- Extended the CodeWave-owned Freebuff automation bridge protocol:
+  - a protocol-v1 `capabilities` record must explicitly announce in-flight steering
+  - CodeWave sends newline-delimited `steer` commands over stdin only after that proof
+  - the bridge correlates an `accepted` or `rejected` result by steering ID
+  - missing negotiation, rejection, acknowledgement timeout, process close, and terminal races fail safely to the durable queue
+- Kept the daemon authoritative and persist-first:
+  - every update is stored and emits `run.steering.queued` before native delivery begins
+  - attempts serialize per run
+  - only a matching accepted acknowledgement performs an atomic queued-to-applied transition against the current run
+  - terminal fallback waits for registered native attempts without blocking ordered provider output, avoiding acknowledgement/terminal deadlocks
+  - unapplied records still coalesce into an ordered follow-up and survive daemon restart
+- Kept Qwen, Gemini, and OpenCode honest at `unsupported`. Official Qwen research confirmed that current headless stream-JSON queues later user messages as sequential turns even though the TUI has real next-sampling-boundary steering; CodeWave does not equate writable stdin with same-turn delivery.
+- Updated shell evidence and interaction copy so runtime-negotiated steering is visible, native acceptance says the update reached the active run, and queued fallback remains explicit. Native same-run events refresh in place instead of reopening the selected run stream. Event-derived steering feedback now remains visible in an `aria-live` row above the active composer and clears when the run becomes terminal.
+- Expanded deterministic validation with Freebuff bridge accept/reject acknowledgements and real-daemon scenarios for native delivery, idempotent replay, provider rejection, terminal-before-ack recovery, ordered legacy fallback, and queued-input recovery after daemon restart.
+- Browser QA at `1280 x 800` and `800 x 700` found and resolved one acknowledgement-visibility defect caused by a stream refresh replacing transient summary state. The accepted update is now visible both in the event trail and beside the composer; the compact inspector rail remains accessible; browser console and page errors are empty. Evidence is retained in `.codewave/qa/native-steering-2026-08-13/`.
+- Final guards passed: `npm run check`, `npm run check:transport`, `npm run check:registrations`, `npm run check:harness`, `npm run check:runtime`, `npm run check:providers`, `npm run check:shell`, `npm run build:web`, all 179 web tests, `npm audit --omit=dev --audit-level=high`, and `git diff --check`. The property suite also uses exact raw-title matching for whitespace-rich generated names and bounded long-running test timeouts.
+- Next bounded slice:
+  - implement explicit transcript compaction checkpoints and pre-compaction memory hooks, then expand task-level trace evaluation beyond transport parity.

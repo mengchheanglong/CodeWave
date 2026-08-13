@@ -18,10 +18,11 @@ import type {
   ToolPlaneResponse,
   WorkbenchRun,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type { DaemonApi } from '../apps/web/src/lib/daemon-api.js';
 import { createControllerRunActionFlows } from '../apps/web/src/lib/controller-run-action-flows.js';
 import { createControllerRequesters } from '../apps/web/src/lib/controller-requesters.js';
+import { createControllerRuntimeSessionFlows } from '../apps/web/src/lib/controller-runtime-session-flows.js';
 import { createInitialShellState } from '../apps/web/src/lib/controller-shell-state.js';
 import { createControllerUiSync } from '../apps/web/src/lib/controller-ui-sync.js';
 
@@ -32,13 +33,68 @@ function makeCapabilities(): ProviderCapabilities {
     daemonApprovalMediation: true,
     resumableSessions: true,
     checkpointEvents: true,
+    inFlightSteering: 'native',
   };
 }
 
 function makeRuntime(): RuntimeInfo {
+  const revision = 'sha256:shell-validation';
   return {
     defaultWorkspacePath: 'C:/workspace',
-    dataDirectory: 'C:/workspace/.qwemini',
+    dataDirectory: 'C:/workspace/.codewave',
+    defaultProviderId: 'freebuff',
+    recommendedProviderId: 'qwen',
+    providerRegistry: {
+      version: 1,
+      revision,
+      defaultProviderId: 'freebuff',
+      configPath: 'C:/workspace/.codewave/providers.json',
+      providers: [
+        {
+          providerId: 'qwen',
+          displayName: 'Qwen Code',
+          enabled: true,
+          priority: 30,
+          accessMode: 'paid-or-byok',
+          dataBoundary: 'provider-managed',
+          requiresExplicitEnable: true,
+          command: null,
+          configurationSource: 'file',
+          setupHint: 'configured for validation',
+          documentationUrl: 'https://example.test/qwen',
+        },
+        {
+          providerId: 'gemini',
+          displayName: 'Gemini CLI',
+          enabled: true,
+          priority: 40,
+          accessMode: 'paid-or-byok',
+          dataBoundary: 'provider-managed',
+          requiresExplicitEnable: true,
+          command: null,
+          configurationSource: 'file',
+          setupHint: 'configured for validation',
+          documentationUrl: 'https://example.test/gemini',
+        },
+      ],
+    },
+    protocol: {
+      version: 1,
+      serverVersion: 'test',
+      capabilities: ['scoped-handshake'],
+      availableScopes: ['runtime:read'],
+      limits: {
+        maxRequestBytes: 2 * 1024 * 1024,
+        maxSseReplayEvents: 500,
+        maxSteeringPromptChars: 20_000,
+        defaultTranscriptMessages: 100,
+        maxTranscriptMessages: 200,
+        idempotencyKeyMinLength: 8,
+        idempotencyKeyMaxLength: 128,
+        connectionTtlSeconds: 43_200,
+        maxClientConnections: 256,
+      },
+    },
     providers: [
       {
         providerId: 'qwen',
@@ -63,6 +119,7 @@ function makeSession(
     id: 'session-1',
     workspacePath: 'C:/workspace/demo',
     providerId: 'qwen',
+    providerConfigurationRevision: 'sha256:shell-validation',
     createdAt: NOW,
     providerSessionId: null,
     approvalPolicy: 'manual',
@@ -77,8 +134,11 @@ function makeRun(overrides: Partial<WorkbenchRun> = {}): WorkbenchRun {
     id: 'run-1',
     sessionId: 'session-1',
     providerId: 'qwen',
+    providerConfigurationRevision: 'sha256:shell-validation',
     prompt: 'hello',
     status: 'running',
+    mode: 'execute',
+    preRunCommit: null,
     createdAt: NOW,
     startedAt: NOW,
     completedAt: null,
@@ -91,10 +151,21 @@ function makeRunSnapshot(run: WorkbenchRun): RunSnapshot {
   return {
     run,
     events: [],
+    transcript: {
+      sessionId: run.sessionId,
+      messages: [],
+      hasMoreBefore: false,
+      oldestSequence: null,
+      newestSequence: null,
+      totalCount: 0,
+    },
     artifacts: [],
     approvals: [],
     checkpoints: [],
+    steering: [],
     toolInvocations: [],
+    contextChars: 0,
+    undo: { available: false, detail: null },
   };
 }
 
@@ -235,6 +306,64 @@ async function validateRequestersResyncRunAvailability() {
   assert.equal(loadToolPlaneArg, 'C:/workspace/demo');
 }
 
+async function validateSelectedSessionRestoresItsWorkspace() {
+  const state = createInitialShellState();
+  state.runtime = makeRuntime();
+  state.workspacePathDraft = 'C:/daemon/startup-root';
+  const session = makeSession({ workspacePath: 'C:/workspace/restored-thread' });
+  const api: DaemonApi = {
+    ...createUnusedDaemonApi(),
+    getSession: async () => ({ session, runs: [] }),
+    getToolPlane: async (query) => {
+      loadedToolPlanePath = query?.workspacePath;
+      return {
+        snapshot: {
+          generatedAt: NOW,
+          scope: 'session',
+          sessionId: session.id,
+          workspacePath: query?.workspacePath ?? '',
+          registryPath: null,
+          registryEntries: [],
+          mcpServers: [],
+          registeredSessionTools: [],
+          tools: [],
+          providers: [],
+        },
+      };
+    },
+  };
+  let loadedToolPlanePath: string | undefined;
+
+  const flows = createControllerRuntimeSessionFlows({
+    state,
+    api,
+    emitRunViewState: () => {},
+    emitShellPanelsState: () => {},
+    syncResumeAction: () => {},
+    syncApprovalPolicyControls: () => {},
+    syncFollowUpActions: () => {},
+    syncRunAction: () => {},
+    syncSessionCreationControls: () => {},
+    syncCancelAction: () => {},
+    setSessionsUnavailableState: () => {},
+    setArchiveUnavailableState: () => {},
+    setToolPlaneUnavailableState: () => {},
+    clearSessionSelectionState: () => {},
+    clearRunSelectionView: () => {},
+    closeStream: () => {},
+    refreshRecommendation: async () => {},
+    selectRun: async () => {},
+    transitionToNewSession: async () => true,
+  });
+
+  const selected = await flows.selectSession(session.id);
+
+  assert.equal(selected, true);
+  assert.equal(state.selectedSession?.workspacePath, 'C:/workspace/restored-thread');
+  assert.equal(state.workspacePathDraft, 'C:/workspace/restored-thread');
+  assert.equal(loadedToolPlanePath, 'C:/workspace/restored-thread');
+}
+
 async function validateStartRunCreatesSessionOnDemand() {
   const state = createInitialShellState();
   state.runtime = makeRuntime();
@@ -294,6 +423,7 @@ async function validateStartRunCreatesSessionOnDemand() {
       {
         workspacePath: 'C:/workspace/demo',
         providerId: 'qwen',
+        expectedProviderRevision: 'sha256:shell-validation',
         approvalPolicy: 'manual',
       },
     ],
@@ -303,6 +433,7 @@ async function validateStartRunCreatesSessionOnDemand() {
       {
         mode: 'execute',
         prompt: 'implement this',
+        expectedProviderRevision: 'sha256:shell-validation',
       },
     ],
   ]);
@@ -398,6 +529,7 @@ async function validateDraftRoutingWithoutSelectedSession() {
       {
         prompt: 'route me',
         workspacePath: 'C:/workspace/demo',
+        expectedProviderRevision: 'sha256:shell-validation',
         sessionId: null,
         preferredProviderId: 'gemini',
         approvalPolicy: 'manual',
@@ -411,6 +543,7 @@ async function main() {
   const checks: Array<[string, () => Promise<void>]> = [
     ['controls enable from draft state', validateControlsEnableFromDraftState],
     ['requesters resync run availability', validateRequestersResyncRunAvailability],
+    ['selected session restores its workspace', validateSelectedSessionRestoresItsWorkspace],
     ['start run creates session on demand', validateStartRunCreatesSessionOnDemand],
     ['draft routing works without a selected session', validateDraftRoutingWithoutSelectedSession],
   ];

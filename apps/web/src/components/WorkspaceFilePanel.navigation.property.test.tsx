@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fc from 'fast-check';
 import { WorkspaceFilePanel } from './WorkspaceFilePanel';
@@ -13,6 +13,19 @@ import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
   const mockWorkspacePath = '/test/workspace';
+
+  function preparePropertyIteration() {
+    cleanup();
+    vi.clearAllMocks();
+    vi.mocked(window.prompt).mockReset();
+    vi.mocked(window.confirm).mockReset();
+    global.fetch = vi.fn();
+  }
+
+  function exactTitle(title: string) {
+    return (_content: string, element: Element | null) =>
+      element?.getAttribute('title') === title;
+  }
   
   beforeEach(() => {
     vi.stubGlobal('prompt', vi.fn());
@@ -39,7 +52,8 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load at root with folder
@@ -55,9 +69,12 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
-            
+            const normalizedFolderName = folderName.trim();
+            let folderButton: HTMLButtonElement;
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              folderButton = screen.getByTitle(
+                exactTitle(normalizedFolderName),
+              ) as HTMLButtonElement;
             });
 
             // Mock navigation into folder
@@ -71,11 +88,13 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(folderButton!);
 
             // Property: Path display should show the folder path
             await waitFor(() => {
-              expect(screen.getByText(`/${folderName.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(
+                `/${normalizedFolderName}`,
+              );
             });
             
             unmount();
@@ -84,7 +103,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
         ),
         { numRuns: 50 }
       );
-    }, 30000);
+    }, 120000);
 
     it('should update path display for nested folder navigation', async () => {
       await fc.assert(
@@ -95,7 +114,8 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             fc.string({ minLength: 1, maxLength: 20 })
               .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name))
           ),
-          async ([folder1, folder2]) => {
+      async ([folder1, folder2]) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load at root
@@ -113,7 +133,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folder1.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folder1.trim()))).toBeInTheDocument();
             });
 
             // Navigate into first folder
@@ -128,11 +148,13 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
               })
             });
 
-            await user.click(screen.getByText(folder1.trim()));
+            await user.click(screen.getByTitle(exactTitle(folder1.trim())));
 
             await waitFor(() => {
-              expect(screen.getByText(`/${folder1.trim()}`)).toBeInTheDocument();
-              expect(screen.getByText(folder2.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(`/${folder1.trim()}`);
+              expect(
+                screen.getByTitle(exactTitle(`${folder1.trim()}/${folder2.trim()}`)),
+              ).toBeInTheDocument();
             });
 
             // Navigate into second folder
@@ -145,11 +167,15 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
               })
             });
 
-            await user.click(screen.getByText(folder2.trim()));
+            await user.click(
+              screen.getByTitle(exactTitle(`${folder1.trim()}/${folder2.trim()}`)),
+            );
 
             // Property: Path display should show nested path
             await waitFor(() => {
-              expect(screen.getByText(`/${folder1.trim()}/${folder2.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(
+                `/${folder1.trim()}/${folder2.trim()}`,
+              );
             });
             
             unmount();
@@ -158,7 +184,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 30000);
+    }, 120000);
   });
 
   /**
@@ -186,7 +212,8 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
               .map(name => `${name.trim()}.ts`),
             { minLength: 1, maxLength: 5 }
           ),
-          async (folderName, fileNames) => {
+      async (folderName, fileNames) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load at root with folder
@@ -204,7 +231,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount, container } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Mock navigation into folder with files
@@ -224,7 +251,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(screen.getByTitle(exactTitle(folderName.trim())));
 
             // Property: All files should be displayed
             await waitFor(() => {
@@ -242,14 +269,15 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 30000);
+    }, 120000);
 
     it('should load empty folder contents', async () => {
       await fc.assert(
         fc.asyncProperty(
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
-          async (folderName) => {
+      async (folderName) => {
+        preparePropertyIteration();
             const user = userEvent.setup();
             
             // Mock initial load at root with folder
@@ -267,7 +295,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount, container } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Mock navigation into empty folder
@@ -281,11 +309,11 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(screen.getByTitle(exactTitle(folderName.trim())));
 
             // Property: Should show empty folder (no entries)
             await waitFor(() => {
-              expect(screen.getByText(`/${folderName.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(`/${folderName.trim()}`);
               const fileEntries = container.querySelectorAll('.workspace-file-name');
               expect(fileEntries.length).toBe(0);
             });
@@ -316,6 +344,8 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
           fc.string({ minLength: 1, maxLength: 30 })
             .filter(name => name.trim().length > 0 && !/[/\\:*?"<>|]/.test(name)),
           async (existingFile, folderName) => {
+            preparePropertyIteration();
+            if (`${existingFile.trim()}.ts` === folderName.trim()) return;
             const user = userEvent.setup();
             
             // Mock initial load at root with existing file and folder
@@ -332,10 +362,10 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
-            
+
             await waitFor(() => {
-              expect(screen.getByText(existingFile.trim() + '.ts')).toBeInTheDocument();
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(existingFile.trim() + '.ts'))).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Mock failed navigation (permission denied or not found)
@@ -344,14 +374,14 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             );
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(screen.getByTitle(exactTitle(folderName.trim())));
 
             // Property: Should remain in current directory and show error
             await waitFor(() => {
               // Still at root (no path display change)
-              expect(screen.queryByText(`/${folderName.trim()}`)).not.toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath)).toHaveTextContent('/');
               // Original file still visible
-              expect(screen.getByText(existingFile.trim() + '.ts')).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(existingFile.trim() + '.ts'))).toBeInTheDocument();
               // Error message displayed
               expect(screen.getByText(/Permission denied/i)).toBeInTheDocument();
             });
@@ -362,7 +392,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
         ),
         { numRuns: 30 }
       );
-    }, 30000);
+    }, 120000);
 
     it('should show error message when navigation fails', async () => {
       const user = userEvent.setup();

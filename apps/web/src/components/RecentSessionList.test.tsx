@@ -7,21 +7,30 @@ describe('RecentSessionList - Context Menu Behavior', () => {
   const mockSessions: ShellPanelsState['recentSessions'] = [
     {
       id: 'session-1',
+      providerId: 'freebuff',
       workspacePath: '/workspace/project-a',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
       latestRunPrompt: 'Test prompt 1',
       recovery: null,
       orchestration: null,
     },
     {
       id: 'session-2',
+      providerId: 'opencode',
       workspacePath: '/workspace/project-a',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
       latestRunPrompt: 'Test prompt 2',
       recovery: null,
       orchestration: null,
     },
     {
       id: 'session-3',
+      providerId: 'freebuff',
       workspacePath: '/workspace/project-b',
+      approvalPolicy: 'manual',
+      providerSessionId: null,
       latestRunPrompt: 'Test prompt 3',
       recovery: null,
       orchestration: null,
@@ -36,6 +45,32 @@ describe('RecentSessionList - Context Menu Behavior', () => {
     onDeleteWorkspaceGroup: vi.fn(),
     onDeleteSession: vi.fn(),
   };
+
+  it('distinguishes an empty filter result from an empty session ledger', () => {
+    render(
+      <RecentSessionList
+        {...defaultProps}
+        sessions={[]}
+        emptyTitle="No matching threads"
+        emptyMessage={'No threads match "missing".'}
+      />,
+    );
+
+    expect(screen.getByText('No matching threads')).toBeInTheDocument();
+    expect(screen.queryByText('No sessions yet')).not.toBeInTheDocument();
+  });
+
+  it('requests deletion without deleting directly from the context menu', () => {
+    const onDeleteSession = vi.fn();
+    render(
+      <RecentSessionList {...defaultProps} onDeleteSession={onDeleteSession} />,
+    );
+
+    fireEvent.click(screen.getAllByLabelText(/Thread menu for/)[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete thread' }));
+
+    expect(onDeleteSession).toHaveBeenCalledWith('session-1');
+  });
 
   describe('Click-outside closes context menus', () => {
     it('should close session context menu when clicking outside', () => {

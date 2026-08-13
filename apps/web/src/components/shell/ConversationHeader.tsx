@@ -33,8 +33,8 @@ export function ConversationHeader({
     <header className="conversation-header">
       <div className="conversation-header-copy">
         <div className="conversation-breadcrumbs">
-          <span>{workspaceLabel}</span>
-          <span>/</span>
+          <span className="conversation-workspace">{workspaceLabel}</span>
+          <span className="conversation-breadcrumb-separator">/</span>
           <strong id="run-title">{title}</strong>
           {hasActiveSession ? (
             <span className="conversation-badge">+{runCount} runs</span>
@@ -50,6 +50,13 @@ export function ConversationHeader({
             </span>
           ) : null}
         </div>
+        {hasActiveSession ? (
+          <div className="conversation-header-meta">
+            <span id="selected-session-note">{selectedSessionNote}</span>
+            <span className="conversation-meta-separator" aria-hidden="true"></span>
+            <span title={toolPlaneNote}>Tools governed by CodeWave</span>
+          </div>
+        ) : null}
       </div>
       <div className="conversation-header-actions">
         {hasActiveSession && onDeleteSession ? (
@@ -65,12 +72,14 @@ export function ConversationHeader({
         ) : null}
         <button
           type="button"
-          className="header-icon-button"
+          className="header-command-button"
           title="Quick open"
           aria-label="Quick open"
           onClick={onOpenQuickOpen}
         >
           <SearchIcon size={15} />
+          <span>Search</span>
+          <kbd>Ctrl K</kbd>
         </button>
         <button
           type="button"

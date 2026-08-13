@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { ShellSummaryState } from '../../lib/shell-summary-state';
@@ -8,6 +8,7 @@ import {
   parseApprovalPolicy,
   parseProviderId,
   railViewIcon,
+  renderProviderLabel,
   type RailView,
 } from '../../lib/shell-format';
 import {
@@ -19,7 +20,7 @@ import { ArchiveSessionList } from '../ArchiveSessionList';
 import { OrchestrationSwimlanes } from '../OrchestrationSwimlanes';
 import { RecentSessionList } from '../RecentSessionList';
 import { RunHistoryList } from '../RunHistoryList';
-import { FolderIcon, PlusIcon, SearchIcon } from '../icons';
+import { FolderIcon, PlusIcon, SearchIcon, WrenchIcon } from '../icons';
 import {
   formatRunStatus,
   formatSessionOrchestration,
@@ -36,6 +37,7 @@ export type RailTab = {
 type SidebarProps = {
   shellControlsState: ShellControlsState;
   onAddFolder: () => void;
+  onOpenProviderSettings: () => void;
   shellPanelsState: ShellPanelsState;
   shellSummaryState: ShellSummaryState;
   runViewState: RunViewState;
@@ -56,11 +58,13 @@ type SidebarProps = {
   onDeleteWorkspaceGroup: (workspacePath: string) => void;
   onDeleteSession: (sessionId: string) => void;
   railFilterInputRef: RefObject<HTMLInputElement | null>;
+  navigationRef?: Ref<HTMLElement>;
 };
 
 export function Sidebar({
   shellControlsState,
   onAddFolder,
+  onOpenProviderSettings,
   shellPanelsState,
   shellSummaryState,
   runViewState,
@@ -81,22 +85,43 @@ export function Sidebar({
   onDeleteWorkspaceGroup,
   onDeleteSession,
   railFilterInputRef,
+  navigationRef,
 }: SidebarProps) {
   const normalizedRailFilter = railFilter.trim().toLowerCase();
+  const visibleOrchestrationFlows = filteredOrchestrationFlows.filter(
+    (flow) =>
+      flow.sessions.length > 1 || flow.rootSession.orchestration?.kind === 'route',
+  );
+  const visibleRailSectionBadge =
+    railView === 'flows' ? visibleOrchestrationFlows.length : railSectionBadge;
+  const selectedProviderNote = shellSummaryState.sessionProviderNote.replace(
+    /^(Qwen|Gemini|Freebuff|OpenCode)/,
+    renderProviderLabel(shellControlsState.providerId),
+  );
 
   return (
-    <aside className="workspace-column panes-sidebar">
+    <aside
+      ref={navigationRef}
+      id="workspace-navigation"
+      className="workspace-column panes-sidebar"
+      tabIndex={-1}
+    >
       <div className="sidebar-top">
         <div className="sidebar-brand-block">
+          <div className="sidebar-intro">
+            <span className="sidebar-intro-eyebrow">Agent workspace</span>
+            <span className="sidebar-intro-copy">Build, inspect, and orchestrate.</span>
+          </div>
           <div className="sidebar-action-stack">
             <button
               type="button"
               className="sidebar-primary-button"
+              aria-label="New thread"
               onClick={() => {
                 void requestCreateSession();
               }}
             >
-              <PlusIcon size={14} /> New thread
+              <PlusIcon size={14} /> New task
             </button>
             <button
               type="button"
@@ -104,6 +129,13 @@ export function Sidebar({
               onClick={onAddFolder}
             >
               <FolderIcon size={14} /> Add folder
+            </button>
+            <button
+              type="button"
+              className="sidebar-mode-button"
+              onClick={onOpenProviderSettings}
+            >
+              <WrenchIcon size={14} /> Providers
             </button>
           </div>
         </div>
@@ -150,10 +182,29 @@ export function Sidebar({
                   });
                 }}
               >
-                <option value="qwen">Qwen</option>
-                <option value="gemini">Gemini</option>
-                <option value="opencode">OpenCode</option>
-                <option value="freebuff">Freebuff</option>
+                {(shellPanelsState.providerRegistry?.providers ?? []).map((provider) => {
+                  const providerHealth = shellPanelsState.providerHealth.find(
+                    (entry) => entry.providerId === provider.providerId,
+                  );
+                  return (
+                    <option
+                      key={provider.providerId}
+                      value={provider.providerId}
+                      disabled={!provider.enabled || !providerHealth?.available}
+                    >
+                      {renderProviderLabel(provider.providerId)} ·{' '}
+                      {providerHealth?.available
+                        ? provider.accessMode === 'free-cloud'
+                          ? 'Free'
+                          : provider.accessMode === 'local-or-byok'
+                            ? 'Local/BYOK'
+                            : 'Paid/BYOK'
+                        : provider.enabled
+                          ? 'Setup required'
+                          : 'Disabled'}
+                    </option>
+                  );
+                })}
               </select>
             </label>
 
@@ -178,7 +229,7 @@ export function Sidebar({
           </div>
 
           <p id="session-provider-note" className="chip-note session-dock-hint">
-            {shellSummaryState.sessionProviderNote}
+            {selectedProviderNote}
           </p>
 
           <div className="session-dock-actions">
@@ -191,8 +242,8 @@ export function Sidebar({
         <div className="sidebar-section-header">
           <span className="sidebar-section-label">
             {getRailSectionLabel(railView)}
-            {railSectionBadge > 0 ? (
-              <span className="sidebar-section-count">{railSectionBadge}</span>
+            {visibleRailSectionBadge > 0 ? (
+              <span className="sidebar-section-count">{visibleRailSectionBadge}</span>
             ) : null}
           </span>
           <button
@@ -254,6 +305,7 @@ export function Sidebar({
                     ? `No threads match "${railFilter.trim()}".`
                     : shellPanelsState.recentSessionsMessage ?? 'No sessions yet.'
                 }
+                emptyTitle={normalizedRailFilter ? 'No matching threads' : undefined}
                 onSelectSession={onSelectSession}
                 onDeleteWorkspaceGroup={onDeleteWorkspaceGroup}
                 onDeleteSession={onDeleteSession}
@@ -300,7 +352,7 @@ export function Sidebar({
           {railView === 'flows' ? (
             <div id="orchestration-board" className="list rail-list compact">
               <OrchestrationSwimlanes
-                orchestrationFlows={filteredOrchestrationFlows}
+                orchestrationFlows={visibleOrchestrationFlows}
                 selectedSessionId={shellPanelsState.selectedSessionId}
                 emptyMessage={
                   normalizedRailFilter
@@ -330,7 +382,9 @@ export function Sidebar({
                     {railViewIcon(item.id)}
                     {getRailSectionLabel(item.id)}
                   </span>
-                  <span className="sidebar-nav-count">{item.badge ?? 0}</span>
+                  <span className="sidebar-nav-count">
+                    {item.id === 'flows' ? visibleOrchestrationFlows.length : item.badge ?? 0}
+                  </span>
                 </button>
               ))}
           </div>

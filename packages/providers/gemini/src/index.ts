@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -14,7 +13,15 @@ import type {
   ProviderRunHandle,
   ProviderToolCapability,
   WorkbenchEvent,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
+import {
+  parseProviderCommand,
+  spawnProviderCommand,
+} from '@codewave/provider-runtime';
+import {
+  createRunEventPublisher,
+  launchJsonLineTransport,
+} from '@codewave/provider-transport';
 import { startGeminiAcpRun } from './acp.js';
 
 type CommandResult = {
@@ -26,7 +33,7 @@ type CommandResult = {
 const DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS = 2500;
 
 function getConnectedToolProbeTimeoutMs(): number {
-  const configured = Number(process.env.QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
+  const configured = Number(process.env.CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
   if (!Number.isFinite(configured) || configured <= 0) {
     return DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS;
   }
@@ -81,11 +88,13 @@ const GEMINI_STREAM_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: false,
   resumableSessions: true,
   checkpointEvents: false,
+  inFlightSteering: 'unsupported',
 };
 const GEMINI_ACP_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: true,
   resumableSessions: true,
   checkpointEvents: false,
+  inFlightSteering: 'unsupported',
 };
 const GEMINI_STREAM_TOOL_CATALOG: ProviderToolCapability[] = [
   {
@@ -178,32 +187,12 @@ function parseConfiguredMcpServers(output: string): string[] {
     .filter(Boolean);
 }
 
-function createEvent(
-  context: ProviderRunContext,
-  type: WorkbenchEvent['type'],
-  payload: Record<string, unknown>,
-): WorkbenchEvent {
-  return {
-    id: randomUUID(),
-    sessionId: context.session.id,
-    runId: context.run.id,
-    timestamp: new Date().toISOString(),
-    source: 'gemini',
-    type,
-    payload,
-  };
-}
-
 function resolveCommand(command: string): string {
   if (process.platform === 'win32' && command === 'gemini') {
     return 'gemini.cmd';
   }
 
   return command;
-}
-
-function isNodeScript(command: string): boolean {
-  return /\.(?:[cm]?js)$/i.test(command);
 }
 
 function shouldUseShell(command: string): boolean {
@@ -268,30 +257,6 @@ function resolveGeminiNodeInvocation(
   };
 }
 
-function quoteWindowsArgument(value: string): string {
-  let quoted = '"';
-  let backslashes = 0;
-
-  for (const character of value.replace(/%/g, '%%')) {
-    if (character === '\\') {
-      backslashes += 1;
-      continue;
-    }
-
-    if (character === '"') {
-      quoted += `${'\\'.repeat(backslashes * 2 + 1)}"`;
-      backslashes = 0;
-      continue;
-    }
-
-    quoted += `${'\\'.repeat(backslashes)}${character}`;
-    backslashes = 0;
-  }
-
-  quoted += `${'\\'.repeat(backslashes * 2)}"`;
-  return quoted;
-}
-
 function spawnCommand(
   command: string,
   args: string[],
@@ -301,60 +266,41 @@ function spawnCommand(
     mode?: GeminiMode;
   },
 ): ChildProcess {
-  if (isNodeScript(command)) {
-    return spawn(process.execPath, [command, ...args], {
-      ...options,
-      shell: false,
-      windowsHide: true,
-    });
-  }
+  const parsed = parseProviderCommand(command, 'Gemini command');
+  const { mode = 'stream-json', ...spawnOptions } = options;
 
   const nodeInvocation = resolveGeminiNodeInvocation(
-    command,
-    options.mode ?? 'stream-json',
+    parsed.command,
+    mode,
   );
   if (nodeInvocation) {
-    return spawn(nodeInvocation.command, [...nodeInvocation.argsPrefix, ...args], {
-      ...options,
-      shell: false,
-      windowsHide: true,
-    });
-  }
-
-  const executable = resolveCommand(command);
-  if (shouldUseShell(executable)) {
-    const resolvedExecutable = resolveShellExecutable(executable);
-    const commandLine = [resolvedExecutable, ...args]
-      .map((value) => quoteWindowsArgument(value))
-      .join(' ');
-
-    return spawn(
-      process.env.ComSpec ?? 'cmd.exe',
-      ['/d', '/s', '/c', `"${commandLine}"`],
+    return spawnProviderCommand(
       {
-        ...options,
-        shell: false,
-        windowsHide: true,
+        command: nodeInvocation.command,
+        baseArgs: [...nodeInvocation.argsPrefix, ...parsed.baseArgs],
       },
+      args,
+      spawnOptions,
     );
   }
 
-  return spawn(executable, args, {
-    ...options,
-    shell: false,
-    windowsHide: true,
-  });
+  return spawnProviderCommand(
+    { command: resolveCommand(parsed.command), baseArgs: parsed.baseArgs },
+    args,
+    spawnOptions,
+  );
 }
 
 function isFatalGeminiAcpStderr(text: string): boolean {
   return /Error:\s+AttachConsole failed/i.test(text);
 }
 
-function hasQweminiWindowsPatch(command: string, mode: GeminiMode): boolean {
+function hasCodeWaveWindowsPatch(command: string, mode: GeminiMode): boolean {
+  const parsed = parseProviderCommand(command, 'Gemini command');
   return (
     process.platform === 'win32' &&
     mode === 'acp' &&
-    resolveGeminiNodeInvocation(command, mode) !== null
+    resolveGeminiNodeInvocation(parsed.command, mode) !== null
   );
 }
 
@@ -470,8 +416,8 @@ async function probeCommandForMode(
     return {
       providerId: 'gemini',
       available: true,
-      detail: hasQweminiWindowsPatch(command, mode)
-        ? `Gemini CLI ${versionLabel} ready (ACP mode, Qwemini Windows PTY patch).`
+      detail: hasCodeWaveWindowsPatch(command, mode)
+        ? `Gemini CLI ${versionLabel} ready (ACP mode, CodeWave Windows PTY patch).`
         : `Gemini CLI ${versionLabel} ready (ACP mode).`,
       capabilities: GEMINI_ACP_CAPABILITIES,
     };
@@ -492,7 +438,7 @@ export class GeminiCliProvider implements ProviderAdapter {
   private readonly command: string;
   private readonly mode: GeminiMode;
 
-  constructor(command = process.env.QWEMINI_GEMINI_COMMAND ?? 'gemini') {
+  constructor(command = process.env.CODEWAVE_GEMINI_COMMAND ?? 'gemini') {
     this.command = command;
     this.mode = this.resolveMode();
   }
@@ -620,40 +566,23 @@ export class GeminiCliProvider implements ProviderAdapter {
         mode: 'acp',
       },
     );
-    let finished = false;
-    let cancelRequested = false;
-    let terminalEvent: WorkbenchEvent['type'] | null = null;
     let stderrChain = Promise.resolve();
+    const publisher = createRunEventPublisher(context, 'gemini');
     const publish = async (
       type: WorkbenchEvent['type'],
       payload: Record<string, unknown>,
     ): Promise<void> => {
-      const isTerminal =
-        type === 'run.completed' ||
-        type === 'run.failed' ||
-        type === 'run.cancelled';
-      if (terminalEvent) {
-        return;
-      }
-
-      if (!isTerminal && cancelRequested) {
-        return;
-      }
-
-      if (cancelRequested && isTerminal && type !== 'run.cancelled') {
-        return;
-      }
-
+      const published = await publisher.publish(type, payload);
       if (
-        type === 'run.completed' ||
-        type === 'run.failed' ||
-        type === 'run.cancelled'
+        published &&
+        (type === 'run.completed' ||
+          type === 'run.failed' ||
+          type === 'run.cancelled') &&
+        child.exitCode === null &&
+        !child.killed
       ) {
-        finished = true;
-        terminalEvent = type;
+        child.kill();
       }
-
-      await context.emitEvent(createEvent(context, type, payload));
     };
 
     child.on('error', async (error) => {
@@ -679,7 +608,11 @@ export class GeminiCliProvider implements ProviderAdapter {
               text,
             });
 
-            if (!cancelRequested && !finished && isFatalGeminiAcpStderr(text)) {
+            if (
+              !publisher.cancellationRequested &&
+              !publisher.terminalEventType &&
+              isFatalGeminiAcpStderr(text)
+            ) {
               await publish('run.failed', {
                 message: 'Gemini ACP terminal helper failed.',
                 detail: text,
@@ -690,7 +623,11 @@ export class GeminiCliProvider implements ProviderAdapter {
       });
 
     child.on('close', async (code) => {
-      if (code === 0 || finished || cancelRequested) {
+      if (
+        code === 0 ||
+        publisher.terminalEventType ||
+        publisher.cancellationRequested
+      ) {
         return;
       }
 
@@ -708,7 +645,7 @@ export class GeminiCliProvider implements ProviderAdapter {
 
     return {
       cancel: async () => {
-        cancelRequested = true;
+        publisher.requestCancellation();
         await handle.cancel();
       },
     };
@@ -717,125 +654,138 @@ export class GeminiCliProvider implements ProviderAdapter {
   private async startStreamJsonRun(
     context: ProviderRunContext,
   ): Promise<ProviderRunHandle> {
-    const extraArgs = (process.env.QWEMINI_GEMINI_ARGS ?? '')
+    const extraArgs = (process.env.CODEWAVE_GEMINI_ARGS ?? '')
       .split(' ')
       .map((value) => value.trim())
       .filter(Boolean);
-    let finished = false;
     let assistantBuffer = '';
     const toolNames = new Map<string, string>();
-
-    const child = spawnCommand(
-      this.command,
-      [
-        ...(context.session.providerSessionId
-          ? ['--resume', context.session.providerSessionId]
-          : []),
-        '-p',
-        context.run.prompt,
-        '--output-format',
-        'stream-json',
-        ...extraArgs,
-      ],
-      {
-        cwd: context.session.workspacePath,
-        env: process.env,
-        mode: 'stream-json',
-      },
-    );
-
+    const publisher = createRunEventPublisher(context, 'gemini');
     const publish = async (
       type: WorkbenchEvent['type'],
       payload: Record<string, unknown>,
     ): Promise<void> => {
-      if (type === 'run.completed' || type === 'run.failed') {
-        finished = true;
-      }
-
-      await context.emitEvent(createEvent(context, type, payload));
+      await publisher.publish(type, payload);
     };
-
-    child.on('error', async (error) => {
+    const assistantBufferRef = {
+      get value() {
+        return assistantBuffer;
+      },
+      set value(value: string) {
+        assistantBuffer = value;
+      },
+    };
+    const args = [
+      ...(context.session.providerSessionId
+        ? ['--resume', context.session.providerSessionId]
+        : []),
+      '-p',
+      context.run.prompt,
+      '--output-format',
+      'stream-json',
+      ...extraArgs,
+    ];
+    let transport;
+    try {
+      transport = launchJsonLineTransport<GeminiStreamMessage>({
+        spawn: () =>
+          spawnCommand(this.command, args, {
+            cwd: context.session.workspacePath,
+            env: process.env,
+            mode: 'stream-json',
+          }),
+        parseRecord: (line) => {
+          const value = JSON.parse(line) as unknown;
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('Gemini stream records must be JSON objects.');
+          }
+          const message = value as GeminiStreamMessage;
+          if (typeof message.type !== 'string') {
+            throw new Error('Gemini stream records require a type.');
+          }
+          return message;
+        },
+        onRecord: async (message) => {
+          await this.handleStreamMessage({
+            context,
+            message,
+            toolNames,
+            assistantBufferRef,
+            publish,
+          });
+        },
+        onStdoutText: async (line) => {
+          if (!line.trim()) return;
+          await publish('run.output.delta', {
+            stream: 'stdout',
+            text: line,
+          });
+        },
+        onStderrLine: async (line) => {
+          const text = line.trim();
+          if (!text || /^Loaded cached credentials\.?$/i.test(text)) return;
+          await publish('run.output.delta', { stream: 'stderr', text });
+        },
+        onLineTooLong: async (channel) => {
+          await publish('run.output.delta', {
+            stream: 'stderr',
+            text: `Gemini ${channel} line exceeded the 1 MiB safety limit and was ignored.`,
+          });
+        },
+        onHandlerError: async (error) => {
+          await publish('run.output.delta', {
+            stream: 'stderr',
+            text: `Gemini adapter error: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        },
+        onProcessError: async (error) => {
+          await publish('run.failed', {
+            message: `Failed to launch ${this.command}`,
+            detail: error.message,
+          });
+        },
+        onClose: async (code) => {
+          if (code === 0 || publisher.terminalEventType || publisher.sealed) return;
+          await publish('run.failed', {
+            message: `${this.command} exited unexpectedly`,
+            exitCode: code,
+          });
+        },
+      });
+    } catch (error) {
       await publish('run.failed', {
         message: `Failed to launch ${this.command}`,
-        detail: error.message,
+        detail: error instanceof Error ? error.message : String(error),
       });
-    });
-
-    readline
-      .createInterface({ input: child.stdout! })
-      .on('line', (line) => {
-        void this
-          .handleStdoutLine({
-            context,
-            line,
-            toolNames,
-            assistantBufferRef: {
-              get value() {
-                return assistantBuffer;
-              },
-              set value(value: string) {
-                assistantBuffer = value;
-              },
-            },
-            publish,
-          })
-          .catch(async (error) => {
-            await publish('run.output.delta', {
-              stream: 'stderr',
-              text: `Gemini adapter error: ${error instanceof Error ? error.message : String(error)}`,
-            });
-          });
-      });
-
-    readline
-      .createInterface({ input: child.stderr! })
-      .on('line', (line) => {
-        const text = line.trim();
-        if (!text || /^Loaded cached credentials\.?$/i.test(text)) {
-          return;
-        }
-
-        void publish('run.output.delta', {
-          stream: 'stderr',
-          text,
-        });
-      });
-
-    child.on('close', async (code) => {
-      if (code === 0 || finished) {
-        return;
-      }
-
-      await publish('run.failed', {
-        message: `${this.command} exited unexpectedly`,
-        exitCode: code,
-      });
-    });
+      return { cancel: async () => {} };
+    }
 
     return {
       cancel: async () => {
-        child.kill();
+        publisher.seal();
+        await transport.cancel();
       },
     };
   }
 
   private resolveMode(): GeminiMode {
-    const requested = (process.env.QWEMINI_GEMINI_MODE ?? 'acp')
+    const requested = (process.env.CODEWAVE_GEMINI_MODE ?? 'acp')
       .trim()
       .toLowerCase();
     return requested === 'stream-json' ? 'stream-json' : 'acp';
   }
 
-  private async handleStdoutLine({
+  private async handleStreamMessage({
     context,
-    line,
+    message,
     toolNames,
     assistantBufferRef,
     publish,
   }: {
     context: ProviderRunContext;
-    line: string;
+    message: GeminiStreamMessage;
     toolNames: Map<string, string>;
     assistantBufferRef: {
       value: string;
@@ -845,21 +795,6 @@ export class GeminiCliProvider implements ProviderAdapter {
       payload: Record<string, unknown>,
     ) => Promise<void>;
   }): Promise<void> {
-    if (!line.trim()) {
-      return;
-    }
-
-    let message: GeminiStreamMessage;
-    try {
-      message = JSON.parse(line) as GeminiStreamMessage;
-    } catch {
-      await publish('run.output.delta', {
-        stream: 'stdout',
-        text: line,
-      });
-      return;
-    }
-
     if (message.type === 'init') {
       if (typeof message.session_id === 'string' && message.session_id.length > 0) {
         await context.updateSession({

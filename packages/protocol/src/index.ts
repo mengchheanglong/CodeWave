@@ -1,7 +1,106 @@
 export const DEFAULT_DAEMON_PORT = 4120;
-export const DEFAULT_PROVIDER_ID = 'qwen';
+export const DEFAULT_PROVIDER_ID = 'freebuff';
+export const CODEWAVE_PROTOCOL_VERSION = 1;
+export const CODEWAVE_MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+export const CODEWAVE_MAX_SSE_REPLAY_EVENTS = 500;
+export const CODEWAVE_MAX_STEERING_PROMPT_CHARS = 20_000;
+export const CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES = 100;
+export const CODEWAVE_MAX_TRANSCRIPT_MESSAGES = 200;
+
+export const DAEMON_CLIENT_SCOPES = [
+  'runtime:read',
+  'providers:read',
+  'providers:write',
+  'sessions:read',
+  'sessions:write',
+  'runs:read',
+  'runs:write',
+  'orchestration:read',
+  'orchestration:write',
+  'tools:read',
+  'workspace:read',
+  'workspace:write',
+  'approvals:write',
+] as const;
+export type DaemonClientScope = (typeof DAEMON_CLIENT_SCOPES)[number];
+
+export const DAEMON_CAPABILITIES = [
+  'scoped-handshake',
+  'durable-idempotency',
+  'provider-policy-revisions',
+  'event-cursor-replay',
+  'queued-steering',
+  'session-recovery',
+  'orchestration',
+  'workspace-files',
+  'append-only-transcripts',
+] as const;
+export type DaemonCapability = (typeof DAEMON_CAPABILITIES)[number];
+
+export interface ClientHandshakeRequest {
+  clientName: string;
+  clientVersion: string;
+  protocolVersion: number;
+  requestedScopes: DaemonClientScope[];
+}
+
+export interface DaemonProtocolLimits {
+  maxRequestBytes: number;
+  maxSseReplayEvents: number;
+  maxSteeringPromptChars: number;
+  defaultTranscriptMessages: number;
+  maxTranscriptMessages: number;
+  idempotencyKeyMinLength: number;
+  idempotencyKeyMaxLength: number;
+  connectionTtlSeconds: number;
+  maxClientConnections: number;
+}
+
+export interface ClientHandshakeResponse {
+  connectionId: string;
+  protocolVersion: number;
+  serverName: 'CodeWave daemon';
+  serverVersion: string;
+  capabilities: DaemonCapability[];
+  availableScopes: DaemonClientScope[];
+  grantedScopes: DaemonClientScope[];
+  limits: DaemonProtocolLimits;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface DaemonProtocolInfo {
+  version: number;
+  serverVersion: string;
+  capabilities: DaemonCapability[];
+  availableScopes: DaemonClientScope[];
+  limits: DaemonProtocolLimits;
+}
 
 export type ProviderId = 'qwen' | 'gemini' | 'opencode' | 'freebuff';
+export const PROVIDER_IDS: ProviderId[] = [
+  'freebuff',
+  'opencode',
+  'qwen',
+  'gemini',
+];
+export type ProviderAccessMode =
+  | 'free-cloud'
+  | 'local-or-byok'
+  | 'paid-or-byok';
+export type ProviderDataBoundary =
+  | 'cloud-ad-supported'
+  | 'local-or-user-configured'
+  | 'provider-managed';
+export type ProviderConfigurationSource =
+  | 'default'
+  | 'file'
+  | 'environment';
+export type ProviderRuntimeStatus =
+  | 'ready'
+  | 'disabled'
+  | 'setup-required'
+  | 'unavailable';
 export type EventSource = ProviderId | 'system' | 'plugin';
 export type RoutingToolRequirement =
   | 'workspace-read'
@@ -42,15 +141,28 @@ export type ApprovalStatus = 'requested' | 'approved' | 'denied';
 export type ApprovalBehavior = 'allow' | 'deny';
 export type ApprovalPolicy = 'manual' | 'allow' | 'deny';
 export type RunMode = 'execute' | 'plan';
+export type RunSteeringStatus = 'queued' | 'applied' | 'failed' | 'cancelled';
+export type ProviderSteeringSupport =
+  | 'unsupported'
+  | 'runtime-negotiated'
+  | 'native';
+export type ProviderSteeringDisposition =
+  | 'accepted'
+  | 'rejected'
+  | 'unavailable';
 export type SessionRecoveryKind = 'session' | 'checkpoint';
 export type ToolInvocationStatus =
   | 'requested'
   | 'started'
   | 'completed'
   | 'denied';
+export type TranscriptRole = 'user' | 'assistant' | 'system';
 
 export type WorkbenchEventType =
   | 'run.started'
+  | 'run.steering.queued'
+  | 'run.steering.applied'
+  | 'run.steering.failed'
   | 'run.output.delta'
   | 'message.created'
   | 'tool.registered'
@@ -87,6 +199,7 @@ export interface WorkbenchSession {
   id: string;
   workspacePath: string;
   providerId: ProviderId;
+  providerConfigurationRevision: string;
   createdAt: string;
   providerSessionId: string | null;
   approvalPolicy: ApprovalPolicy;
@@ -98,6 +211,7 @@ export interface WorkbenchRun {
   id: string;
   sessionId: string;
   providerId: ProviderId;
+  providerConfigurationRevision: string;
   prompt: string;
   status: RunStatus;
   mode: RunMode;
@@ -108,14 +222,51 @@ export interface WorkbenchRun {
   errorMessage: string | null;
 }
 
+export interface RunSteeringInput {
+  id: string;
+  sessionId: string;
+  targetRunId: string;
+  expectedRunId: string;
+  providerConfigurationRevision: string;
+  prompt: string;
+  status: RunSteeringStatus;
+  createdAt: string;
+  appliedRunId: string | null;
+  appliedAt: string | null;
+  errorMessage: string | null;
+}
+
 export interface WorkbenchEvent {
   id: string;
+  sequence?: number;
   sessionId: string;
   runId: string;
   timestamp: string;
   source: EventSource;
   type: WorkbenchEventType;
   payload: Record<string, unknown>;
+}
+
+export interface TranscriptMessage {
+  id: string;
+  sessionId: string;
+  runId: string;
+  sequence: number;
+  parentMessageId: string | null;
+  role: TranscriptRole;
+  content: string;
+  createdAt: string;
+  sourceEventId: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface TranscriptWindow {
+  sessionId: string;
+  messages: TranscriptMessage[];
+  hasMoreBefore: boolean;
+  oldestSequence: number | null;
+  newestSequence: number | null;
+  totalCount: number;
 }
 
 export interface ArtifactRecord {
@@ -198,6 +349,7 @@ export interface ProviderCapabilities {
   daemonApprovalMediation: boolean;
   resumableSessions: boolean;
   checkpointEvents: boolean;
+  inFlightSteering: ProviderSteeringSupport;
 }
 
 export interface ProviderHealth {
@@ -205,6 +357,36 @@ export interface ProviderHealth {
   available: boolean;
   detail: string;
   capabilities: ProviderCapabilities;
+  enabled?: boolean;
+  configured?: boolean;
+  status?: ProviderRuntimeStatus;
+  accessMode?: ProviderAccessMode;
+  priority?: number;
+  isDefault?: boolean;
+  lastCheckedAt?: string;
+  latencyMs?: number;
+}
+
+export interface ProviderConfiguration {
+  providerId: ProviderId;
+  displayName: string;
+  enabled: boolean;
+  priority: number;
+  accessMode: ProviderAccessMode;
+  dataBoundary: ProviderDataBoundary;
+  requiresExplicitEnable: boolean;
+  command: string | null;
+  setupHint: string;
+  documentationUrl: string;
+  configurationSource: ProviderConfigurationSource;
+}
+
+export interface ProviderRegistrySnapshot {
+  version: 1;
+  revision: string;
+  defaultProviderId: ProviderId;
+  configPath: string;
+  providers: ProviderConfiguration[];
 }
 
 export interface ToolDescriptor {
@@ -314,6 +496,14 @@ export interface ProviderRunContext {
 
 export interface ProviderRunHandle {
   cancel: () => Promise<void>;
+  steer?: (input: {
+    steeringId: string;
+    prompt: string;
+    createdAt: string;
+  }) => Promise<{
+    disposition: ProviderSteeringDisposition;
+    detail?: string;
+  }>;
 }
 
 export interface ProviderAdapter {
@@ -331,7 +521,23 @@ export interface ProviderAdapter {
 export interface RuntimeInfo {
   defaultWorkspacePath: string;
   dataDirectory: string;
+  defaultProviderId: ProviderId;
+  recommendedProviderId: ProviderId;
+  providerRegistry: ProviderRegistrySnapshot;
   providers: ProviderHealth[];
+  protocol: DaemonProtocolInfo;
+}
+
+export interface UpdateProviderConfigurationRequest {
+  expectedProviderRevision: string;
+  enabled?: boolean;
+  priority?: number;
+  command?: string | null;
+}
+
+export interface UpdateDefaultProviderRequest {
+  providerId: ProviderId;
+  expectedProviderRevision: string;
 }
 
 export interface OrchestrationRecommendation {
@@ -360,9 +566,11 @@ export interface RunUndoInfo {
 export interface RunSnapshot {
   run: WorkbenchRun;
   events: WorkbenchEvent[];
+  transcript: TranscriptWindow;
   artifacts: ArtifactRecord[];
   approvals: ApprovalRecord[];
   checkpoints: CheckpointRecord[];
+  steering: RunSteeringInput[];
   toolInvocations: ToolInvocationRecord[];
   contextChars: number;
   undo: RunUndoInfo;
@@ -405,6 +613,7 @@ export interface OrchestrationBoardSnapshot {
 export interface CreateSessionRequest {
   workspacePath: string;
   providerId: ProviderId;
+  expectedProviderRevision: string;
   approvalPolicy?: ApprovalPolicy;
   orchestration?: SessionOrchestrationMetadata | null;
 }
@@ -422,13 +631,27 @@ export interface RecommendPromptResponse {
 }
 
 export interface UpdateSessionRequest {
+  expectedProviderRevision: string;
   approvalPolicy?: ApprovalPolicy;
   providerId?: ProviderId;
 }
 
 export interface StartRunRequest {
   prompt: string;
+  expectedProviderRevision: string;
   mode?: RunMode;
+}
+
+export interface SteerRunRequest {
+  prompt: string;
+  expectedRunId: string;
+  expectedProviderRevision: string;
+}
+
+export interface SteerRunResponse {
+  steering: RunSteeringInput;
+  delivery: 'native' | 'queued';
+  runSnapshot: RunSnapshot;
 }
 
 export interface UndoRunResponse {
@@ -446,6 +669,7 @@ export interface CompareRunRequest {
   prompt: string;
   workspacePath: string;
   providers: ProviderId[];
+  expectedProviderRevision: string;
   approvalPolicy?: ApprovalPolicy;
 }
 
@@ -456,6 +680,7 @@ export interface CompareRunResponse {
 export interface RoutePromptRequest {
   prompt: string;
   workspacePath: string;
+  expectedProviderRevision: string;
   sessionId?: string | null;
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
@@ -470,6 +695,7 @@ export interface RoutePromptResponse {
 
 export interface FollowUpRunRequest {
   kind: Extract<OrchestrationKind, 'review' | 'verify'>;
+  expectedProviderRevision: string;
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
 }
@@ -483,6 +709,7 @@ export interface FollowUpRunResponse {
 export interface DelegateRunRequest {
   prompt: string;
   role: Exclude<OrchestrationRole, 'main'>;
+  expectedProviderRevision: string;
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
   requiredTools?: RoutingToolRequirement[];
@@ -496,6 +723,7 @@ export interface DelegateRunResponse {
 
 export interface HandoffRunRequest {
   prompt: string;
+  expectedProviderRevision: string;
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
   requiredTools?: RoutingToolRequirement[];
@@ -516,12 +744,29 @@ export interface RecoverSessionResponse {
   session: WorkbenchSession;
 }
 
+export interface RecoverSessionRequest {
+  expectedProviderRevision: string;
+}
+
 export interface DeleteSessionResponse {
   deletedSessionId: string;
 }
 
 export interface JsonError {
   error: string;
+  code?: string;
+  currentProviderRevision?: string;
+  requiredScope?: DaemonClientScope;
+  supportedProtocolVersions?: number[];
+}
+
+export function isDaemonClientScope(
+  value: unknown,
+): value is DaemonClientScope {
+  return (
+    typeof value === 'string' &&
+    DAEMON_CLIENT_SCOPES.includes(value as DaemonClientScope)
+  );
 }
 
 const ROUTING_TOOL_REQUIREMENTS: RoutingToolRequirement[] = [

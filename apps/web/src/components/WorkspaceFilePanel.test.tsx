@@ -547,6 +547,7 @@ describe('WorkspaceFilePanel - File Rename Unit Tests', () => {
 
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { submitWorkspacePrompt } from '../test/workspace-prompt';
 import { WorkspaceFilePanel } from './WorkspaceFilePanel';
 
 describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
@@ -566,7 +567,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
   describe('Folder creation prompts for name (Requirement 2.1)', () => {
     it('should show prompt when New folder button is clicked', async () => {
       const user = userEvent.setup();
-      const promptSpy = vi.mocked(window.prompt);
       
       // Mock initial load
       (global.fetch as any).mockResolvedValueOnce({
@@ -584,13 +584,10 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.queryByText(/Loading entries/i)).not.toBeInTheDocument();
       });
 
-      // User cancels prompt
-      promptSpy.mockReturnValueOnce(null);
-
       await user.click(screen.getByRole('button', { name: /New folder/i }));
 
-      // Verify prompt was called with correct message
-      expect(promptSpy).toHaveBeenCalledWith('Folder name');
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Create New Folder' })).toBeInTheDocument();
     });
 
     it('should not create folder when user cancels prompt', async () => {
@@ -653,7 +650,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
 
     it('should create folder when user provides valid name', async () => {
       const user = userEvent.setup();
-      const promptSpy = vi.mocked(window.prompt);
       
       // Mock initial load
       (global.fetch as any).mockResolvedValueOnce({
@@ -671,9 +667,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.queryByText(/Loading entries/i)).not.toBeInTheDocument();
       });
 
-      // User provides valid name
-      promptSpy.mockReturnValueOnce('my-new-folder');
-      
       (global.fetch as any)
         .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
         .mockResolvedValueOnce({
@@ -688,6 +681,7 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         });
 
       await user.click(screen.getByRole('button', { name: /New folder/i }));
+      await submitWorkspacePrompt('my-new-folder');
 
       // Verify folder was created
       await waitFor(() => {
@@ -953,7 +947,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
   describe('Folder rename pre-fills current name (Requirement 5.1, 5.2)', () => {
     it('should show prompt with current folder name when Rename is clicked', async () => {
       const user = userEvent.setup();
-      const promptSpy = vi.mocked(window.prompt);
       
       // Mock initial load with folder
       (global.fetch as any).mockResolvedValueOnce({
@@ -973,18 +966,14 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('old-folder')).toBeInTheDocument();
       });
 
-      // User cancels rename
-      promptSpy.mockReturnValueOnce(null);
-
       await user.click(screen.getByRole('button', { name: /Rename/i }));
 
-      // Verify prompt was called with current name pre-filled
-      expect(promptSpy).toHaveBeenCalledWith('Rename entry', 'old-folder');
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByRole('textbox')).toHaveValue('old-folder');
     });
 
     it('should rename folder when user provides new name', async () => {
       const user = userEvent.setup();
-      const promptSpy = vi.mocked(window.prompt);
       
       // Mock initial load with folder
       (global.fetch as any).mockResolvedValueOnce({
@@ -1004,9 +993,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('old-folder')).toBeInTheDocument();
       });
 
-      // User provides new name
-      promptSpy.mockReturnValueOnce('new-folder');
-      
       (global.fetch as any)
         .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
         .mockResolvedValueOnce({
@@ -1021,6 +1007,7 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         });
 
       await user.click(screen.getByRole('button', { name: /Rename/i }));
+      await submitWorkspacePrompt('new-folder');
 
       // Verify folder was renamed
       await waitFor(() => {
@@ -1180,4 +1167,4 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
       });
     });
   });
-}); 
+});

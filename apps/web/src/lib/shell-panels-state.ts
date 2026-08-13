@@ -1,4 +1,5 @@
 import type {
+  DaemonProtocolInfo,
   ApprovalRecord,
   ArchiveSessionSummary,
   CheckpointRecord,
@@ -6,7 +7,9 @@ import type {
   OrchestrationFlowSessionSummary,
   OrchestrationFlowSummary,
   ProviderCapabilities,
+  ProviderHealth,
   ProviderId,
+  ProviderRegistrySnapshot,
   RoutingToolRequirement,
   SessionOrchestrationMetadata,
   SessionRecoveryMetadata,
@@ -15,7 +18,7 @@ import type {
   ToolPlaneSnapshot,
   WorkbenchRun,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 type SessionProjection = Pick<
   WorkbenchSession,
@@ -144,6 +147,9 @@ export type ShellPanelsState = {
   selectedSessionId: string | null;
   selectedProviderId: ProviderId | null;
   selectedSessionCapabilities: ProviderCapabilities | null;
+  providerRegistry: ProviderRegistrySnapshot | null;
+  daemonProtocol: DaemonProtocolInfo | null;
+  providerHealth: ProviderHealth[];
   recentSessions: SessionSummaryView[];
   recentSessionsMessage: string | null;
   archiveSessions: ArchiveSessionSummaryView[];
@@ -159,6 +165,9 @@ export const emptyShellPanelsState: ShellPanelsState = {
   selectedSessionId: null,
   selectedProviderId: null,
   selectedSessionCapabilities: null,
+  providerRegistry: null,
+  daemonProtocol: null,
+  providerHealth: [],
   recentSessions: [],
   recentSessionsMessage: null,
   archiveSessions: [],

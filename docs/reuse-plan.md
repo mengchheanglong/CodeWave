@@ -1,13 +1,13 @@
-# Qwemini Reuse Plan
+# CodeWave Reuse Plan
 
 Date: 2026-04-02
 Scope: first bounded planning slice for a Codex-like local coding-agent environment
 
 ## Decision Summary
 
-- Keep Qwemini as a new product-owned repo. Do not fork any donor repo wholesale.
-- Use Qwen Code as the first runtime donor, but only by selectively vendoring provider-runtime pieces behind a Qwemini adapter.
-- Use Gemini CLI as the second runtime donor behind the same adapter seam. Do not rely on stock `gemini --output-format stream-json` as the long-term integration because it does not give Qwemini daemon-owned approvals.
+- Keep CodeWave as a new product-owned repo. Do not fork any donor repo wholesale.
+- Use Qwen Code as the first runtime donor, but only by selectively vendoring provider-runtime pieces behind a CodeWave adapter.
+- Use Gemini CLI as the second runtime donor behind the same adapter seam. Do not rely on stock `gemini --output-format stream-json` as the long-term integration because it does not give CodeWave daemon-owned approvals.
 - Use Codex as the product-shape and daemon-client contract reference, not as the implementation base.
 - Defer orchestration-heavy donors like Switchboard and oh-my-gemini to later reference work. They are not the v1 base.
 
@@ -46,13 +46,13 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
   - a provider runtime that already expects host interaction for permissions in stream-json mode
 - Recommendation: `vendor selectively`
 - Why:
-  - Qwen is the first live engine Qwemini wants
+  - Qwen is the first live engine CodeWave wants
   - its `nonInteractive` session and control plane are the closest donor for a daemon-owned runtime bridge
-  - selective vendoring is lower-risk than a whole-repo fork while Qwemini still has no source tree
+  - selective vendoring is lower-risk than a whole-repo fork while CodeWave still has no source tree
 - Risks:
   - upstream moves quickly
   - internal assumptions still lean terminal-first
-  - the control plane is Qwen-shaped, not provider-agnostic, so Qwemini must translate rather than adopt it as a shared product protocol
+  - the control plane is Qwen-shaped, not provider-agnostic, so CodeWave must translate rather than adopt it as a shared product protocol
 
 ### 2. Gemini CLI
 
@@ -73,13 +73,13 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
   - built-in tool, MCP, checkpointing, confirmation-bus, and ACP surfaces
 - Recommendation: `reference now, vendor selectively when the Gemini adapter starts`
 - Why:
-  - Gemini is the second production adapter, but Qwemini should not build two deep integrations before the first daemon seam is proven
+  - Gemini is the second production adapter, but CodeWave should not build two deep integrations before the first daemon seam is proven
   - the existing `stream-json` output is good for event-shape study and smoke harnesses
 - Why not `wrap` as the main production path:
-  - the stock stream-json surface exposes events, but not the host-owned approval control loop Qwemini needs
-  - approvals still live inside Gemini's scheduler and confirmation bus unless Qwemini integrates deeper
+  - the stock stream-json surface exposes events, but not the host-owned approval control loop CodeWave needs
+  - approvals still live inside Gemini's scheduler and confirmation bus unless CodeWave integrates deeper
 - Risks:
-  - simple subprocess wrapping would make Qwemini feel like a provider-owned wrapper
+  - simple subprocess wrapping would make CodeWave feel like a provider-owned wrapper
   - selective vendoring later will require careful trimming because the repo is broad and fast-moving
 
 ### 3. Codex
@@ -99,11 +99,11 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
 - Recommendation: `reference only`
 - Why:
   - the product shape is the right reference
-  - the implementation stack is Rust-heavy and much broader than Qwemini's first slice needs
+  - the implementation stack is Rust-heavy and much broader than CodeWave's first slice needs
   - borrowing the shape is useful; inheriting the whole codebase is not
 - Risks:
-  - copying the full protocol would overbuild Qwemini v1
-  - Codex's protocol surface is larger than Qwemini needs for a first executable slice
+  - copying the full protocol would overbuild CodeWave v1
+  - Codex's protocol surface is larger than CodeWave needs for a first executable slice
 
 ### 4. Switchboard
 
@@ -116,7 +116,7 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
 - Risks:
   - VS Code-first
   - orchestration by terminal automation, not by a product-owned daemon
-  - not suitable as the Qwemini runtime base
+  - not suitable as the CodeWave runtime base
 
 ### 5. oh-my-gemini
 
@@ -150,10 +150,10 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
 - What it provides:
   - a strong frontend reference for local agent-workspace UX, especially multi-pane layout, command palette flows, toast notifications, markdown rendering, and chat-block presentation
   - concrete React-side solutions for message virtualization, worker-backed markdown parsing, and keyboard-driven workspace navigation
-  - design-token and panel-resize patterns that feel closer to an agent workspace than the current minimal Qwemini shell
+  - design-token and panel-resize patterns that feel closer to an agent workspace than the current minimal CodeWave shell
 - Recommendation: `reference now, selectively adapt later`
 - Why:
-  - Panes is a Tauri + React desktop product, while current Qwemini shell is a daemon-served web app with plain JS modules
+  - Panes is a Tauri + React desktop product, while current CodeWave shell is a daemon-served web app with plain JS modules
   - directly vendoring Panes frontend code would import the wrong product shape, state model, and UI stack
   - selective extraction of interaction patterns is still high value, especially for a future command palette, toast system, richer markdown transcript rendering, and resizable pane UX
 - What to adapt first:
@@ -163,10 +163,10 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
   - `src/globals.css` and `src/components/layout/ThreeColumnLayout.tsx` as visual/layout reference only, not as direct imports
 - Why not `vendor`:
   - the donor depends on React 19, Zustand, Tailwind, Tauri IPC, and a desktop-first app shell
-  - `ChatPanel.tsx`, `threadStore.ts`, and most workspace/git/terminal components are tightly coupled to Panes runtime models rather than Qwemini's daemon APIs
+  - `ChatPanel.tsx`, `threadStore.ts`, and most workspace/git/terminal components are tightly coupled to Panes runtime models rather than CodeWave's daemon APIs
 - Risks:
-  - importing Panes UI wholesale would pull Qwemini toward a new desktop/React rewrite instead of finishing the current daemon-owned shell
-  - Panes is thread-centric and Codex/Claude-oriented, which does not map cleanly onto Qwemini's current session/run inspector model
+  - importing Panes UI wholesale would pull CodeWave toward a new desktop/React rewrite instead of finishing the current daemon-owned shell
+  - Panes is thread-centric and Codex/Claude-oriented, which does not map cleanly onto CodeWave's current session/run inspector model
   - direct reuse of styling or components without stack alignment would create a mixed frontend architecture that is harder to maintain than the current shell
 
 ## What Should Be Reused vs Built
@@ -206,13 +206,13 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
 
 ### Reimplement Minimally
 
-- Qwemini daemon
-- Qwemini normalized runtime protocol
+- CodeWave daemon
+- CodeWave normalized runtime protocol
 - SQLite run/session/event ledger
 - product-owned web shell
 - provider adapter interface and event translators
 - approval store, artifact store, and checkpoint metadata store
-- shell UX primitives that should stay Qwemini-owned even when informed by Panes:
+- shell UX primitives that should stay CodeWave-owned even when informed by Panes:
   - session/run inspector composition
   - provider-health and tool-plane panels
   - follow-up/delegate/handoff orchestration surfaces
@@ -222,19 +222,19 @@ Scope: first bounded planning slice for a Codex-like local coding-agent environm
 - Use Panes as a frontend pattern donor, not as a frontend base.
 - Keep the current daemon-served shell architecture unchanged.
 - Borrow ideas and small algorithms before borrowing components.
-- Highest-value Panes-derived candidates for Qwemini:
+- Highest-value Panes-derived candidates for CodeWave:
   - command palette query-mode parsing and scoped search behavior
   - toast queue behavior instead of a single global notice slot
   - worker-backed markdown transcript rendering and caching
   - resizable panel persistence and layout token patterns
-- Do not import Panes chat/workspace/git/terminal component trees directly unless Qwemini intentionally migrates to a React-based shell later.
+- Do not import Panes chat/workspace/git/terminal component trees directly unless CodeWave intentionally migrates to a React-based shell later.
 
 ## Recommended Starting Base
 
-- Product base: this repo stays a new Qwemini codebase with its own daemon, shell, state, and protocol.
+- Product base: this repo stays a new CodeWave codebase with its own daemon, shell, state, and protocol.
 - First runtime base: selective Qwen Code vendoring behind `packages/providers/qwen`.
 - Second runtime base: selective Gemini vendoring behind `packages/providers/gemini` after the first adapter seam is proven.
-- Product-shape reference: Codex app-server thread/turn/item and approval lifecycle, adapted into Qwemini's own smaller v1 protocol.
+- Product-shape reference: Codex app-server thread/turn/item and approval lifecycle, adapted into CodeWave's own smaller v1 protocol.
 
 This is the smallest path that still preserves the non-goals:
 
@@ -245,11 +245,11 @@ This is the smallest path that still preserves the non-goals:
 
 ## Minimal Codex-like Behavior Targeted First
 
-Qwemini v1 should first prove this behavior:
+CodeWave v1 should first prove this behavior:
 
 1. A product-owned local web shell talks only to a local daemon.
 2. The daemon creates sessions and runs, persists them in SQLite, and streams normalized events.
-3. A live Qwen-backed run executes through a Qwemini adapter, not by handing the UI to the Qwen CLI.
+3. A live Qwen-backed run executes through a CodeWave adapter, not by handing the UI to the Qwen CLI.
 4. Tool activity is visible as normalized events, with daemon-owned approval records.
 5. Transcript output, tool calls, approvals, and artifacts are stored and reloadable after restart.
 6. The adapter seam is explicitly provider-keyed so Gemini can be added next without changing the shell contract.

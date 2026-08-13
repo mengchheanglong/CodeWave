@@ -88,11 +88,24 @@ Use these boundaries unless the repo structure is intentionally changed:
 
 ## Current implementation posture
 
-Until the repo says otherwise, treat Qwemini as:
+Until the repo says otherwise, treat CodeWave as:
 
 - local-first
 - daemon-centered
 - provider-flexible
-- Qwen-first and Gemini-second for initial adapters
+- Freebuff-first at the product-policy level, with its cloud/ad-supported boundary labeled clearly
+- OpenCode/local-model paths as the enabled automation-ready fallback
+- Qwen and Gemini retained as explicit paid/BYOK opt-ins, never silently enabled by routing
 - MCP/tool-pluggable
 - orchestration-capable, but with phased rollout
+
+For daemon lifecycle work, preserve these runtime invariants:
+
+- reserve durable idempotency receipts before mutating state or launching providers
+- require a negotiated protocol connection and exact route scope for every protected daemon API; keep only health and handshake public
+- require the exact reviewed provider-policy revision for provider-dependent mutations and persist the accepted revision on session/run lineage
+- allow at most one non-terminal run per session
+- fence run updates with the expected run ID and queue steering instead of starting implicit concurrent work
+- persist steering before provider delivery; require an explicit provider capability and matching acknowledgement before applying it to the active run, otherwise retain the restart-safe queued fallback
+- keep session transcripts append-only and parent-linked; persist prompts/messages atomically with their owning run/event and hydrate them through bounded windows
+- route structured provider stdout/stderr through `packages/providers/transport`; keep provider record schemas in adapters, but keep delivery ordering, line ceilings, cancellation, traces, and exactly-once terminal ownership shared; ACP session/tool/permission normalization also stays shared and serializes notifications before emitting events

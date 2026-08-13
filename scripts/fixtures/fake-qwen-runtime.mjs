@@ -1,19 +1,28 @@
 import readline from 'node:readline';
 
 const args = process.argv.slice(2);
-const runtimeTools = (process.env.QWEMINI_FAKE_QWEN_RUNTIME_TOOLS ?? 'run_shell_command,read_file')
+const runtimeTools = (process.env.CODEWAVE_FAKE_QWEN_RUNTIME_TOOLS ?? 'run_shell_command,read_file')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const shouldHold =
+  process.env.CODEWAVE_FAKE_QWEN_HOLD === '1' ||
+  process.env.CODEWAVE_FAKE_QWEN_HOLD === 'true';
+const shouldWriteDiagnostic =
+  process.env.CODEWAVE_FAKE_QWEN_STDOUT_DIAGNOSTIC === '1' ||
+  process.env.CODEWAVE_FAKE_QWEN_STDOUT_DIAGNOSTIC === 'true';
+const shouldDuplicateResult =
+  process.env.CODEWAVE_FAKE_QWEN_DUPLICATE_RESULT === '1' ||
+  process.env.CODEWAVE_FAKE_QWEN_DUPLICATE_RESULT === 'true';
 const shouldFailMcpList =
-  process.env.QWEMINI_FAKE_QWEN_MCP_LIST_FAIL === '1' ||
-  process.env.QWEMINI_FAKE_QWEN_MCP_LIST_FAIL === 'true';
+  process.env.CODEWAVE_FAKE_QWEN_MCP_LIST_FAIL === '1' ||
+  process.env.CODEWAVE_FAKE_QWEN_MCP_LIST_FAIL === 'true';
 const shouldTimeoutMcpList =
-  process.env.QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT === '1' ||
-  process.env.QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT === 'true';
+  process.env.CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT === '1' ||
+  process.env.CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT === 'true';
 const mcpListTimeoutMs = Math.max(
   1000,
-  Number(process.env.QWEMINI_FAKE_QWEN_MCP_LIST_TIMEOUT_MS ?? 5000) || 5000,
+  Number(process.env.CODEWAVE_FAKE_QWEN_MCP_LIST_TIMEOUT_MS ?? 5000) || 5000,
 );
 
 function writeLine(payload) {
@@ -94,6 +103,9 @@ function startStreamRuntime() {
 
         if (!initialized) {
           initialized = true;
+          if (shouldWriteDiagnostic) {
+            process.stdout.write('deterministic qwen plain-text diagnostic\n');
+          }
           writeLine({
             type: 'system',
             subtype: 'runtime_tools',
@@ -124,6 +136,9 @@ function startStreamRuntime() {
     }
 
     if (parsed?.type === 'user' && !completed) {
+      if (shouldHold) {
+        return;
+      }
       writeLine({
         type: 'assistant',
         session_id: sessionId,
@@ -151,6 +166,21 @@ function startStreamRuntime() {
         },
         permission_denials: [],
       });
+
+      if (shouldDuplicateResult) {
+        writeLine({
+          type: 'result',
+          subtype: 'success',
+          session_id: sessionId,
+          is_error: false,
+          result: 'duplicate-qwen-result-must-be-suppressed',
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+          },
+          permission_denials: [],
+        });
+      }
 
       completed = true;
       setTimeout(() => process.exit(0), 25);

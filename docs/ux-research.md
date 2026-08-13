@@ -1,7 +1,7 @@
 # Agent Harness UX Research — Digest
 
 **Date:** 2026-08-11
-**Purpose:** Source material for the Qwemini shell redesign (`docs/shell-design-v2.md`).
+**Purpose:** Source material for the CodeWave shell redesign (`docs/shell-design-v2.md`).
 **Method:** Live web research (docs, engineering blogs, community threads) plus direct observation of the apps running on this machine.
 
 ---
@@ -72,12 +72,12 @@ What its UI does well:
 What its UI does well — it reframes the category:
 
 - **The workspace, not the transcript.** Chat + agents, deep research, a writing-first documents editor, email triage, notes/tasks/calendar, and model comparison all live in *one* local workspace with shared memory/skills/MCP.
-- **"Compare": blind side-by-side model testing** — run the same prompt on two models and synthesize. (Qwemini has the architecture for exactly this: multi-provider adapters.)
+- **"Compare": blind side-by-side model testing** — run the same prompt on two models and synthesize. (CodeWave has the architecture for exactly this: multi-provider adapters.)
 - **"Cookbook": hardware-aware model recommendations** — it guides you to the right local model for your machine, lowering the setup barrier.
 - **Mobile/PWA-first thinking** (a chunk of it was built from a phone) — sessions and reminders usable anywhere.
 - **Data ownership as the pitch** — everything local, privacy-first, self-hosted.
 
-Relevance: Qwemini is already a multi-engine workspace; the research phase (deep research) and model-comparison features are natural, differentiated surfaces for a multi-provider shell.
+Relevance: CodeWave is already a multi-engine workspace; the research phase (deep research) and model-comparison features are natural, differentiated surfaces for a multi-provider shell.
 
 ## 6. Aider
 
@@ -94,9 +94,9 @@ What its UI does well:
 
 What its UI does well:
 
-- **Multimodal input at the prompt** — images, PDFs, hand-drawn sketches can be dropped into the conversation (relevant: Qwemini's Gemini adapter is ACP-based and could carry image parts).
+- **Multimodal input at the prompt** — images, PDFs, hand-drawn sketches can be dropped into the conversation (relevant: CodeWave's Gemini adapter is ACP-based and could carry image parts).
 - **Interactive commands in the loop** — the agent can run interactive terminal programs (vim, top) inside the session.
-- **Third-party web shells** converged on the same shape Qwemini already has: interactive chat + integrated terminal + file explorer with live editing + git integration + session management (e.g. cruzyjapan/Gemini-CLI-UI).
+- **Third-party web shells** converged on the same shape CodeWave already has: interactive chat + integrated terminal + file explorer with live editing + git integration + session management (e.g. cruzyjapan/Gemini-CLI-UI).
 
 ## 8. Cross-system survey: "Dive into Claude Code" (VILA-Lab)
 
@@ -106,7 +106,7 @@ A source-level analysis of Claude Code plus a general agent-design survey. Key f
 - **13 design principles** (the ones most relevant to UX):
   - *Deny-first with human escalation* — unrecognized actions are blocked and escalated, not run.
   - *Graduated trust spectrum* — a fixed permission level vs. a spectrum users traverse over time.
-  - *Context as a scarce resource* — single-pass truncation vs. a graduated pipeline (Qwemini should treat context budget as a first-class meter).
+  - *Context as a scarce resource* — single-pass truncation vs. a graduated pipeline (CodeWave should treat context budget as a first-class meter).
   - *Append-only durable state* — auditability over query power.
   - *Reversibility-weighted risk* — lighter oversight for reversible actions.
   - *Values over rules* — contextual judgment with deterministic guardrails.
@@ -116,9 +116,9 @@ A source-level analysis of Claude Code plus a general agent-design survey. Key f
 
 ---
 
-## 9. Synthesis: patterns → Qwemini
+## 9. Synthesis: patterns → CodeWave
 
-| Pattern | Where it lives | Qwemini application |
+| Pattern | Where it lives | CodeWave application |
 |---|---|---|
 | Prompt-first, session-lazy | OpenCode, Claude | Composer enabled always; session/workspace resolved at send |
 | Mode as input anchor (graduated trust) | Claude, Codex | Mode menu at composer: Plan → Ask → Accept edits → Auto |
@@ -128,7 +128,7 @@ A source-level analysis of Claude Code plus a general agent-design survey. Key f
 | Run = grouped timeline of steps | Codex, Freebuff | Transcript groups message + tool calls + results into collapsible step cards |
 | Tool call as inspectable card | Freebuff | Expandable tool card: input, output, status, duration, diff view |
 | Context as a visible meter | Claude, Aider | Context meter + compact action + visible memory/AGENTS files |
-| Keyboard-first: leader key + palette + slash | OpenCode, Qwemini(partial) | Full keymap, Ctrl+K palette, `/` commands |
+| Keyboard-first: leader key + palette + slash | OpenCode, CodeWave(partial) | Full keymap, Ctrl+K palette, `/` commands |
 | Undo/redo via git | OpenCode, Aider | Git-backed undo of message + file changes |
 | Attention only when needed | OpenCode | Notifications/sound for questions, permissions, completion |
 | Session list needs scoping | Codex community | Folders, filters, archive; collapse long lists |
@@ -149,4 +149,4 @@ A source-level analysis of Claude Code plus a general agent-design survey. Key f
 - odysseus-dev/odysseus — README + HN/Reddit threads
 - Gemini CLI — Google blog (GUI rebuild, interactivity), cruzyjapan/Gemini-CLI-UI
 - Aider docs — repo map
-- Direct observation: Freebuff (this conversation's host app), Qwemini v1 shell running locally
+- Direct observation: Freebuff (this conversation's host app), CodeWave v1 shell running locally

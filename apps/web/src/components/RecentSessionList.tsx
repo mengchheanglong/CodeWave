@@ -7,6 +7,7 @@ type RecentSessionListProps = {
   sessions: ShellPanelsState['recentSessions'];
   selectedSessionId: string | null;
   emptyMessage: string;
+  emptyTitle?: string;
   onSelectSession: (sessionId: string) => void;
   onDeleteWorkspaceGroup: (workspacePath: string) => void;
   onDeleteSession: (sessionId: string) => void;
@@ -56,6 +57,7 @@ export function RecentSessionList({
   sessions,
   selectedSessionId,
   emptyMessage,
+  emptyTitle,
   onSelectSession,
   onDeleteWorkspaceGroup,
   onDeleteSession,
@@ -102,7 +104,7 @@ export function RecentSessionList({
   }, [openMenuSessionId, openMenuWorkspacePath]);
 
   if (sessions.length === 0) {
-    return <EmptyState title="No sessions yet" message={emptyMessage} />;
+    return <EmptyState title={emptyTitle ?? 'No sessions yet'} message={emptyMessage} />;
   }
 
   const groupedSessions = sessions.reduce<
@@ -276,11 +278,10 @@ export function RecentSessionList({
                         type="button"
                         className="session-item-menu-action"
                         onClick={() => {
-                          setOpenMenuSessionId(null);
                           onDeleteSession(session.id);
                         }}
                       >
-                        Remove
+                        Delete thread
                       </button>
                     </div>
                   </div>

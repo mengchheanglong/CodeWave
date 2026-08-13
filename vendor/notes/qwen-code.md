@@ -10,9 +10,9 @@ Date: 2026-04-02
 
 ## Purpose
 
-Pin the smallest realistic upstream donor closure for moving Qwemini's Qwen runtime from an external CLI dependency toward bounded in-repo reuse.
+Pin the smallest realistic upstream donor closure for moving CodeWave's Qwen runtime from an external CLI dependency toward bounded in-repo reuse.
 
-This note is a scout only. Qwemini does not vendor these files yet.
+This note is a scout only. CodeWave does not vendor these files yet.
 
 ## Confirmed non-interactive donor entrypoints
 
@@ -54,23 +54,23 @@ Do not vendor:
 - terminal UI flows
 - unrelated package surfaces
 - the full monorepo build graph
-- provider-agnostic Qwemini state, protocol, or daemon code
+- provider-agnostic CodeWave state, protocol, or daemon code
 
 ## Risks
 
 - upstream path drift: the current donor layout already differs from earlier notes, so file-level pinning matters
 - dependency fan-out: the control path can pull more of Qwen core than expected if imports are followed loosely
 - build coupling: vendoring TypeScript sources without a bounded build plan will slow future upgrades
-- hidden provider ownership: if Qwemini imports too much runtime policy directly, daemon-owned approvals will become harder to preserve
+- hidden provider ownership: if CodeWave imports too much runtime policy directly, daemon-owned approvals will become harder to preserve
 
 ## Recommendation
 
 - keep the external `qwen` binary as the live runtime today
-- keep Qwemini's top-level daemon/session/state boundary unchanged
+- keep CodeWave's top-level daemon/session/state boundary unchanged
 - use this pinned file set as the starting scope for the next actual vendoring slice
-- prefer a thin Qwemini-owned adapter around a bounded vendored runtime instead of a repo-wide fork
+- prefer a thin CodeWave-owned adapter around a bounded vendored runtime instead of a repo-wide fork
 
-## Imported into Qwemini so far
+## Imported into CodeWave so far
 
 These files are now vendored in-repo and consumed by the Qwen provider:
 
@@ -83,5 +83,5 @@ These files are now vendored in-repo and consumed by the Qwen provider:
 Current adaptation boundary:
 
 - keep the upstream file paths so donor provenance stays concrete
-- trim or localize `qwen-code-core` type dependencies so the vendored slice compiles inside Qwemini
+- trim or localize `qwen-code-core` type dependencies so the vendored slice compiles inside CodeWave
 - use the vendored stream-json contract, parse helper, output writer, control context, and control dispatcher shape for provider I/O, while still running the external Qwen CLI binary today

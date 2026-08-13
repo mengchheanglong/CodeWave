@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Badge } from '@qwemini/ui-kit';
+import { Badge } from '@codewave/ui-kit';
 
 type TabItem<T extends string> = {
   id: T;

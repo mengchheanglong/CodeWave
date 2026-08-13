@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fc from 'fast-check';
 import App from './App';
@@ -188,7 +188,7 @@ describe('App - Keyboard Navigation Properties', () => {
               const filterInput = container.querySelector('.rail-filter-input') as HTMLInputElement;
               expect(filterInput).toBeInTheDocument();
               await user.click(filterInput);
-              await user.keyboard(filterText);
+              fireEvent.change(filterInput, { target: { value: filterText } });
 
               // Verify text was entered
               await waitFor(() => {

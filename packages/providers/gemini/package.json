@@ -1,10 +1,11 @@
 {
-  "name": "@qwemini/provider-gemini",
+  "name": "@codewave/provider-gemini",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.18.0",
-    "@qwemini/protocol": "file:../../protocol"
+    "@codewave/protocol": "file:../../protocol",
+    "@codewave/provider-runtime": "file:../runtime",
+    "@codewave/provider-transport": "file:../transport"
   },
   "exports": {
     ".": "./src/index.ts"

@@ -9,10 +9,11 @@ import type {
   RuntimeInfo,
   ToolInvocationRecord,
   ToolPlaneSnapshot,
+  TranscriptWindow,
   WorkbenchEvent,
   WorkbenchRun,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import {
   emptyShellControlsState,
   type DelegateRole,
@@ -21,7 +22,7 @@ import type {
   ApprovalPolicy,
   ProviderId,
   RoutingToolRequirement,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import { emptyShellSummaryState } from './shell-summary-state.js';
 
 export type ShellState = {
@@ -36,6 +37,7 @@ export type ShellState = {
   selectedRun: WorkbenchRun | null;
   eventSource: EventSource | null;
   events: WorkbenchEvent[];
+  transcript: TranscriptWindow | null;
   contextChars: number;
   undoAvailable: boolean;
   undoDetail: string | null;
@@ -74,6 +76,7 @@ export type ShellState = {
   runStatusLabel: string;
   runStatusClassName: string;
   runStateNoteMessage: string;
+  runUpdateFeedbackMessage: string | null;
   orchestratorNoteMessage: string;
   runSelectionToken: number;
   sessionSelectionToken: number;
@@ -84,7 +87,7 @@ export type ShellState = {
 function getSavedProviderId(): ProviderId {
   if (typeof window !== 'undefined') {
     try {
-      const saved = localStorage.getItem('qwemini.preferred_provider');
+      const saved = localStorage.getItem('codewave.preferred_provider');
       if (saved === 'qwen' || saved === 'gemini' || saved === 'opencode' || saved === 'freebuff') {
         return saved;
       }
@@ -106,6 +109,7 @@ export function createInitialShellState(): ShellState {
     selectedRun: null,
     eventSource: null,
     events: [],
+    transcript: null,
     contextChars: 0,
     undoAvailable: false,
     undoDetail: null,
@@ -148,6 +152,7 @@ export function createInitialShellState(): ShellState {
     runStatusLabel: emptyShellSummaryState.runStatusLabel,
     runStatusClassName: emptyShellSummaryState.runStatusClassName,
     runStateNoteMessage: emptyShellSummaryState.runStateNote,
+    runUpdateFeedbackMessage: emptyShellSummaryState.runUpdateFeedback,
     orchestratorNoteMessage: emptyShellSummaryState.orchestratorNote,
     runSelectionToken: 0,
     sessionSelectionToken: 0,

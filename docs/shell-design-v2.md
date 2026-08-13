@@ -1,4 +1,4 @@
-# Qwemini Shell — UX/UI Design v2
+# CodeWave Shell — UX/UI Design v2
 
 **Date:** 2026-08-11
 **Status:** Design spec (not yet implemented)
@@ -12,7 +12,7 @@ The v1 shell is architecturally right — daemon-owned, provider-agnostic, three
 
 1. **Session creation is a barrier, not a flow.** The composer is disabled until a session exists, and sessions are created through a setup form tucked in the left rail with defaults silently applied (provider: Qwen, workspace: current repo). Every mainstream harness (Codex, Claude Code, OpenCode) is prompt-first: you just type.
 2. **No mode concept.** Trust is expressed as a bare policy dropdown (Manual / Allow / Deny) half-hidden in the run header, plus a "Ask first / Full access / Read only" pill in the composer. There is no Plan mode, no Accept-edits, no graduated spectrum — the single most important control in Claude Code and Codex is missing.
-3. **Approvals are disconnected from the transcript.** Pending decisions appear only in a right-rail list with no surrounding context. Codex renders approval cards inside the timeline; Freebuff renders every tool call as an inline card. Qwemini has a superb approval ledger — it renders it like a debug panel.
+3. **Approvals are disconnected from the transcript.** Pending decisions appear only in a right-rail list with no surrounding context. Codex renders approval cards inside the timeline; Freebuff renders every tool call as an inline card. CodeWave has a superb approval ledger — it renders it like a debug panel.
 4. **The transcript is a flat list of messages.** Tool activity, thinking, and final text all interleave without grouping. No collapse, no step structure, no "what happened and what did it produce" narrative.
 5. **Header button clutter.** `Recover · Files · Cancel · Review · Verify · Close` float in the run header with no labels or rationale for when they appear.
 6. **Provider is locked per session and looks clickable when it isn't.** The "Qwen" pill reads as a dropdown but is a static label; switching providers means creating a new session.
@@ -138,7 +138,7 @@ This maps 1:1 onto existing data: `run.started/output.delta/message.created/tool
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ [@ file mention chips …]                                            │
-│  Ask Qwemini to work on this workspace…                             │
+│  Ask CodeWave to work on this workspace…                             │
 │ ┌──────────┐ ┌──────────┐ ┌────────────┐              ┌───────────┐ │
 │ │ Mode: Ask ▾│ │ OpenCode ▾│ │ ctx 34% ▾ │  Ctrl+Enter │ ▶ Send    │ │
 │ └──────────┘ └──────────┘ └────────────┘              └───────────┘ │
@@ -247,7 +247,7 @@ No new governance model — the daemon's per-session policy (`manual`/`allow`/`d
 
 ## 6. Onboarding / empty states (Phase 1)
 
-- **First run:** centered card — "Welcome to Qwemini" with three steps: (1) open a folder, (2) pick a provider — Qwen, Gemini, or **OpenCode** with its free models, (3) type anything. Provider health from `/api/runtime` shown as ready/unready with a one-line fix hint ("run `opencode auth login`").
+- **First run:** centered card — "Welcome to CodeWave" with three steps: (1) open a folder, (2) pick a provider — Qwen, Gemini, or **OpenCode** with its free models, (3) type anything. Provider health from `/api/runtime` shown as ready/unready with a one-line fix hint ("run `opencode auth login`").
 - **Empty timeline:** "Send a message to start. Ctrl+Enter to send."
 - **No approvals:** "Tool approvals will appear here — inline in the conversation, or queued here."
 - **Provider note text** (already in v1, `sessionProviderNote`) stays, rendered under the composer provider menu.
@@ -311,7 +311,7 @@ A codex/opencode-grade polish pass on top of the palette work:
 - Verified live: app mounts clean, no console errors, tool-step cards render the navy card system with working expand/collapse (both per-card and Expand-all), and a source scan finds zero emoji glyphs remaining in the UI components.
 
 ### Phase 1e — Left-rail polish (2026-08-12) — ✅ implemented
-- **Brand block**: replaced the plain `QWEMINI` text with the app mark + letterspaced wordmark; the pin/settings button was still wearing the old red skin (`rgba(70,22,24,0.32)` bg, `#f08a8a` icon) — now navy with an orange active state.
+- **Brand block**: replaced the plain `CODEWAVE` text with the app mark + letterspaced wordmark; the pin/settings button was still wearing the old red skin (`rgba(70,22,24,0.32)` bg, `#f08a8a` icon) — now navy with an orange active state.
 - **Add-folder button**: was a bare text row (transparent, `border: none`, radius 0, plus a legacy `#` pseudo-element glyph). Now a proper secondary button — navy surface, bordered, 10px radius — and both sidebar buttons got width:100% + left-aligned icons; the legacy `/` and `#` `::before` glyphs are gone.
 - **Section header**: now shows a count chip (`Threads · 2`) alongside the label; Setup/Back action unchanged.
 - **Filter row**: added an inline search icon inside the filter input (input now pads left 30px to clear it).
@@ -388,7 +388,7 @@ The shell had been built up as incremental patches: the v1 panes layout, three s
 
 ---
 
-## 11. Phase 1 + 6 landed: design system & ui-kit (`@qwemini/ui-kit`)
+## 11. Phase 1 + 6 landed: design system & ui-kit (`@codewave/ui-kit`)
 
 The research plan's foundation phases shipped: a real design-token system and a shared component library package.
 
@@ -404,7 +404,7 @@ The research plan's foundation phases shipped: a real design-token system and a 
 - `StatusStrip` → ui-kit `ContextMeter` (right side) + accent `Badge` for the mode chip; new `contextUsagePercent` prop
 - `InlineApprovalCards` → rewritten on ui-kit `ApprovalCard`
 - `StepTimeline` → tool steps render as `ToolCard` (diff-shaped output becomes inline `DiffCard`), thinking steps as `ThinkingBlock`; old custom card CSS retained as dead fallback
-- `main.tsx` imports `@qwemini/ui-kit/tokens.css` before `styles.css`; `apps/web/package.json` depends on the package
+- `main.tsx` imports `@codewave/ui-kit/tokens.css` before `styles.css`; `apps/web/package.json` depends on the package
 
 **Verified:** root `npm run check` ✅, web `tsc` clean for all changed sources (157 remaining errors are pre-existing test-file typing, unchanged), `npm run build:web` ✅ (CSS modules + tokens bundled), daemon serves the exact built bundle at `http://127.0.0.1:4120`. Live: status strip shows `… · Ask first (accent badge) · Idle · ctx N%`; OpenCode session renders a `read` ToolCard (`Success · 48ms`, expandable input/output); light theme flips tokens correctly; zero console errors. (`check:shell`'s one failure is pre-existing — the run-mode payload fields added in earlier uncommitted phase work, unrelated to this UI pass.)
 

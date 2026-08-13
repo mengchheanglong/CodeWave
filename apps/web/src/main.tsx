@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import '@qwemini/ui-kit/tokens.css';
+import '@codewave/ui-kit/tokens.css';
 import App from './App';
 import './styles.css';
 

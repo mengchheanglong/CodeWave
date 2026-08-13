@@ -10,11 +10,11 @@ Date: 2026-04-02
 
 ## Purpose
 
-Pin the concrete Gemini CLI seams that matter if Qwemini wants to move beyond a formatter-only subprocess bridge and eventually support daemon-owned approval mediation.
+Pin the concrete Gemini CLI seams that matter if CodeWave wants to move beyond a formatter-only subprocess bridge and eventually support daemon-owned approval mediation.
 
-This note is a scout only. Qwemini does not vendor these files yet.
+This note is a scout only. CodeWave does not vendor these files yet.
 
-## Confirmed formatter path used by the current Qwemini adapter
+## Confirmed formatter path used by the current CodeWave adapter
 
 - `packages/cli/src/nonInteractiveCli.ts`
 - `packages/core/src/output/types.ts`
@@ -42,9 +42,9 @@ These files show the stronger donor seam:
 
 - The plain non-interactive `stream-json` path is suitable for the current Gemini adapter and for normalized transcript/tool observation.
 - It is not the right donor seam for daemon-owned approvals.
-- If Qwemini wants Gemini approvals to become daemon-owned, the likely bounded donor path is the agent protocol / ACP / confirmation-bus stack, not one more formatter import.
-- The installed Gemini CLI on this machine already advertises `--acp`, so Qwemini can bridge the existing ACP server before considering any Gemini source vendoring.
-- The ACP bridge is now proven for simple prompt turns, daemon-owned approval requests, and Windows shell-command runs through a Qwemini-owned preload patch at `packages/providers/gemini/runtime/win32-node-pty-preload.cjs`.
+- If CodeWave wants Gemini approvals to become daemon-owned, the likely bounded donor path is the agent protocol / ACP / confirmation-bus stack, not one more formatter import.
+- The installed Gemini CLI on this machine already advertises `--acp`, so CodeWave can bridge the existing ACP server before considering any Gemini source vendoring.
+- The ACP bridge is now proven for simple prompt turns, daemon-owned approval requests, and Windows shell-command runs through a CodeWave-owned preload patch at `packages/providers/gemini/runtime/win32-node-pty-preload.cjs`.
 - That preload patch wraps Gemini CLI's bundled `@lydell/node-pty` Windows modules so `conpty_console_list_agent` falls back instead of crashing and late PTY resizes become no-ops instead of fatal errors.
 
 ## Recommended next cut if Gemini approvals become near-term priority
@@ -55,7 +55,7 @@ Inspect and pin the smallest closure around:
 - `packages/core/src/agent/`
 - `packages/cli/src/acp/`
 
-Do not start by vendoring more formatter files. That would increase protocol drift without moving approval control into the Qwemini daemon.
+Do not start by vendoring more formatter files. That would increase protocol drift without moving approval control into the CodeWave daemon.
 
 ## Risks
 
@@ -66,7 +66,7 @@ Do not start by vendoring more formatter files. That would increase protocol dri
 
 ## Recommendation
 
-- keep the current Gemini subprocess adapter shape, but prefer ACP as the default path in Qwemini
+- keep the current Gemini subprocess adapter shape, but prefer ACP as the default path in CodeWave
 - keep `stream-json` as an explicit fallback mode rather than the primary path
 - prefer an ACP client bridge over formatter vendoring when enabling Gemini daemon-owned approvals
 - only start Gemini source vendoring from the agent/confirmation seam if the ACP bridge proves insufficient

@@ -1,8 +1,13 @@
-import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
+import {
+  parseProviderCommand,
+  spawnProviderCommand,
+} from '@codewave/provider-runtime';
+import {
+  createRunEventPublisher,
+  launchJsonLineTransport,
+} from '@codewave/provider-transport';
 import type {
   ProviderAdapter,
   ProviderCapabilities,
@@ -12,13 +17,13 @@ import type {
   ProviderRunContext,
   ProviderRunHandle,
   ProviderToolCapability,
-  WorkbenchEvent,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 type FreebuffLaunchSpec = {
   command: string;
-  shell: boolean;
+  baseArgs: string[];
   description: string;
+  source: 'bridge' | 'external';
 };
 
 type FreebuffCliProviderOptions = {
@@ -32,10 +37,27 @@ type CommandResult = {
   errorMessage: string | null;
 };
 
+type FreebuffBridgeRecord = Record<string, unknown> & {
+  type?: unknown;
+};
+
+type PendingSteering = {
+  resolve: (result: {
+    disposition: 'accepted' | 'rejected' | 'unavailable';
+    detail?: string;
+  }) => void;
+  timeout: NodeJS.Timeout;
+};
+
+const FREEBUFF_BRIDGE_PROTOCOL_VERSION = 1;
+const FREEBUFF_STEERING_NEGOTIATION_MS = 300;
+const FREEBUFF_STEERING_ACK_MS = 2500;
+
 const FREEBUFF_CAPABILITIES: ProviderCapabilities = {
-  daemonApprovalMediation: true,
-  resumableSessions: true,
+  daemonApprovalMediation: false,
+  resumableSessions: false,
   checkpointEvents: false,
+  inFlightSteering: 'runtime-negotiated',
 };
 
 const FREEBUFF_TOOL_CATALOG: ProviderToolCapability[] = [
@@ -69,20 +91,10 @@ const FREEBUFF_TOOL_CATALOG: ProviderToolCapability[] = [
   },
 ];
 
-function createEvent(
-  context: ProviderRunContext,
-  type: WorkbenchEvent['type'],
-  payload: Record<string, unknown>,
-): WorkbenchEvent {
-  return {
-    id: randomUUID(),
-    sessionId: context.session.id,
-    runId: context.run.id,
-    timestamp: new Date().toISOString(),
-    source: 'freebuff',
-    type,
-    payload,
-  };
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 async function runCommand(
@@ -92,10 +104,8 @@ async function runCommand(
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(spec.command, args, {
+    const child = spawnProviderCommand(spec, args, {
       env: process.env,
-      shell: spec.shell,
-      windowsHide: true,
     });
 
     let output = '';
@@ -145,51 +155,36 @@ async function runCommand(
 
 export class FreebuffCliProvider implements ProviderAdapter {
   readonly id = 'freebuff';
-  readonly displayName = 'Freebuff / Codebuff CLI';
+  readonly displayName = 'Freebuff CLI';
 
   private readonly commandOverride: string | null;
   private readonly rootPath: string;
 
   constructor(options: FreebuffCliProviderOptions = {}) {
-    const commandOverride = options.command ?? process.env.QWEMINI_FREEBUFF_COMMAND;
+    const commandOverride = options.command ?? process.env.CODEWAVE_FREEBUFF_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
     this.rootPath = path.resolve(options.rootPath ?? process.cwd());
   }
 
   private resolveLaunchSpec(): FreebuffLaunchSpec {
     if (this.commandOverride) {
+      const parsed = parseProviderCommand(
+        this.commandOverride,
+        'Freebuff bridge command',
+      );
       return {
-        command: this.commandOverride,
-        shell: process.platform === 'win32',
-        description: `Custom freebuff command '${this.commandOverride}'`,
+        command: parsed.command,
+        baseArgs: parsed.baseArgs,
+        description: `Configured Freebuff automation bridge '${this.commandOverride}'`,
+        source: 'bridge',
       };
-    }
-
-    if (process.platform === 'win32') {
-      const candidates = ['freebuff.cmd', 'codebuff.cmd', 'freebuff', 'codebuff'];
-      for (const candidate of candidates) {
-        const lookup = spawnSync('where.exe', [candidate], {
-          encoding: 'utf8',
-          shell: false,
-          windowsHide: true,
-        });
-        if (lookup.status === 0 && lookup.stdout) {
-          const match = lookup.stdout.split(/\r?\n/)[0]?.trim();
-          if (match && existsSync(match)) {
-            return {
-              command: match,
-              shell: true,
-              description: `Resolved freebuff executable at '${match}'`,
-            };
-          }
-        }
-      }
     }
 
     return {
       command: 'freebuff',
-      shell: process.platform === 'win32',
-      description: 'System freebuff / codebuff CLI',
+      baseArgs: [],
+      description: 'System Freebuff CLI',
+      source: 'external',
     };
   }
 
@@ -200,23 +195,29 @@ export class FreebuffCliProvider implements ProviderAdapter {
   async healthCheck(): Promise<ProviderHealth> {
     const spec = this.resolveLaunchSpec();
     const version = await runCommand(spec, ['--version']);
-    if (version.code !== 0 && !version.output.includes('freebuff')) {
-      // Also try codebuff fallback
-      const codebuffVersion = await runCommand({ ...spec, command: 'codebuff' }, ['--version']);
-      if (codebuffVersion.code !== 0) {
-        return {
-          providerId: 'freebuff',
-          available: false,
-          detail: `Freebuff / Codebuff CLI is not installed or available in PATH (${spec.description}). Run 'npm install -g freebuff' or 'npm install -g codebuff' to install.`,
-          capabilities: FREEBUFF_CAPABILITIES,
-        };
-      }
+    if (version.code !== 0) {
+      return {
+        providerId: 'freebuff',
+        available: false,
+        detail: `Freebuff is not installed or could not be started (${spec.description}). Run 'npm install -g freebuff'.`,
+        capabilities: FREEBUFF_CAPABILITIES,
+      };
+    }
+
+    if (spec.source !== 'bridge') {
+      return {
+        providerId: 'freebuff',
+        available: false,
+        detail:
+          'Freebuff is installed, but its public CLI currently exposes an interactive TUI rather than a daemon-safe non-interactive protocol. Configure a Freebuff automation bridge command to use it inside CodeWave; raw interactive launches stay outside the run ledger.',
+        capabilities: FREEBUFF_CAPABILITIES,
+      };
     }
 
     return {
       providerId: 'freebuff',
       available: true,
-      detail: `Freebuff CLI ready (${spec.description}). Multi-agent free AI coding engine loaded.`,
+      detail: `Freebuff automation bridge ready (${spec.description}). Freebuff is cloud-backed and ad-supported.`,
       capabilities: FREEBUFF_CAPABILITIES,
     };
   }
@@ -242,21 +243,8 @@ export class FreebuffCliProvider implements ProviderAdapter {
 
   async startRun(context: ProviderRunContext): Promise<ProviderRunHandle> {
     const spec = this.resolveLaunchSpec();
-    let terminalEmitted = false;
-
-    const publish = async (
-      type: WorkbenchEvent['type'],
-      payload: Record<string, unknown>,
-    ): Promise<void> => {
-      if (
-        type === 'run.completed' ||
-        type === 'run.failed' ||
-        type === 'run.cancelled'
-      ) {
-        terminalEmitted = true;
-      }
-      await context.emitEvent(createEvent(context, type, payload));
-    };
+    const publisher = createRunEventPublisher(context, 'freebuff');
+    const publish = publisher.publish;
 
     const workspacePath = context.session.workspacePath.trim();
     if (!workspacePath || !existsSync(workspacePath)) {
@@ -268,71 +256,309 @@ export class FreebuffCliProvider implements ProviderAdapter {
     }
 
     const args = [
-      '--non-interactive',
+      '--cwd',
+      workspacePath,
+      '--prompt',
       context.run.prompt,
+      '--output-format',
+      'jsonl',
     ];
-
-    const child = spawn(spec.command, args, {
-      cwd: workspacePath,
-      env: process.env,
-      shell: spec.shell,
-      windowsHide: true,
-    });
+    if (context.session.providerSessionId) {
+      args.push('--resume', context.session.providerSessionId);
+    }
 
     let outputText = '';
-
-    child.on('error', async (error) => {
-      if (terminalEmitted) return;
-      await publish('run.failed', {
-        message: 'Failed to launch Freebuff CLI runtime',
-        detail: `${spec.description}: ${error.message}`,
-      });
+    let messageEmitted = false;
+    let inFlightSteeringNegotiated = false;
+    let resolveSteeringNegotiation: ((supported: boolean) => void) | null = null;
+    const steeringNegotiation = new Promise<boolean>((resolve) => {
+      resolveSteeringNegotiation = resolve;
     });
+    const pendingSteering = new Map<string, PendingSteering>();
 
-    if (child.stdout) {
-      readline.createInterface({ input: child.stdout }).on('line', (line) => {
-        outputText += `${line}\n`;
-        void publish('run.output.delta', {
-          stream: 'stdout',
-          text: line,
-        });
-      });
-    }
+    const resolvePendingSteering = (
+      steeringId: string,
+      result: Parameters<PendingSteering['resolve']>[0],
+    ): void => {
+      const pending = pendingSteering.get(steeringId);
+      if (!pending) return;
+      pendingSteering.delete(steeringId);
+      clearTimeout(pending.timeout);
+      pending.resolve(result);
+    };
 
-    if (child.stderr) {
-      readline.createInterface({ input: child.stderr }).on('line', (line) => {
-        void publish('run.output.delta', {
-          stream: 'stderr',
-          text: line,
-        });
-      });
-    }
-
-    child.on('close', async (code) => {
-      if (terminalEmitted) return;
-      if (code === 0) {
-        const finalContent = outputText.trim() || 'Freebuff run completed successfully.';
-        await publish('message.created', {
-          role: 'assistant',
-          content: finalContent,
-        });
-        await publish('run.completed', {
-          result: finalContent,
-        });
-      } else {
-        await publish('run.failed', {
-          message: `Freebuff CLI exited with code ${code ?? 'unknown'}`,
-          detail: spec.description,
-          exitCode: code,
+    const closePendingSteering = (detail: string): void => {
+      for (const steeringId of [...pendingSteering.keys()]) {
+        resolvePendingSteering(steeringId, {
+          disposition: 'unavailable',
+          detail,
         });
       }
+      resolveSteeringNegotiation?.(false);
+      resolveSteeringNegotiation = null;
+    };
+
+    const handleBridgeRecord = async (
+      record: FreebuffBridgeRecord,
+      rawLine: string,
+    ): Promise<void> => {
+      const type = typeof record.type === 'string' ? record.type : '';
+      if (type === 'capabilities') {
+        const supported =
+          record.protocolVersion === FREEBUFF_BRIDGE_PROTOCOL_VERSION &&
+          record.inFlightSteering === true;
+        if (supported) {
+          inFlightSteeringNegotiated = true;
+        }
+        resolveSteeringNegotiation?.(supported);
+        resolveSteeringNegotiation = null;
+        return;
+      }
+      if (type === 'steering' && typeof record.steeringId === 'string') {
+        const status = typeof record.status === 'string' ? record.status : '';
+        resolvePendingSteering(record.steeringId, {
+          disposition: status === 'accepted' ? 'accepted' : 'rejected',
+          detail:
+            typeof record.detail === 'string'
+              ? record.detail
+              : status === 'accepted'
+                ? 'Freebuff bridge accepted the update.'
+                : 'Freebuff bridge rejected the update.',
+        });
+        return;
+      }
+      if (type === 'session' && typeof record.sessionId === 'string') {
+        await context.updateSession({ providerSessionId: record.sessionId });
+        return;
+      }
+      if (type === 'output' && typeof record.text === 'string') {
+        outputText += `${record.text}\n`;
+        await publish('run.output.delta', {
+          stream: typeof record.stream === 'string' ? record.stream : 'assistant',
+          text: record.text,
+        });
+        return;
+      }
+      if (type === 'message' && typeof record.content === 'string') {
+        messageEmitted = true;
+        outputText += `${record.content}\n`;
+        await publish('message.created', {
+          role: typeof record.role === 'string' ? record.role : 'assistant',
+          content: record.content,
+        });
+        return;
+      }
+      if (type === 'tool' && typeof record.name === 'string') {
+        const status = typeof record.status === 'string' ? record.status : 'requested';
+        const eventType =
+          status === 'started'
+            ? 'tool.started'
+            : status === 'completed' || status === 'failed'
+              ? 'tool.completed'
+              : status === 'denied'
+                ? 'tool.denied'
+                : 'tool.requested';
+        await publish(eventType, {
+          toolUseId: typeof record.toolUseId === 'string' ? record.toolUseId : null,
+          toolName: record.name,
+          input: asRecord(record.input),
+          output: record.output,
+          detail: typeof record.detail === 'string' ? record.detail : null,
+          isError: status === 'failed' || record.isError === true,
+          metadata: asRecord(record.metadata),
+        });
+        return;
+      }
+      if (type === 'checkpoint') {
+        await publish('checkpoint.saved', {
+          detail:
+            typeof record.title === 'string' ? record.title : 'freebuff-checkpoint',
+          metadata: asRecord(record.metadata),
+        });
+        return;
+      }
+      if (type === 'result') {
+        const status = typeof record.status === 'string' ? record.status : 'completed';
+        if (status === 'failed') {
+          await publish('run.failed', {
+            message:
+              typeof record.message === 'string'
+                ? record.message
+                : 'Freebuff bridge reported a failed run.',
+            detail: record.detail,
+          });
+        } else if (status === 'cancelled') {
+          await publish('run.cancelled', {
+            reason:
+              typeof record.message === 'string'
+                ? record.message
+                : 'Freebuff bridge cancelled the run.',
+          });
+        } else {
+          await publish('run.completed', {
+            result: record.result ?? outputText.trim(),
+            usage: asRecord(record.usage),
+          });
+        }
+        return;
+      }
+
+      outputText += `${rawLine}\n`;
+      await publish('run.output.delta', {
+        stream: 'stdout',
+        text: rawLine,
+      });
+    };
+
+    let transport;
+    try {
+      transport = launchJsonLineTransport<FreebuffBridgeRecord>({
+        spawn: () =>
+          spawnProviderCommand(spec, args, {
+            cwd: workspacePath,
+            env: process.env,
+          }),
+        parseRecord: (line) => {
+          const value = JSON.parse(line) as unknown;
+          if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('Freebuff records must be JSON objects.');
+          }
+          return value as FreebuffBridgeRecord;
+        },
+        onRecord: handleBridgeRecord,
+        onStdoutText: (line) => handleBridgeRecord({}, line),
+        onStderrLine: async (line) => {
+          await publish('run.output.delta', {
+            stream: 'stderr',
+            text: line,
+          });
+        },
+        onLineTooLong: async () => {
+          await publish('run.output.delta', {
+            stream: 'stderr',
+            text: 'Freebuff bridge line exceeded the 1 MiB safety limit and was ignored.',
+          });
+        },
+        onHandlerError: async (error) => {
+          await publish('run.output.delta', {
+            stream: 'stderr',
+            text: `Freebuff bridge event error: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        },
+        onProcessError: async (error) => {
+          closePendingSteering(`Freebuff bridge process error: ${error.message}`);
+          await publish('run.failed', {
+            message: 'Failed to launch Freebuff CLI runtime',
+            detail: `${spec.description}: ${error.message}`,
+          });
+        },
+        onClose: async (code) => {
+          closePendingSteering('Freebuff bridge closed before acknowledging the update.');
+          if (publisher.terminalEventType || publisher.sealed) return;
+          if (code === 0) {
+            const finalContent =
+              outputText.trim() || 'Freebuff run completed successfully.';
+            if (!messageEmitted) {
+              await publish('message.created', {
+                role: 'assistant',
+                content: finalContent,
+              });
+            }
+            await publish('run.completed', { result: finalContent });
+            return;
+          }
+          await publish('run.failed', {
+            message: `Freebuff CLI exited with code ${code ?? 'unknown'}`,
+            detail: spec.description,
+            exitCode: code,
+          });
+        },
+      });
+    } catch (error) {
+      await publish('run.failed', {
+        message: 'Failed to launch Freebuff CLI runtime',
+        detail: `${spec.description}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+      return { cancel: async () => {} };
+    }
+
+    transport.child.stdin?.on('error', (error) => {
+      closePendingSteering(`Freebuff bridge input failed: ${error.message}`);
     });
 
     return {
-      cancel: async () => {
-        if (child.exitCode === null && !child.killed) {
-          child.kill();
+      steer: async (input) => {
+        if (!inFlightSteeringNegotiated) {
+          const negotiated = await Promise.race([
+            steeringNegotiation,
+            new Promise<false>((resolve) => {
+              const timeout = setTimeout(
+                () => resolve(false),
+                FREEBUFF_STEERING_NEGOTIATION_MS,
+              );
+              timeout.unref?.();
+            }),
+          ]);
+          if (!negotiated) {
+            return {
+              disposition: 'unavailable',
+              detail:
+                'The configured Freebuff bridge did not negotiate CodeWave in-flight steering protocol v1.',
+            };
+          }
         }
+
+        const stdin = transport.child.stdin;
+        if (!stdin || stdin.destroyed || !stdin.writable) {
+          return {
+            disposition: 'unavailable',
+            detail: 'The Freebuff bridge input channel is not writable.',
+          };
+        }
+
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            resolvePendingSteering(input.steeringId, {
+              disposition: 'unavailable',
+              detail: `Freebuff bridge did not acknowledge the update within ${FREEBUFF_STEERING_ACK_MS}ms.`,
+            });
+          }, FREEBUFF_STEERING_ACK_MS);
+          timeout.unref?.();
+          pendingSteering.set(input.steeringId, { resolve, timeout });
+
+          const command = `${JSON.stringify({
+            type: 'steer',
+            protocolVersion: FREEBUFF_BRIDGE_PROTOCOL_VERSION,
+            steeringId: input.steeringId,
+            prompt: input.prompt,
+            createdAt: input.createdAt,
+          })}\n`;
+          try {
+            stdin.write(command, (error) => {
+              if (!error) return;
+              resolvePendingSteering(input.steeringId, {
+                disposition: 'unavailable',
+                detail: `Freebuff bridge input failed: ${error.message}`,
+              });
+            });
+          } catch (error) {
+            resolvePendingSteering(input.steeringId, {
+              disposition: 'unavailable',
+              detail: `Freebuff bridge input failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+        });
+      },
+      cancel: async () => {
+        closePendingSteering('Freebuff run was cancelled.');
+        publisher.seal();
+        await transport.cancel();
       },
     };
   }

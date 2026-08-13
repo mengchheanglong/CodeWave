@@ -1,5 +1,5 @@
 {
-  "name": "@qwemini/web",
+  "name": "@codewave/web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@qwemini/ui-kit": "file:../../packages/ui-kit",
+    "@codewave/ui-kit": "file:../../packages/ui-kit",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

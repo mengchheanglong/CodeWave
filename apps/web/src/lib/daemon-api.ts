@@ -1,12 +1,18 @@
+import {
+  CODEWAVE_PROTOCOL_VERSION,
+  DAEMON_CLIENT_SCOPES,
+} from '@codewave/protocol';
 import type {
   ApprovalRecord,
   ArchiveSnapshot,
+  ClientHandshakeResponse,
   CompareRunRequest,
   CompareRunResponse,
   CreateSessionRequest,
   DeleteSessionResponse,
   DelegateRunRequest,
   DelegateRunResponse,
+  DaemonClientScope,
   FollowUpRunRequest,
   FollowUpRunResponse,
   HandoffRunRequest,
@@ -15,19 +21,27 @@ import type {
   OrchestrationBoardSnapshot,
   RecommendPromptRequest,
   RecommendPromptResponse,
+  RecoverSessionRequest,
   RecoverSessionResponse,
   ResolveApprovalRequest,
   RoutePromptRequest,
   RoutePromptResponse,
   RunSnapshot,
+  SteerRunRequest,
+  SteerRunResponse,
   RuntimeInfo,
+  ProviderId,
+  ProviderRegistrySnapshot,
   SessionSnapshot,
   StartRunRequest,
   ToolPlaneResponse,
+  TranscriptWindow,
   UndoRunResponse,
   UpdateSessionRequest,
+  UpdateDefaultProviderRequest,
+  UpdateProviderConfigurationRequest,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: BodyInit | object | null;
@@ -40,18 +54,35 @@ export interface ToolPlaneQuery {
 
 export interface DaemonApi {
   getRuntime(): Promise<RuntimeInfo>;
+  getProviders(): Promise<ProviderRegistrySnapshot>;
+  updateProvider(
+    providerId: ProviderId,
+    input: UpdateProviderConfigurationRequest,
+  ): Promise<ProviderRegistrySnapshot>;
+  updateDefaultProvider(
+    input: UpdateDefaultProviderRequest,
+  ): Promise<ProviderRegistrySnapshot>;
   getToolPlane(query?: ToolPlaneQuery): Promise<ToolPlaneResponse>;
   getSessions(): Promise<WorkbenchSession[]>;
   createSession(input: CreateSessionRequest): Promise<WorkbenchSession>;
   deleteSession(sessionId: string): Promise<DeleteSessionResponse>;
   getSession(sessionId: string): Promise<SessionSnapshot>;
+  getSessionTranscript(
+    sessionId: string,
+    options?: { beforeSequence?: number; limit?: number },
+  ): Promise<TranscriptWindow>;
   updateSession(
     sessionId: string,
     input: UpdateSessionRequest,
   ): Promise<WorkbenchSession>;
-  recoverSession(sessionId: string): Promise<RecoverSessionResponse>;
+  recoverSession(
+    sessionId: string,
+    input: RecoverSessionRequest,
+  ): Promise<RecoverSessionResponse>;
   startRun(sessionId: string, input: StartRunRequest): Promise<RunSnapshot>;
+  steerRun(runId: string, input: SteerRunRequest): Promise<SteerRunResponse>;
   getRun(runId: string): Promise<RunSnapshot>;
+  getRunStreamUrl(runId: string, afterSequence?: number): Promise<string>;
   cancelRun(runId: string): Promise<RunSnapshot>;
   undoRun(runId: string): Promise<UndoRunResponse>;
   compareRun(input: CompareRunRequest): Promise<CompareRunResponse>;
@@ -79,17 +110,163 @@ export interface DaemonApi {
   ): Promise<ApprovalRecord>;
   recoverCheckpointSession(
     checkpointId: string,
+    input: RecoverSessionRequest,
   ): Promise<RecoverSessionResponse>;
+}
+
+export class DaemonRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly currentProviderRevision?: string,
+    readonly requiredScope?: DaemonClientScope,
+    readonly supportedProtocolVersions?: number[],
+  ) {
+    super(message);
+    this.name = 'DaemonRequestError';
+  }
+}
+
+const WEB_CLIENT_VERSION = '0.1.0-dev';
+let negotiatedConnection: ClientHandshakeResponse | null = null;
+let handshakePromise: Promise<ClientHandshakeResponse> | null = null;
+
+function hasUsableConnection(
+  connection: ClientHandshakeResponse | null,
+): connection is ClientHandshakeResponse {
+  return Boolean(
+    connection?.connectionId &&
+      connection.protocolVersion === CODEWAVE_PROTOCOL_VERSION &&
+      Date.parse(connection.expiresAt) > Date.now() + 5_000,
+  );
+}
+
+async function readErrorPayload(response: Response): Promise<JsonError> {
+  return (await response
+    .json()
+    .catch(() => ({ error: response.statusText }))) as JsonError;
+}
+
+function toDaemonRequestError(
+  response: Response,
+  payload: JsonError,
+): DaemonRequestError {
+  const message =
+    typeof payload.error === 'string' && payload.error
+      ? payload.error
+      : response.statusText;
+  return new DaemonRequestError(
+    message,
+    response.status,
+    payload.code,
+    payload.currentProviderRevision,
+    payload.requiredScope,
+    payload.supportedProtocolVersions,
+  );
+}
+
+export function resetDaemonConnection(): void {
+  negotiatedConnection = null;
+  handshakePromise = null;
+}
+
+export async function ensureDaemonConnection(): Promise<ClientHandshakeResponse> {
+  if (hasUsableConnection(negotiatedConnection)) return negotiatedConnection;
+  if (handshakePromise) return handshakePromise;
+
+  handshakePromise = (async () => {
+    const response = await fetch('/api/handshake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientName: 'codewave-web',
+        clientVersion: WEB_CLIENT_VERSION,
+        protocolVersion: CODEWAVE_PROTOCOL_VERSION,
+        requestedScopes: [...DAEMON_CLIENT_SCOPES],
+      }),
+    });
+    if (!response.ok) {
+      throw toDaemonRequestError(response, await readErrorPayload(response));
+    }
+    const connection = (await response.json()) as ClientHandshakeResponse;
+    if (
+      !connection?.connectionId ||
+      connection.protocolVersion !== CODEWAVE_PROTOCOL_VERSION ||
+      !Array.isArray(connection.grantedScopes) ||
+      !connection.expiresAt
+    ) {
+      throw new Error('The daemon returned an invalid handshake response.');
+    }
+    negotiatedConnection = connection;
+    return connection;
+  })();
+
+  try {
+    return await handshakePromise;
+  } finally {
+    handshakePromise = null;
+  }
+}
+
+function withConnection(
+  options: RequestInit,
+  connection: ClientHandshakeResponse | null,
+): RequestInit {
+  if (!connection) return options;
+  const headers = new Headers(options.headers);
+  headers.set('X-CodeWave-Connection', connection.connectionId);
+  return { ...options, headers };
+}
+
+export async function daemonFetch(
+  path: string,
+  options: RequestInit = {},
+  { negotiateBeforeRequest = true }: { negotiateBeforeRequest?: boolean } = {},
+): Promise<Response> {
+  let connection = negotiateBeforeRequest
+    ? await ensureDaemonConnection()
+    : hasUsableConnection(negotiatedConnection)
+      ? negotiatedConnection
+      : null;
+  let response = await fetch(path, withConnection(options, connection));
+
+  if (response.status === 401) {
+    const payload = await readErrorPayload(response.clone());
+    if (
+      payload.code === 'client_handshake_required' ||
+      payload.code === 'client_connection_invalid' ||
+      payload.code === 'client_connection_expired'
+    ) {
+      resetDaemonConnection();
+      connection = await ensureDaemonConnection();
+      response = await fetch(path, withConnection(options, connection));
+    }
+  }
+  return response;
 }
 
 export function createDaemonApi({
   onError,
+  onProviderRevisionConflict,
 }: {
   onError?: (message: string) => void;
+  onProviderRevisionConflict?: (currentRevision: string) => void | Promise<void>;
 } = {}): DaemonApi {
   async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { body, headers, ...rest } = options;
     const requestHeaders = new Headers(headers);
+    const method = String(rest.method ?? 'GET').toUpperCase();
+    if (
+      (method === 'POST' || method === 'PATCH' || method === 'DELETE') &&
+      !requestHeaders.has('Idempotency-Key')
+    ) {
+      requestHeaders.set(
+        'Idempotency-Key',
+        globalThis.crypto?.randomUUID?.() ??
+          `codewave-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+    }
     let requestBody: BodyInit | null | undefined = body as BodyInit | null | undefined;
 
     if (
@@ -106,22 +283,37 @@ export function createDaemonApi({
       requestHeaders.set('Content-Type', 'application/json');
     }
 
-    const response = await fetch(path, {
-      ...rest,
-      headers: requestHeaders,
-      body: requestBody,
-    });
+    let response: Response;
+    try {
+      response = await daemonFetch(path, {
+        ...rest,
+        headers: requestHeaders,
+        body: requestBody,
+      });
+    } catch (error) {
+      onError?.(
+        error instanceof Error
+          ? error.message
+          : 'The daemon connection could not be negotiated.',
+      );
+      throw error;
+    }
 
     if (!response.ok) {
-      const payload = (await response
-        .json()
-        .catch(() => ({ error: response.statusText }))) as JsonError;
-      const message =
-        typeof payload.error === 'string' && payload.error
-          ? payload.error
-          : response.statusText;
-      onError?.(message);
-      throw new Error(message);
+      const payload = await readErrorPayload(response);
+      const error = toDaemonRequestError(response, payload);
+      if (
+        payload.code === 'provider_revision_conflict' &&
+        payload.currentProviderRevision
+      ) {
+        try {
+          await onProviderRevisionConflict?.(payload.currentProviderRevision);
+        } catch {
+          // Preserve the authoritative daemon conflict even if refresh also fails.
+        }
+      }
+      onError?.(error.message);
+      throw error;
     }
 
     return (await response.json()) as T;
@@ -130,6 +322,21 @@ export function createDaemonApi({
   return {
     getRuntime() {
       return requestJson<RuntimeInfo>('/api/runtime');
+    },
+    getProviders() {
+      return requestJson<ProviderRegistrySnapshot>('/api/providers');
+    },
+    updateProvider(providerId, input) {
+      return requestJson<ProviderRegistrySnapshot>(`/api/providers/${providerId}`, {
+        method: 'PATCH',
+        body: input,
+      });
+    },
+    updateDefaultProvider(input) {
+      return requestJson<ProviderRegistrySnapshot>('/api/providers/default', {
+        method: 'PATCH',
+        body: input,
+      });
     },
     getToolPlane(query = {}) {
       const params = new URLSearchParams();
@@ -159,17 +366,31 @@ export function createDaemonApi({
     getSession(sessionId) {
       return requestJson<SessionSnapshot>(`/api/sessions/${sessionId}`);
     },
+    getSessionTranscript(sessionId, options = {}) {
+      const params = new URLSearchParams();
+      if (options.beforeSequence !== undefined) {
+        params.set('before', String(options.beforeSequence));
+      }
+      if (options.limit !== undefined) {
+        params.set('limit', String(options.limit));
+      }
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      return requestJson<TranscriptWindow>(
+        `/api/sessions/${sessionId}/transcript${suffix}`,
+      );
+    },
     updateSession(sessionId, input) {
       return requestJson<WorkbenchSession>(`/api/sessions/${sessionId}`, {
         method: 'PATCH',
         body: input,
       });
     },
-    recoverSession(sessionId) {
+    recoverSession(sessionId, input) {
       return requestJson<RecoverSessionResponse>(
         `/api/sessions/${sessionId}/recover`,
         {
           method: 'POST',
+          body: input,
         },
       );
     },
@@ -179,8 +400,24 @@ export function createDaemonApi({
         body: input,
       });
     },
+    steerRun(runId, input) {
+      return requestJson<SteerRunResponse>(`/api/runs/${runId}/steer`, {
+        method: 'POST',
+        body: input,
+      });
+    },
     getRun(runId) {
       return requestJson<RunSnapshot>(`/api/runs/${runId}`);
+    },
+    async getRunStreamUrl(runId, afterSequence) {
+      const connection = await ensureDaemonConnection();
+      const params = new URLSearchParams({
+        connectionId: connection.connectionId,
+      });
+      if (afterSequence !== undefined) {
+        params.set('after', String(afterSequence));
+      }
+      return `/api/runs/${encodeURIComponent(runId)}/stream?${params.toString()}`;
     },
     cancelRun(runId) {
       return requestJson<RunSnapshot>(`/api/runs/${runId}/cancel`, {
@@ -240,11 +477,12 @@ export function createDaemonApi({
         body: input,
       });
     },
-    recoverCheckpointSession(checkpointId) {
+    recoverCheckpointSession(checkpointId, input) {
       return requestJson<RecoverSessionResponse>(
         `/api/checkpoints/${checkpointId}/recover-session`,
         {
           method: 'POST',
+          body: input,
         },
       );
     },

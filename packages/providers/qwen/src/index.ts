@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import type {
   ProviderAdapter,
   ProviderCapabilities,
@@ -15,8 +13,17 @@ import type {
   ToolDescriptorSource,
   ProviderToolCapability,
   WorkbenchEvent,
-} from '@qwemini/protocol';
-import { inferRoutingToolRequirement } from '@qwemini/protocol';
+} from '@codewave/protocol';
+import { inferRoutingToolRequirement } from '@codewave/protocol';
+import {
+  parseProviderCommand,
+  spawnProviderCommand,
+} from '@codewave/provider-runtime';
+import {
+  createRunEventPublisher,
+  launchJsonLineTransport,
+  type StructuredTransportTrace,
+} from '@codewave/provider-transport';
 import {
   type CLIAssistantMessage,
   type ControlCancelRequest,
@@ -38,10 +45,7 @@ import {
   isToolResultBlock,
   isToolUseBlock,
 } from '../../../../vendor/qwen-code/packages/cli/src/nonInteractive/types.js';
-import {
-  StreamJsonParseError,
-  parseStreamJsonLine,
-} from '../../../../vendor/qwen-code/packages/cli/src/nonInteractive/io/StreamJsonInputReader.js';
+import { parseStreamJsonLine } from '../../../../vendor/qwen-code/packages/cli/src/nonInteractive/io/StreamJsonInputReader.js';
 import { StreamJsonOutputAdapter } from '../../../../vendor/qwen-code/packages/cli/src/nonInteractive/io/StreamJsonOutputAdapter.js';
 import {
   ControlDispatcher,
@@ -58,7 +62,7 @@ type CommandResult = {
 const DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS = 2500;
 
 function getConnectedToolProbeTimeoutMs(): number {
-  const configured = Number(process.env.QWEMINI_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
+  const configured = Number(process.env.CODEWAVE_CONNECTED_TOOL_PROBE_TIMEOUT_MS);
   if (!Number.isFinite(configured) || configured <= 0) {
     return DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS;
   }
@@ -73,11 +77,22 @@ type QwenLaunchSpec = {
   source: 'override' | 'vendored' | 'external';
 };
 
-type QwenCliProviderOptions = {
+export type QwenCliProviderOptions = {
   command?: string;
   nodeCommand?: string;
   rootPath?: string;
+  transportTrace?: (entry: StructuredTransportTrace) => void;
 };
+
+type QwenStreamMessage =
+  | CLIAssistantMessage
+  | ControlCancelRequest
+  | CLIControlRequest
+  | CLIControlResponse
+  | CLIResultMessage
+  | CLISystemMessage
+  | CLIUserMessage
+  | CLIPartialAssistantMessage;
 
 const VENDORED_QWEN_CANDIDATES = [
   ['vendor', 'qwen-code', 'packages', 'cli', 'dist', 'index.js'],
@@ -88,6 +103,7 @@ const QWEN_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: true,
   resumableSessions: true,
   checkpointEvents: true,
+  inFlightSteering: 'unsupported',
 };
 const QWEN_TOOL_CATALOG: ProviderToolCapability[] = [
   {
@@ -218,22 +234,6 @@ function extractText(content: unknown): string {
     .join('\n');
 }
 
-function createEvent(
-  context: ProviderRunContext,
-  type: WorkbenchEvent['type'],
-  payload: Record<string, unknown>,
-): WorkbenchEvent {
-  return {
-    id: randomUUID(),
-    sessionId: context.session.id,
-    runId: context.run.id,
-    timestamp: new Date().toISOString(),
-    source: 'qwen',
-    type,
-    payload,
-  };
-}
-
 async function syncProviderSessionId(
   context: ProviderRunContext,
   state: { providerSessionId: string | null },
@@ -259,10 +259,6 @@ function resolveCommand(command: string): string {
   }
 
   return command;
-}
-
-function shouldUseShell(command: string): boolean {
-  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 function isNodeScript(candidate: string): boolean {
@@ -319,14 +315,12 @@ function resolveQwenNodeInvocation(
 function buildSpawnSpec(spec: QwenLaunchSpec, args: string[]): {
   executable: string;
   args: string[];
-  shell: boolean;
 } {
   const nodeInvocation = resolveQwenNodeInvocation(spec);
   if (nodeInvocation) {
     return {
       executable: nodeInvocation.command,
       args: [...nodeInvocation.argsPrefix, ...args],
-      shell: false,
     };
   }
 
@@ -334,7 +328,6 @@ function buildSpawnSpec(spec: QwenLaunchSpec, args: string[]): {
   return {
     executable,
     args: [...spec.argsPrefix, ...args],
-    shell: shouldUseShell(executable),
   };
 }
 
@@ -371,11 +364,13 @@ async function runCommand(
   const spawnSpec = buildSpawnSpec(spec, args);
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(spawnSpec.executable, spawnSpec.args, {
-      env: process.env,
-      shell: spawnSpec.shell,
-      windowsHide: true,
-    });
+    const child = spawnProviderCommand(
+      { command: spawnSpec.executable },
+      spawnSpec.args,
+      {
+        env: process.env,
+      },
+    );
 
     let output = '';
     const resolveOnce = (result: CommandResult): void => {
@@ -487,13 +482,15 @@ export class QwenCliProvider implements ProviderAdapter {
   private readonly commandOverride: string | null;
   private readonly nodeCommand: string;
   private readonly rootPath: string;
+  private readonly transportTrace?: (entry: StructuredTransportTrace) => void;
 
   constructor(options: QwenCliProviderOptions = {}) {
-    const commandOverride = options.command ?? process.env.QWEMINI_QWEN_COMMAND;
+    const commandOverride = options.command ?? process.env.CODEWAVE_QWEN_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
     this.nodeCommand =
-      options.nodeCommand ?? process.env.QWEMINI_NODE_COMMAND ?? 'node';
+      options.nodeCommand ?? process.env.CODEWAVE_NODE_COMMAND ?? 'node';
     this.rootPath = path.resolve(options.rootPath ?? process.cwd());
+    this.transportTrace = options.transportTrace;
   }
 
   async capabilities(): Promise<ProviderCapabilities> {
@@ -581,9 +578,8 @@ export class QwenCliProvider implements ProviderAdapter {
     const sessionState = {
       providerSessionId: context.session.providerSessionId,
     };
-    let finished = false;
     const launchSpec = this.resolveLaunchSpec();
-    const extraArgs = (process.env.QWEMINI_QWEN_ARGS ?? '')
+    const extraArgs = (process.env.CODEWAVE_QWEN_ARGS ?? '')
       .split(' ')
       .map((value) => value.trim())
       .filter(Boolean);
@@ -602,105 +598,120 @@ export class QwenCliProvider implements ProviderAdapter {
       'SDK',
       ...extraArgs,
     ]);
-
-    const child = spawn(
-      spawnSpec.executable,
-      spawnSpec.args,
-      {
-        cwd: context.session.workspacePath,
-        env: process.env,
-        shell: spawnSpec.shell,
-        windowsHide: true,
-      },
-    );
-    const streamJson = new StreamJsonOutputAdapter(child.stdin!);
+    const publisher = createRunEventPublisher(context, 'qwen');
+    let controlReadyResolve!: () => void;
+    const controlReady = new Promise<void>((resolve) => {
+      controlReadyResolve = resolve;
+    });
+    let controlDispatcher: ControlDispatcher | null = null;
     const controlAbortController = new AbortController();
+    const publish = async (
+      type: WorkbenchEvent['type'],
+      payload: Record<string, unknown>,
+    ): Promise<void> => {
+      const published = await publisher.publish(type, payload);
+      if (
+        published &&
+        (type === 'run.completed' ||
+          type === 'run.failed' ||
+          type === 'run.cancelled') &&
+        transport.child.exitCode === null &&
+        !transport.child.killed
+      ) {
+        transport.child.kill();
+      }
+    };
+    const transport = launchJsonLineTransport<QwenStreamMessage>({
+      spawn: () =>
+        spawnProviderCommand(
+          { command: spawnSpec.executable },
+          spawnSpec.args,
+          {
+            cwd: context.session.workspacePath,
+            env: process.env,
+          },
+        ),
+      parseRecord: (line) => parseStreamJsonLine(line) as QwenStreamMessage,
+      onRecord: async (message) => {
+        await controlReady;
+        if (!controlDispatcher) {
+          throw new Error('Qwen control dispatcher is not initialized.');
+        }
+        await this.handleStructuredMessage({
+          context,
+          message,
+          seenToolStarts,
+          seenToolRegistrations,
+          publish,
+          controlDispatcher,
+          sessionState,
+        });
+      },
+      onStdoutText: async (line) => {
+        if (!line.trim()) return;
+        await publish('run.output.delta', { stream: 'stdout', text: line });
+      },
+      onStderrLine: async (line) => {
+        if (!line.trim()) return;
+        await publish('run.output.delta', { stream: 'stderr', text: line });
+      },
+      onLineTooLong: async (channel, length) => {
+        await publish('run.output.delta', {
+          stream: 'stderr',
+          text: `Qwen ${channel} record exceeded the 1 MiB transport ceiling (${length} characters).`,
+        });
+      },
+      onHandlerError: async (error, handlerContext) => {
+        await publish('run.output.delta', {
+          stream: 'stderr',
+          text: `Qwen ${handlerContext.kind} bridge error: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      },
+      onProcessError: async (error) => {
+        await controlReady;
+        controlAbortController.abort();
+        controlDispatcher?.markInputClosed();
+        controlDispatcher?.shutdown(
+          `Failed to launch Qwen runtime: ${error.message}`,
+        );
+        await publish('run.failed', {
+          message: 'Failed to launch Qwen runtime',
+          detail: `${launchSpec.description}: ${error.message}`,
+        });
+      },
+      onClose: async (code) => {
+        await controlReady;
+        controlAbortController.abort();
+        controlDispatcher?.markInputClosed();
+        controlDispatcher?.shutdown(
+          code === 0
+            ? 'Qwen runtime closed.'
+            : `Qwen runtime exited with code ${code ?? 'unknown'}.`,
+        );
+        if (publisher.terminalEventType || publisher.cancellationRequested) return;
+        await publish('run.failed', {
+          message:
+            code === 0
+              ? 'Qwen runtime closed without a terminal result'
+              : 'Qwen runtime exited unexpectedly',
+          detail: launchSpec.description,
+          exitCode: code,
+        });
+      },
+      trace: this.transportTrace,
+    });
+
+    const streamJson = new StreamJsonOutputAdapter(transport.child.stdin!);
     const controlContext = new ControlContext({
       streamJson,
       sessionId: context.session.providerSessionId ?? context.session.id,
       abortSignal: controlAbortController.signal,
     });
-    const controlDispatcher = new ControlDispatcher(controlContext, {
+    controlDispatcher = new ControlDispatcher(controlContext, {
       handleRequest: async (payload) =>
-        this.handleControlRequest({
-          context,
-          payload,
-        }),
+        this.handleControlRequest({ context, payload }),
     });
-
-    const publish = async (
-      type: WorkbenchEvent['type'],
-      payload: Record<string, unknown>,
-    ): Promise<void> => {
-      if (type === 'run.completed' || type === 'run.failed') {
-        finished = true;
-      }
-
-      await context.emitEvent(createEvent(context, type, payload));
-    };
-
-    child.on('error', async (error) => {
-      controlAbortController.abort();
-      controlDispatcher.markInputClosed();
-      controlDispatcher.shutdown(
-        `Failed to launch Qwen runtime: ${error.message}`,
-      );
-      await publish('run.failed', {
-        message: 'Failed to launch Qwen runtime',
-        detail: `${launchSpec.description}: ${error.message}`,
-      });
-    });
-
-    readline
-      .createInterface({ input: child.stdout! })
-      .on('line', (line) => {
-        void this
-          .handleStdoutLine({
-            context,
-            line,
-            seenToolStarts,
-            seenToolRegistrations,
-            publish,
-            controlDispatcher,
-            sessionState,
-          })
-          .catch(async (error) => {
-            await publish('run.output.delta', {
-              stream: 'stderr',
-              text: `Qwen control bridge error: ${error instanceof Error ? error.message : String(error)}`,
-            });
-          });
-      });
-
-    readline
-      .createInterface({ input: child.stderr! })
-      .on('line', (line) => {
-        void publish('run.output.delta', {
-          stream: 'stderr',
-          text: line,
-        });
-      });
-
-    child.on('close', async (code) => {
-      controlAbortController.abort();
-      controlDispatcher.markInputClosed();
-      controlDispatcher.shutdown(
-        code === 0
-          ? 'Qwen runtime closed.'
-          : `Qwen runtime exited with code ${code ?? 'unknown'}.`,
-      );
-      if (code === 0) {
-        return;
-      }
-
-      if (!finished) {
-        await publish('run.failed', {
-          message: 'Qwen runtime exited unexpectedly',
-          detail: launchSpec.description,
-          exitCode: code,
-        });
-      }
-    });
+    controlReadyResolve();
 
     try {
       const initializeResponse = await controlDispatcher.sendControlRequest({
@@ -744,10 +755,14 @@ export class QwenCliProvider implements ProviderAdapter {
 
     return {
       cancel: async () => {
-        if (finished || child.exitCode !== null || child.killed) {
+        if (
+          publisher.terminalEventType ||
+          publisher.cancellationRequested ||
+          transport.child.exitCode !== null
+        ) {
           return;
         }
-
+        publisher.requestCancellation();
         try {
           await controlDispatcher.sendControlRequest(
             {
@@ -757,29 +772,17 @@ export class QwenCliProvider implements ProviderAdapter {
             controlAbortController.signal,
           );
         } catch {
-          // Fall through to process termination if the control channel is unavailable.
+          // The normalized cancellation result remains authoritative.
         }
-
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
-            if (child.exitCode === null && !child.killed) {
-              child.kill();
-            }
-            resolve();
-          }, 1500);
-
-          child.once('close', () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        });
+        await transport.cancel({ graceMs: 1500 });
+        await publish('run.cancelled', { reason: 'Cancelled by user.' });
       },
     };
   }
 
-  private async handleStdoutLine({
+  private async handleStructuredMessage({
     context,
-    line,
+    message,
     seenToolStarts,
     seenToolRegistrations,
     publish,
@@ -787,7 +790,7 @@ export class QwenCliProvider implements ProviderAdapter {
     sessionState,
   }: {
     context: ProviderRunContext;
-    line: string;
+    message: QwenStreamMessage;
     seenToolStarts: Set<string>;
     seenToolRegistrations: Set<string>;
     publish: (
@@ -797,37 +800,6 @@ export class QwenCliProvider implements ProviderAdapter {
     controlDispatcher: ControlDispatcher;
     sessionState: { providerSessionId: string | null };
   }): Promise<void> {
-    if (!line.trim()) {
-      return;
-    }
-
-    let message:
-      | CLIAssistantMessage
-      | ControlCancelRequest
-      | CLIControlRequest
-      | CLIControlResponse
-      | CLIResultMessage
-      | CLISystemMessage
-      | CLIUserMessage
-      | CLIPartialAssistantMessage;
-    try {
-      message = parseStreamJsonLine(line);
-    } catch (error) {
-      if (error instanceof StreamJsonParseError) {
-        await publish('run.output.delta', {
-          stream: 'stdout',
-          text: line,
-        });
-        return;
-      }
-
-      await publish('run.output.delta', {
-        stream: 'stdout',
-        text: line,
-      });
-      return;
-    }
-
     await syncProviderSessionId(
       context,
       sessionState,
@@ -835,12 +807,7 @@ export class QwenCliProvider implements ProviderAdapter {
     );
 
     if (isControlRequest(message)) {
-      void controlDispatcher.dispatch(message).catch(async (error) => {
-        await publish('run.output.delta', {
-          stream: 'stderr',
-          text: `Qwen control dispatch error: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      });
+      await controlDispatcher.dispatch(message);
       return;
     }
 
@@ -1064,18 +1031,19 @@ export class QwenCliProvider implements ProviderAdapter {
 
   private resolveLaunchSpec(): QwenLaunchSpec {
     if (this.commandOverride) {
-      if (isNodeScript(this.commandOverride)) {
+      const parsed = parseProviderCommand(this.commandOverride, 'Qwen command');
+      if (isNodeScript(parsed.command)) {
         return {
           command: this.nodeCommand,
-          argsPrefix: [this.commandOverride],
+          argsPrefix: [parsed.command, ...parsed.baseArgs],
           description: `command override via ${this.commandOverride}`,
           source: 'override',
         };
       }
 
       return {
-        command: this.commandOverride,
-        argsPrefix: [],
+        command: parsed.command,
+        argsPrefix: parsed.baseArgs,
         description: `command override via ${this.commandOverride}`,
         source: 'override',
       };

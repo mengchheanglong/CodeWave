@@ -2,12 +2,12 @@
 
 **The visual workspace for AI coding agents**
 
-CodeWave is an open-source, local-first agent workspace that harnesses **Qwen CLI**, **Gemini CLI**, **OpenCode**, **Freebuff**, and future AI coding CLIs into one unified environment. Instead of using each tool separately in raw terminal flows, CodeWave provides a shared visual workspace for sessions, tools, context, and orchestration, so all engines operate inside the same system with a cleaner developer experience.
+CodeWave is an open-source, local-first agent workspace that harnesses **Freebuff**, **OpenCode**, optional paid/BYOK **Qwen Code** and **Gemini CLI**, and future AI coding engines into one unified environment. Instead of using each tool separately in raw terminal flows, CodeWave provides a shared visual workspace for sessions, tools, context, approvals, and orchestration.
 
 CodeWave is designed to be:
 
 - **Open-source & Local-first** — lightweight, privacy-focused, hackable, and community-friendly  
-- **Unified & Provider-flexible** — one visual shell to run Qwen, Gemini, OpenCode, Freebuff, and future engines  
+- **Free-first & Provider-flexible** — Freebuff is the product primary, OpenCode/local models are the ready fallback, and paid providers are explicit opt-ins
 - **Extensible** — ready for more tools, MCP plugins, and provider engines over time  
 - **Practical** — focused on real developer workflows, step inspectors, and diff reviews  
 
@@ -15,7 +15,7 @@ CodeWave is designed to be:
 
 ## Overview
 
-Today, AI coding CLIs like Qwen, Gemini, OpenCode, and Freebuff are powerful on their own, but using them separately in terminal tabs feels fragmented. CodeWave solves that by creating a single control center where multiple agent backends operate inside one visual environment.
+AI coding CLIs are powerful on their own, but using them separately in terminal tabs feels fragmented. CodeWave creates one control center where free, local, BYOK, and paid agent backends operate behind the same product-owned protocol and daemon.
 
 The goal is not just to wrap CLIs in a thin shell, but to build a real developer environment with:
 
@@ -29,7 +29,7 @@ The goal is not just to wrap CLIs in a thin shell, but to build a real developer
 
 ## Vision
 
-CodeWave harnesses **Qwen**, **Gemini**, **OpenCode**, and **Freebuff**, but the long-term direction is bigger:
+CodeWave starts with **Freebuff** and **OpenCode**, preserves **Qwen** and **Gemini** for users who configure them, and keeps the long-term direction bigger:
 
 - a unified agent workspace
 - a shared protocol for tools, approvals, and events
@@ -55,7 +55,7 @@ That workspace provides:
 
 ## Initial Goals
 
-- Integrate **Qwen CLI**, **Gemini CLI**, **OpenCode**, and **Freebuff** into one environment
+- Integrate **Freebuff**, **OpenCode**, optional Qwen/Gemini, and future structured agent runtimes into one environment
 - Provide a shared session and context model
 - Support tool integration through a common interface
 - Build an orchestration layer for switching or routing work between engines
@@ -70,10 +70,10 @@ CodeWave is structured around core layers:
 ### 1. Provider Adapters
 Adapters for each backend engine:
 
-- Qwen
-- Gemini
-- OpenCode
 - Freebuff
+- OpenCode
+- Qwen (opt-in)
+- Gemini (opt-in)
 
 ### 2. Shared Workspace Layer
 A common runtime for:
@@ -108,25 +108,36 @@ simple, composable, and built for experimentation.
 
 ### Daemon & State
 - **Local daemon** — HTTP server on `127.0.0.1:4120` serving both REST APIs and the web shell
-- **SQLite state** — persistent sessions, runs, events, approvals, checkpoints, tool invocations, and session registry with WAL journaling
+- **SQLite state** — persistent sessions, runs, events, append-only transcript messages, approvals, checkpoints, tool invocations, and session registry with WAL journaling
 - **Shared protocol** — normalized `WorkbenchEvent` stream across providers (run.started, tool.requested, approval.resolved, etc.)
+- **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share one serialized ACP session/tool/permission state machine
+- **Scoped client handshake** — web and automation clients negotiate protocol v1, daemon capabilities, granular scopes, connection lifetime, and transport limits before protected API access
+- **Cursor-bounded event replay** — monotonic per-run event sequences, SSE resume cursors, and a 500-event replay ceiling keep reconnects ordered without rehydrating unbounded history
+- **Durable session memory** — prompts and normalized final messages are atomically recorded in a parent-linked, monotonic transcript chain; snapshots hydrate the latest 100 messages and the transcript API paginates backward up to 200 at a time
+- **Durable mutation safety** — `Idempotency-Key` receipts survive daemon restarts, replay the original response, and reject key reuse with a different payload
+- **Deterministic run lifecycle** — one active run per session, stale-run fencing for updates, restart reconciliation, capability-proven in-flight steering, and a durable follow-up queue whenever native delivery is unavailable or unacknowledged
+- **Reviewed provider policy** — every provider-dependent mutation carries the exact content-addressed provider revision the user reviewed; stale launches fail closed with the current revision and the shell refreshes before retry
 
 ### Providers
-- **Qwen CLI adapter** — stream-json SDK with control-path integration, approval mediation, session resume, and checkpoint support
-- **Gemini CLI adapter** — ACP default (daemon-mediated permissions) with `QWEMINI_GEMINI_MODE=stream-json` fallback (note: Google shut down Gemini CLI for individual users on 2026-06-18 in favor of Antigravity CLI)
-- **OpenCode CLI adapter** — ACP default (daemon-mediated permissions, session resume) with a `QWEMINI_OPENCODE_MODE=run` stream-json fallback; free local/cloud models via Ollama, OpenRouter, and OpenCode Zen/Go
+- **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, atomic updates, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
+- **Freebuff primary** — first policy priority and clearly labeled free cloud/ad-supported access; because the public Freebuff CLI is interactive-only, CodeWave requires a configured automation bridge before marking daemon runs ready
+- **Structured Freebuff bridge** — configured bridges emit JSONL session, output, message, tool, checkpoint, and terminal records; protocol-v1 bridges may also negotiate acknowledged in-flight steering over stdin without weakening the durable queue
+- **OpenCode fallback** — enabled by default with ACP, daemon-mediated permissions, session resume, and local models through Ollama or other OpenAI-compatible endpoints
+- **Qwen Code opt-in** — ordered stream-JSON control path, approval mediation, explicit cancellation, resume, and checkpoints for users who configure a Coding Plan, API key, or compatible custom/local endpoint
+- **Gemini CLI opt-in** — preserved ACP and stream-JSON paths for enterprise Code Assist or API-key users after individual-account service ended on 2026-06-18
 - **Windows fixes** — direct Node entrypoint resolution for both providers; bundled `node-pty` patch for Gemini ACP
-- **Health checks** — capability-aware provider probing with visible approval/resume/checkpoint differences
+- **Health checks** — readiness/setup/disabled states, capability metadata, latency, timestamps, and a short probe cache
 
 ### Orchestration
-- **Route Prompt** — orchestrator picks the best provider based on tool requirements, heuristics, and tool-plane signals
+- **Route Prompt** — live tool coverage wins, registry priority breaks ties, and disabled paid providers are never selected implicitly
 - **Review / Verify** — fork completed runs into reviewer or verifier sessions with cross-provider routing
 - **Delegate** — spawn planner/researcher/verifier child runs under explicit orchestration roles
 - **Handoff** — continue a run in a new main session with prior context preserved
 - **Orchestration board** — grouped view of parent and child sessions as inspectable flows
+- **Queue while running** — sending from the composer during an active run records a durable update and launches it automatically when the current run settles
 
 ### Tool Plane & MCP
-- **Workspace registry** — `.qwemini/mcp.json` or `.mcp.json` defines tool requirements and MCP servers per workspace
+- **Workspace registry** — `.codewave/mcp.json` or `.mcp.json` defines tool requirements and MCP servers per workspace
 - **Provider catalogs** — adapters declare available tools (workspace-read, write, shell, network, MCP)
 - **Session registrations** — live tracking of tools observed and reported in active sessions
 - **MCP hub** — normalizes tool readiness from provider availability, registry config, and observed history
@@ -141,8 +152,9 @@ simple, composable, and built for experimentation.
 - **Context meter** — approximate context used per run in the composer
 - **@-mention picker** — fuzzy file/directory search from the workspace; `@` in the prompt opens the picker and inserts `@path`
 - **Compare mode** — run the same prompt on two providers side by side (⚖ Compare button)
-- **Themes** — light/dark toggle (🌙/☀️) in the status strip, persisted in localStorage
+- **Ocean-dark theme** — a low-glare blue interface designed for long, focused coding sessions
 - **Events timeline** — normalized event log with tool call/activity evidence
+- **Session memory** — recent parent-linked turns appear above the current run, with older history kept bounded and available through cursor pagination
 - **Approvals** — inline decision cards in the transcript plus daemon-mediated lists; keyboard approve/deny (`Shift+Enter`/`Shift+A`/`Shift+D`)
 - **Tool plane evidence** — provider-enumerated vs event-observed tool registration signals
 - **Archive explorer** — per-session run summaries with recovery/lineage metadata
@@ -151,15 +163,19 @@ simple, composable, and built for experimentation.
 
 ### Validation
 - `npm run check` — TypeScript type checking
+- `npm test -w @codewave/web` — React interaction and property suite
 - `npm run check:shell` — deterministic shell usability tests
 - `npm run check:registrations` — E2E tool registration validation across providers
+- `npm run check:runtime` — lossless command arguments and shell-safe provider process launching
+- `npm run check:transport` — ordered JSONL delivery, malformed/plain-text fallback, line ceilings, handler isolation, cancellation, acknowledged Freebuff steering, Freebuff/Gemini/Qwen normalization parity, shared Gemini/OpenCode ACP permissions and idempotent tool lifecycles, and Qwen completion/cancellation traces
+- `npm run check:harness` — scoped handshake/version negotiation, restart renegotiation, parent-linked transcript migration/pagination, restart-safe idempotency, provider-policy revision fencing, overlap rejection, native/rejected/unacknowledged/queued steering, cursor-bounded SSE replay, Freebuff bridge normalization, legacy migration, and restart recovery
 - Fake runtime fixtures for Qwen and Gemini to enable repeatable CI testing
 
 ---
 
 ## Architecture
 
-Qwemini is structured as an npm monorepo with workspaces:
+CodeWave is structured as an npm monorepo with workspaces:
 
 | Layer | Package | Purpose |
 |---|---|---|
@@ -169,9 +185,12 @@ Qwemini is structured as an npm monorepo with workspaces:
 | **State** | `packages/state` | SQLite-backed persistence |
 | **Orchestrator** | `packages/orchestrator` | Routing, follow-up, delegate, handoff logic |
 | **MCP Hub** | `packages/mcp-hub` | Workspace registry, tool-plane snapshots, MCP server status |
-| **Qwen provider** | `packages/providers/qwen` | Qwen CLI adapter with stream-json + control-path |
+| **Provider runtime** | `packages/providers/runtime` | Shared quote-aware command parsing and shell-safe process launching |
+| **Provider transport** | `packages/providers/transport` | Ordered JSONL/control delivery, terminal/cancellation ownership, process lifecycle traces, and shared serialized ACP session/tool/permission mapping |
+| **Freebuff provider** | `packages/providers/freebuff` | Primary-policy adapter with an explicit automation-bridge seam |
+| **OpenCode provider** | `packages/providers/opencode` | Enabled ACP/local-model fallback with run-JSON compatibility |
+| **Qwen provider** | `packages/providers/qwen` | Qwen CLI adapter with ordered stream-JSON + control-path |
 | **Gemini provider** | `packages/providers/gemini` | Gemini CLI adapter with ACP default + stream-json fallback |
-| **OpenCode provider** | `packages/providers/opencode` | OpenCode CLI adapter with ACP default + run-JSON fallback |
 
 ### Design rules
 1. **UI must NOT talk to provider CLIs directly** — only to the daemon
@@ -200,26 +219,57 @@ Validation:
 
 ```bash
 npm run check                           # TypeScript
+npm test -w @codewave/web                # React interaction/property suite
 npm run check:shell                      # Shell usability tests
+npm run check:providers                  # Provider policy and routing tests
+npm run check:harness                    # Daemon lifecycle/idempotency/steering E2E
 npm run check:registrations              # Tool registration E2E tests
 npm run check:registrations:json         # CI-friendly JSON summary
 ```
+
+### Provider configuration
+
+Open **Providers** in the left rail or edit `.codewave/providers.json`. CodeWave stores enablement, priority, and optional command overrides there—never API keys. Provider credentials remain in the provider CLI or environment.
+
+Environment overrides take precedence:
+
+```bash
+CODEWAVE_DEFAULT_PROVIDER=freebuff
+CODEWAVE_QWEN_ENABLED=true
+CODEWAVE_QWEN_COMMAND=/path/to/qwen
+CODEWAVE_GEMINI_ENABLED=true
+CODEWAVE_GEMINI_COMMAND=/path/to/gemini
+```
+
+Setting a provider command also enables that provider unless its `CODEWAVE_<PROVIDER>_ENABLED` override explicitly disables it. For Freebuff, `CODEWAVE_FREEBUFF_COMMAND` is treated as an automation bridge—not the raw interactive TUI—and receives `--cwd`, `--prompt`, `--output-format jsonl`, and optional `--resume` arguments. Each stdout line may be a JSON object with `type` set to `session`, `output`, `message`, `tool`, `checkpoint`, or `result`; CodeWave converts those records into shared events, session metadata, checkpoints, artifacts, and terminal state.
+
+A bridge can opt into live updates by first emitting `{"type":"capabilities","protocolVersion":1,"inFlightSteering":true}`. CodeWave then sends newline-delimited `steer` commands on stdin with `steeringId`, `prompt`, and `createdAt`. The bridge must answer with a matching `{"type":"steering","steeringId":"…","status":"accepted"}` before CodeWave marks the input applied to the active run. Rejection, timeout, process close, or missing negotiation leaves the already-persisted input queued for the next run.
+
+Mutating daemon endpoints accept an `Idempotency-Key` header. CodeWave's web client sends one automatically. A retry with the same method, path, and canonical JSON body receives the persisted original response; reusing the key for a different payload fails closed with HTTP 409. If the daemon stops after reserving a key but before persisting a response, that key remains fenced and returns a pending-outcome 409 instead of risking a duplicate side effect.
+
+Provider-dependent mutations also carry `expectedProviderRevision`, taken from the registry's deterministic SHA-256 revision. Sessions, runs, and queued steering persist the accepted revision for auditability. If enablement, command, priority, or the default changes before submission, the daemon returns HTTP 409 with `code: "provider_revision_conflict"` and `currentProviderRevision`; the shell refreshes the registry so the user can review and retry against current policy.
+
+Except for `/api/health` and `/api/handshake`, daemon APIs require a negotiated in-memory client connection. Protocol v1 advertises supported capabilities and ceilings, then grants only requested scopes such as `runs:read`, `runs:write`, `providers:write`, or `workspace:read`. Missing, expired, restarted, or under-scoped connections fail closed with machine-readable 401/403 responses. The web shell transparently renegotiates once after restart; connection IDs expire after twelve hours and are never persisted as credentials.
+
+`GET /api/sessions/:sessionId/transcript` returns a bounded newest-first window normalized back into ascending order. `before=<sequence>` pages backward exclusively and `limit=<count>` is capped at the daemon-advertised 200-message ceiling. Run snapshots use the same store and hydrate a 100-message window ending at the selected run, so inspecting an older run never leaks later conversation turns into its context.
 
 ---
 
 ## Known limitations
 
-- Qwen runs through the external CLI today; the vendor seam is ready for bounded in-repo builds under `vendor/qwen-code/`; the Qwen OAuth free tier ended 2026-04-15, so configure a local (Ollama) or paid model backend through Qwen Code settings
-- Gemini defaults to ACP; use `QWEMINI_GEMINI_MODE=stream-json` as fallback if ACP regresses on another machine
-- OpenCode defaults to ACP; use `QWEMINI_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
+- Freebuff's public CLI currently documents an interactive TUI, not a stable non-interactive machine protocol. CodeWave will not scrape the TUI or claim it is daemon-ready; configure an automation bridge or use the OpenCode/local fallback for now
+- Qwen runs through the external CLI today; the Qwen OAuth free tier ended 2026-04-15, so explicitly enable it only after configuring a local/custom or paid model backend
+- Qwen's current headless stream-JSON input processes additional messages as ordered turns rather than proving same-turn steering. CodeWave therefore keeps Qwen steering on the durable follow-up path until its machine protocol exposes an acknowledged in-flight boundary
+- Gemini defaults to ACP; use `CODEWAVE_GEMINI_MODE=stream-json` as fallback if ACP regresses on another machine
+- OpenCode defaults to ACP; use `CODEWAVE_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
+
+See [the 2026 harness research note](docs/harness-research-2026.md) for provider evidence, donor analysis, and the next backend milestones.
 
 ---
 
-## Name
+## Brand
 
-**Qwemini** = **Qwen + Gemini**
-
-A simple open-source name for a shared workspace built around both.
+**CodeWave** is named for the flow of code, tools, and collaborating agents moving through one calm workspace. Its deep-ocean visual identity is deliberately low-glare: soft blue surfaces, muted sea-glass accents, and a wave mark that combines an open **C** with a flowing **W**.
 
 ---
 

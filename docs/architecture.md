@@ -1,4 +1,4 @@
-# CodeWave — Architecture v1
+# CodeWave — Architecture v1.1
 
 ## 1) Product intent
 
@@ -53,11 +53,23 @@ The architecture must support:
 - research/study plugins
 - future mobile or remote companion clients
 
+### 2.7 Calm, durable interface
+The shell uses CodeWave's low-glare ocean-dark visual system as its canonical theme. Provider identity may appear as restrained sea-toned accents, but must not fragment the product into unrelated provider-owned skins. Dense agent activity should remain readable and calm during long coding sessions.
+
+### 2.8 Free-first, explicit paid access
+Provider economics and authentication are product state, not hidden setup trivia.
+
+- Freebuff is the canonical first provider priority, with its cloud/ad-supported boundary shown plainly.
+- OpenCode with local or user-configured models is the enabled automation-ready fallback.
+- Qwen Code and Gemini CLI remain supported, but start disabled and require explicit user configuration.
+- “Installed,” “enabled,” “authenticated,” and “automation-ready” are separate states.
+- Routing may choose only enabled and ready providers. It must never activate a paid provider on the user's behalf.
+
 ---
 
 ## 3) Product shape
 
-Qwemini has 4 main layers:
+CodeWave has 4 main layers:
 
 1. **Shell layer**  
    The user-facing environment: desktop or local web UI, command palette, conversation panes, run inspector, approval surfaces.
@@ -66,7 +78,7 @@ Qwemini has 4 main layers:
    The local supervisor process that manages sessions, providers, tools, state, streaming, and orchestration.
 
 3. **Engine adapter layer**  
-   Provider-specific connectors for Qwen, Gemini, and future engines.
+   Provider-specific connectors for Freebuff, OpenCode, optional Qwen/Gemini, and future engines.
 
 4. **Tool + orchestration layer**  
    MCP manager, internal tools, run queues, role routing, checkpoints, archives, and optional research plugins.
@@ -76,7 +88,7 @@ Qwemini has 4 main layers:
 ## 4) Recommended repo structure
 
 ```text
-qwemini/
+codewave/
   apps/
     desktop/
       src/
@@ -125,6 +137,17 @@ qwemini/
         adapters/
 
     providers/
+      freebuff/
+        src/
+          runner/
+          capabilities/
+
+      opencode/
+        src/
+          runner/
+          acp/
+          parser/
+
       qwen/
         src/
           runner/
@@ -222,7 +245,7 @@ export type WorkbenchEvent = {
   sessionId: string;
   runId: string;
   timestamp: string;
-  source: "qwen" | "gemini" | "system" | "plugin";
+  source: "freebuff" | "opencode" | "qwen" | "gemini" | "system" | "plugin";
   type: string;
   payload: Record<string, unknown>;
 };
@@ -266,30 +289,32 @@ export interface ProviderAdapter {
 }
 ```
 
-### 6.3 v1 adapters
+### 6.3 Shared provider runtime
+
+Adapters use `packages/providers/runtime` for quote-aware command overrides and process launching. It preserves argument boundaries, resolves Windows executables, invokes `.cmd`/`.bat` shims through an explicitly quoted `cmd.exe` command line, and never combines argument arrays with Node's unsafe `shell: true` mode. `packages/providers/transport` owns ordered line delivery, ceilings, cancellation, tracing, terminal-event ownership, and the shared ACP session/tool/permission state machine. The protocol exposes `unsupported`, `runtime-negotiated`, and `native` steering support plus an optional acknowledged run-handle method; provider-specific record schemas, capability proofs, launch arguments, and tool-requirement overrides remain inside adapters.
+
+### 6.4 v1 adapters
+
+#### Freebuff adapter
+Freebuff is the product primary and first registry priority because it offers a genuinely free coding-agent experience. It is cloud-backed and ad-supported, so the UI must never describe it as local or private.
+
+The public upstream CLI currently documents an interactive TUI rather than a stable non-interactive protocol. CodeWave therefore distinguishes installation from automation readiness: the raw CLI may be installed but is not marked ready for daemon runs. A user-configured Freebuff automation bridge may implement the CodeWave JSONL command contract until upstream exposes a machine API.
+
+Bridge protocol v1 can prove in-flight steering at runtime. The bridge announces `inFlightSteering: true`, receives ID-addressed `steer` records on stdin, and must acknowledge each ID as accepted or rejected. The daemon always persists and emits the queued input before attempting delivery. Only an accepted acknowledgement atomically applies it to the current run; missing negotiation, rejection, timeout, close, or a terminal race retains the durable input for ordered follow-up dispatch.
+
+#### OpenCode adapter
+OpenCode is enabled by default as the automation-ready fallback. ACP is preferred; its local Ollama and custom OpenAI-compatible provider support make it the best current no-subscription path.
 
 #### Qwen adapter
-Use as the first production adapter.
+Keep the mature stream-JSON/control adapter, approval mediation, resumability, and checkpoints. Qwen OAuth's free tier has ended, so the registry disables Qwen by default. Users may enable it after configuring a Coding Plan, API key, third-party provider, or compatible local/custom endpoint.
 
-Why first:
-
-- closest to the current use case
-- broad provider/tooling direction
-- good fit for free usage and experimentation
-- strong agentic workflow surface
+Qwen's TUI has a real steering queue, but the current headless stream-JSON session consumes stdin messages as sequential turns. An open input pipe is not sufficient capability evidence, so this adapter declares in-flight steering unsupported until Qwen exposes an acknowledged same-turn machine boundary.
 
 #### Gemini adapter
-Use as the second production adapter.
+Keep ACP and stream-JSON paths for enterprise Code Assist and API-key users. Gemini is disabled by default because individual free and consumer subscription accounts are no longer served by Gemini CLI.
 
-Why second:
-
-- strong built-in tooling and MCP story
-- extension ecosystem and Gemini-native add-ons
-- good donor for provider-specific enhancements
-
-#### Codex reference adapter
-Do not treat this as production v1.  
-Use it only for protocol experiments or future compatibility.
+#### Next adapter candidates
+Prioritize runtimes with structured integration boundaries: goose first (API/ACP/MCP), then Crush when its client/server mode stabilizes. Aider remains useful for local-model compatibility. Do not add a production adapter by scraping an interactive TUI.
 
 ---
 
@@ -302,6 +327,8 @@ It supervises engines, holds the authoritative run ledger, and streams events to
 
 - session lifecycle
 - provider process supervision
+- shared structured-provider transport and exactly-once terminal ownership
+- provider policy, enablement, priority, and health caching
 - event normalization
 - checkpoint persistence
 - approvals routing
@@ -315,6 +342,7 @@ It supervises engines, holds the authoritative run ledger, and streams events to
 SessionManager
 RunManager
 ProviderSupervisor
+ProviderPolicyStore
 EventBus
 ApprovalService
 CheckpointService
@@ -363,6 +391,8 @@ Core entities:
 - plugins
 - routes
 - archived_runs
+
+Provider credentials are intentionally not stored in the CodeWave database or `.codewave/providers.json`. The registry stores only enablement, priority, and command overrides; provider CLIs and environment variables own secrets.
 
 ### 8.3 Checkpoints
 
@@ -413,12 +443,22 @@ Orchestration belongs above adapters.
 
 1. Main run receives user task.
 2. Planner decomposes it.
-3. Main delegates implementation to Qwen.
-4. Reviewer checks result using Gemini.
+3. Main delegates implementation to the highest-ranked ready provider for the required tools.
+4. Reviewer uses a different explicitly enabled provider when one is ready.
 5. Verifier runs checks.
 6. Archive captures artifacts and final decision.
 
 This is the first real form of a multi-agent environment.
+
+Routing order is deterministic:
+
+1. exclude disabled or unhealthy providers
+2. prefer complete live tool coverage
+3. use recent successful tool evidence
+4. honor an explicit session/provider preference when safe
+5. break equivalent ties by registry priority (Freebuff, OpenCode, then explicitly enabled paid/BYOK providers by default)
+
+Fallback is selected before a run begins. CodeWave does not silently migrate an in-flight session across providers.
 
 ---
 
@@ -558,9 +598,17 @@ Trust boundaries matter.
 ### 13.2 Required controls
 
 - explicit approval hooks
+- protocol-version handshake, declared capabilities/limits, and fail-closed per-route client scopes
 - run cancellation
 - provider health checks
 - tool audit logs
+- restart-safe idempotency receipts for mutating commands
+- content-addressed provider-policy revisions on every provider-dependent mutation and persisted session/run lineage
+- one-active-run-per-session enforcement and stale-run fencing
+- persist-first steering with normalized lifecycle events, capability-proven native acknowledgement, serialized delivery attempts, atomic queued-to-applied transitions, and restart-safe queued fallback
+- monotonic per-run event sequences and cursor-bounded stream replay
+- append-only per-session transcript messages with monotonic sequence, parent pointer, run provenance, and source-event provenance
+- bounded transcript snapshot hydration and backward cursor pagination
 - artifact provenance
 - per-workspace policies
 - optional restricted mode
@@ -576,6 +624,16 @@ Keep v1 local and inspectable.
 ---
 
 ## 14) Donor map
+
+### Current harness references
+
+- **Codex**: app-server separation, explicit thread/turn lifecycle, approvals, streamed items, steering, and per-turn policy.
+- **OpenClaw**: authoritative gateway, versioned handshake, scopes, idempotency, event sequencing, payload limits, append-only transcript trees, and compaction discipline.
+- **Hermes Agent and goose**: provider-neutral tools, skills, memory, MCP, recipes, structured API/ACP boundaries, and explicit security controls.
+- **Grok Build**: inspectable context assembly/tool dispatch plus local configuration for skills, plugins, hooks, MCP, and subagents.
+- **Odysseus**: a self-hosted workspace above local/API models with product-owned research, comparison, documents, memory, and scheduled workflows.
+
+See [the 2026 harness research note](harness-research-2026.md) for primary sources and adopted versus deferred decisions.
 
 ### 14.1 Qwen Code donates
 
@@ -623,8 +681,10 @@ Keep v1 local and inspectable.
 - local daemon
 - shared event protocol
 - SQLite state
-- Qwen adapter
-- Gemini adapter
+- daemon-owned provider registry
+- Freebuff primary policy plus automation-bridge seam
+- OpenCode ACP/local fallback
+- opt-in Qwen and Gemini adapters
 - session view
 - active run view
 - approvals flow
@@ -650,29 +710,28 @@ Keep v1 local and inspectable.
 
 ---
 
-## 16) First implementation slice
+## 16) Current implementation slice
 
 ### Slice goal
 
-Get to a working single-machine environment where one task can be executed by Qwen or Gemini through one common shell.
+Keep the single-machine workspace usable after the free-tier changes while strengthening the daemon/provider boundary.
 
 ### Slice contents
 
-1. create daemon
-2. create protocol package
-3. create SQLite state package
-4. implement Qwen adapter
-5. implement Gemini adapter
-6. build session UI
-7. stream normalized events to UI
-8. add approval requests
-9. save artifacts and checkpoints
-10. allow provider switching per session
+1. persist provider enablement, priority, and command configuration
+2. default product policy to Freebuff and keep OpenCode/local ready as fallback
+3. require explicit configuration for Qwen and Gemini
+4. expose access/data boundaries and setup state to the shell
+5. cache capability-aware health probes
+6. route from live tool evidence plus explicit provider priority
+7. validate policy persistence, environment precedence, and routing deterministically
 
 ### Slice success criteria
 
 - user can open a workspace
-- user can choose Qwen or Gemini
+- user can see, enable, disable, prioritize, and configure provider commands
+- paid providers cannot be selected until explicitly enabled
+- a missing or interactive-only Freebuff runtime falls back to an enabled automation-ready provider before session creation
 - prompt launches a run
 - output streams live
 - tool activity is visible
@@ -684,40 +743,50 @@ Get to a working single-machine environment where one task can be executed by Qw
 
 ## 17) Phase roadmap
 
-### Phase 1 — Unified single-agent shell
+### Phase 1 — Unified single-agent shell (implemented)
 
 - daemon
 - protocol
 - state
-- Qwen + Gemini
+- Freebuff, OpenCode, Qwen, and Gemini adapter seams
 - approvals
 - checkpoints
 
-### Phase 2 — Shared tool plane
+### Phase 2 — Shared tool plane (implemented, hardening)
 
 - MCP manager
 - tool registry
 - permission policies
 - better audit logs
 
-### Phase 3 — Orchestration lite
+### Phase 3 — Orchestration lite (implemented, hardening)
 
 - planner role
 - reviewer role
 - verifier role
 - board/timeline improvements
 
-### Phase 4 — Research plugins
+### Phase 4 — Structured harness protocol
+
+- shared shell-safe provider process launcher, ordered line-bounded JSONL/Qwen control transport, exactly-once terminal ownership, and serialized ACP session/tool/permission mapping (implemented)
+- client handshake, protocol version, capabilities, limits, and fail-closed scopes (implemented)
+- queued steering with expected-run fencing plus runtime-negotiated Freebuff bridge steering and safe rejection/timeout/terminal/restart fallback (implemented)
+- durable idempotency keys and configuration revision hashes (implemented); client handshake scopes remain
+- monotonic event sequences and cursor-bounded SSE replay (implemented)
+- append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
+
+### Phase 5 — Research plugins
 
 - NotebookLM plugin
 - source bundles
 - briefing artifacts
 
-### Phase 5 — Advanced routing
+### Phase 6 — Advanced routing and evals
 
 - dynamic engine selection
 - cost/speed preference routing
 - loop control and reviewer stop conditions
+- trace fixtures, recovery drills, and measurable harness evaluations
 
 ---
 
@@ -731,21 +800,18 @@ Get to a working single-machine environment where one task can be executed by Qw
 6. Every meaningful action should produce normalized events.
 7. Every run should be resumable or explicitly marked unrecoverable.
 8. Every tool action should be attributable and inspectable.
+9. Provider installation, enablement, authentication, and automation readiness are distinct states.
+10. Routing never enables a provider or migrates an in-flight session implicitly.
+11. Provider-dependent mutations must name the reviewed provider-policy revision and fail closed when it is stale.
+12. Protected daemon routes require a live negotiated client connection with the exact route scope; health and handshake are the only public API surfaces.
+13. Session transcripts are append-only, parent-linked daemon state. Run prompts and normalized messages must commit atomically with their owning run/event, and snapshot hydration must remain bounded.
+14. ACP notifications must be serialized before normalization, and each tool invocation may emit at most one terminal tool outcome even when a provider repeats terminal updates.
+15. Steering is persist-first and acknowledgement-based. A writable provider stdin is not capability proof; unacknowledged inputs must remain queued and restart-recoverable.
 
 ---
 
 ## 19) Final recommendation
 
-Start with a **new repo**, not a giant fork.
+Keep CodeWave product-owned: daemon + normalized protocol + state + adapters + orchestration. Integrate providers through stable machine boundaries, prefer ACP/API/structured streams, and reject terminal scraping as a production architecture.
 
-Use:
-- **Qwen Code** as the first engine donor "https://github.com/QwenLM/qwen-code.git"
-- **Gemini CLI** as the second engine donor "https://github.com/google-gemini/gemini-cli.git"
-- **Codex** as the app-server/client-boundary reference "https://github.com/openai/codex.git"
-- **Switchboard** as the orchestration donor "https://github.com/TentacleOpera/switchboard.git"
-- **oh-my-gemini** as the resumability donor "https://github.com/jjongguet/oh-my-gemini.git"
-- **notebooklm-py** as an optional research plugin "https://github.com/teng-lin/notebooklm-py.git"
-
-Build the product around a daemon + normalized protocol + provider adapters + orchestration layer.
-
-That keeps the environment truly yours.
+The current provider order is Freebuff first, OpenCode/local second, and explicitly enabled paid/BYOK providers after that. With shared structured transport and capability-proven Freebuff bridge steering in place, the next major backend investments are explicit transcript compaction/memory hooks, task-level trace evaluation, and additional native steering adapters only where their machine protocols can acknowledge delivery, as described in [the 2026 harness research note](harness-research-2026.md).

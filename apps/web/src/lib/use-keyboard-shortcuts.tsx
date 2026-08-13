@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import type { ApprovalPolicy } from '@qwemini/protocol';
+import type { ApprovalPolicy } from '@codewave/protocol';
 import type { ShellControlsState } from './shell-controls-state';
 import type { ShellPanelsState } from './shell-panels-state';
 import type { RailView, RunViewTab, UtilityView } from './shell-format';

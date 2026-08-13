@@ -1,4 +1,4 @@
-import type { RunStatus } from '@qwemini/protocol';
+import type { RunStatus } from '@codewave/protocol';
 import type { RunViewState } from '../lib/run-view-state';
 import { EmptyState } from './EmptyState';
 

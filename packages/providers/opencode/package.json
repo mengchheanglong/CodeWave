@@ -1,9 +1,11 @@
 {
-  "name": "@qwemini/provider-opencode",
+  "name": "@codewave/provider-opencode",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@qwemini/protocol": "file:../../protocol"
+    "@codewave/protocol": "file:../../protocol",
+    "@codewave/provider-runtime": "file:../runtime",
+    "@codewave/provider-transport": "file:../transport"
   },
   "exports": {
     ".": "./src/index.ts"

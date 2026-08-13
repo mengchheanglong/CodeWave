@@ -3,7 +3,7 @@ import type {
   RoutingToolRequirement,
   RunMode,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type {
   DelegateRole,
   FollowUpKind,
@@ -17,6 +17,7 @@ export type SessionDraftPatch = Partial<
 >;
 
 export type LoadArchive = () => Promise<void>;
+export type RefreshRuntime = () => Promise<void>;
 export type RefreshRecommendation = () => Promise<void>;
 export type SelectRun = (runId: string) => Promise<void>;
 export type SelectSession = (sessionId: string) => Promise<boolean>;
@@ -45,6 +46,7 @@ export type TransitionToNewSession = (
 ) => Promise<boolean>;
 
 export type ControllerRequesterMap = {
+  runtimeRefreshRequester: RefreshRuntime;
   runSelectionRequester: SelectRun;
   sessionSelectionRequester: SelectSession;
   approvalResolutionRequester: ResolveApproval;

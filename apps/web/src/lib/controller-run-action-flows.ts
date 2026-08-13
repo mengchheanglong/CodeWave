@@ -5,8 +5,8 @@ import type {
   RoutingToolRequirement,
   RunMode,
   RunSnapshot,
-} from '@qwemini/protocol';
-import { isRoutingToolRequirement } from '@qwemini/protocol';
+} from '@codewave/protocol';
+import { isRoutingToolRequirement } from '@codewave/protocol';
 import type { DaemonApi } from './daemon-api.js';
 import { formatRecommendation } from '../shell-status-summary.js';
 import type { DelegateRole, FollowUpKind } from './shell-controls-state.js';
@@ -67,10 +67,10 @@ export function createControllerRunActionFlows(
   } = deps;
 
   function toProviderId(value: ProviderId): ProviderId {
-    if (value === 'gemini' || value === 'opencode' || value === 'freebuff') {
+    if (value === 'qwen' || value === 'gemini' || value === 'opencode') {
       return value;
     }
-    return 'qwen';
+    return 'freebuff';
   }
 
   function toApprovalPolicy(value: ApprovalPolicy): ApprovalPolicy {
@@ -93,6 +93,16 @@ export function createControllerRunActionFlows(
     return values.filter((value): value is RoutingToolRequirement =>
       isRoutingToolRequirement(value),
     );
+  }
+
+  function requireProviderRevision(): string {
+    const revision = state.runtime?.providerRegistry.revision;
+    if (!revision) {
+      throw new Error(
+        'Provider policy is unavailable. Refresh the runtime, review the provider settings, and retry.',
+      );
+    }
+    return revision;
   }
 
   async function refreshRecommendation() {
@@ -169,6 +179,7 @@ export function createControllerRunActionFlows(
     const payload = {
       workspacePath,
       providerId: toProviderId(state.providerIdDraft),
+      expectedProviderRevision: requireProviderRevision(),
       approvalPolicy: toApprovalPolicy(state.sessionApprovalPolicyDraft),
     };
 
@@ -181,6 +192,26 @@ export function createControllerRunActionFlows(
   async function startRun() {
     const prompt = state.promptDraft.trim();
     if (!prompt) {
+      return;
+    }
+
+    if (
+      state.selectedRun &&
+      ['queued', 'running', 'awaiting_approval'].includes(state.selectedRun.status)
+    ) {
+      const response = await api.steerRun(state.selectedRun.id, {
+        prompt,
+        expectedRunId: state.selectedRun.id,
+        expectedProviderRevision: requireProviderRevision(),
+      });
+      state.promptDraft = '';
+      applyRunSnapshot(response.runSnapshot);
+      state.runUpdateFeedbackMessage =
+        response.delivery === 'native'
+          ? 'Update delivered to the active run.'
+          : 'Update queued safely. CodeWave will continue it in this thread when the active run settles.';
+      emitShellSummaryState();
+      syncRouteAction();
       return;
     }
 
@@ -203,6 +234,7 @@ export function createControllerRunActionFlows(
     const snapshot = await api.startRun(session.id, {
       prompt,
       mode: state.runModeDraft,
+      expectedProviderRevision: requireProviderRevision(),
     });
 
     state.promptDraft = '';
@@ -223,6 +255,7 @@ export function createControllerRunActionFlows(
     const response = await api.routePrompt({
       prompt,
       workspacePath,
+      expectedProviderRevision: requireProviderRevision(),
       sessionId: state.selectedSession?.id || null,
       preferredProviderId: toProviderId(getPreferredProviderId()),
       approvalPolicy: toApprovalPolicy(getRouteApprovalPolicy()),
@@ -244,6 +277,7 @@ export function createControllerRunActionFlows(
 
     const response = await api.createFollowUpRun(state.selectedRun.id, {
       kind,
+      expectedProviderRevision: requireProviderRevision(),
       preferredProviderId: state.selectedSession?.providerId || null,
       approvalPolicy: toApprovalPolicy(getRouteApprovalPolicy()),
     });
@@ -266,6 +300,7 @@ export function createControllerRunActionFlows(
     const response = await api.delegateRun(state.selectedRun.id, {
       prompt,
       role: toDelegateRole(state.delegateRoleDraft),
+      expectedProviderRevision: requireProviderRevision(),
       preferredProviderId: state.selectedSession?.providerId || null,
       approvalPolicy: toApprovalPolicy(getRouteApprovalPolicy()),
       requiredTools: toRoutingToolRequirements(getRequiredTools()),
@@ -288,6 +323,7 @@ export function createControllerRunActionFlows(
 
     const response = await api.handoffRun(state.selectedRun.id, {
       prompt,
+      expectedProviderRevision: requireProviderRevision(),
       preferredProviderId: state.selectedSession?.providerId || null,
       approvalPolicy: toApprovalPolicy(getRouteApprovalPolicy()),
       requiredTools: toRoutingToolRequirements(getRequiredTools()),
@@ -324,6 +360,7 @@ export function createControllerRunActionFlows(
     }
 
     const session = await api.updateSession(state.selectedSession.id, {
+      expectedProviderRevision: requireProviderRevision(),
       approvalPolicy: toApprovalPolicy(state.selectedSessionApprovalPolicyDraft),
     });
 

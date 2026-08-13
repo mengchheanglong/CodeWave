@@ -8,14 +8,16 @@ import type {
   OrchestrationFlowSummary,
   ProviderCapabilities,
   ProviderId,
+  RuntimeInfo,
   SessionToolRegistration,
   ToolInvocationRecord,
   ToolPlaneProviderSignal,
   ToolPlaneSnapshot,
+  TranscriptWindow,
   WorkbenchEvent,
   WorkbenchRun,
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import type {
   ShellPanelsState,
 } from './shell-panels-state.js';
@@ -54,11 +56,14 @@ function toRunSummary(
     createdAt: run.createdAt,
     completedAt: run.completedAt,
     prompt: run.prompt,
+    providerConfigurationRevision: run.providerConfigurationRevision,
   };
 }
 
 function toRunEvent(event: WorkbenchEvent): RunViewState['events'][number] {
   return {
+    id: event.id,
+    sequence: event.sequence,
     type: event.type,
     timestamp: event.timestamp,
     payload: event.payload,
@@ -76,6 +81,7 @@ export function toProviderCapabilities(
     daemonApprovalMediation: capabilities.daemonApprovalMediation,
     resumableSessions: capabilities.resumableSessions,
     checkpointEvents: capabilities.checkpointEvents,
+    inFlightSteering: capabilities.inFlightSteering ?? 'unsupported',
   };
 }
 
@@ -336,6 +342,7 @@ export function buildRunViewState(input: {
   runs: WorkbenchRun[];
   selectedRun: WorkbenchRun | null;
   events: WorkbenchEvent[];
+  transcript: TranscriptWindow | null;
   contextChars: number;
   undoAvailable: boolean;
   undoDetail: string | null;
@@ -347,6 +354,7 @@ export function buildRunViewState(input: {
     ),
     selectedRun: toRunSummary(input.selectedRun),
     events: input.events.map((entry) => toRunEvent(entry)),
+    transcript: input.transcript,
     contextChars: input.contextChars,
     undoAvailable: input.undoAvailable,
     undoDetail: input.undoDetail,
@@ -357,6 +365,7 @@ export function buildShellPanelsState(input: {
   selectedSessionId: string | null;
   selectedProviderId: ProviderId | null;
   selectedSessionCapabilities: ProviderCapabilities | null;
+  runtime: RuntimeInfo | null;
   recentSessions: WorkbenchSession[];
   recentSessionsMessage: string | null;
   archiveSessions: ArchiveSessionSummary[];
@@ -377,6 +386,9 @@ export function buildShellPanelsState(input: {
     selectedSessionCapabilities: toProviderCapabilities(
       input.selectedSessionCapabilities,
     ),
+    providerRegistry: input.runtime?.providerRegistry ?? null,
+    daemonProtocol: input.runtime?.protocol ?? null,
+    providerHealth: input.runtime?.providers ?? [],
     recentSessions: input.recentSessions.map((entry) =>
       toSessionSummary(entry, archiveBySessionId.get(entry.id)?.latestRun ?? null),
     ),

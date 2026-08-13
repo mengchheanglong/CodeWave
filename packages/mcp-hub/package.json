@@ -1,9 +1,9 @@
 {
-  "name": "@qwemini/mcp-hub",
+  "name": "@codewave/mcp-hub",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@qwemini/protocol": "file:../protocol"
+    "@codewave/protocol": "file:../protocol"
   }
 }

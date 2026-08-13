@@ -1,4 +1,4 @@
-import type { RunStatus } from '@qwemini/protocol';
+import type { RunStatus } from '@codewave/protocol';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
 
 type OrchestrationSwimlanesProps = {

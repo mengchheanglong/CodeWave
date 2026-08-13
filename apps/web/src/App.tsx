@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -8,7 +9,7 @@ import {
 import type {
   ApprovalPolicy,
   ProviderId,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import {
   initializeShell,
   requestApprovalResolution,
@@ -19,6 +20,7 @@ import {
   requestFollowUpRun,
   requestHandoffPrompt,
   requestRecoverSelectedSession,
+  requestRuntimeRefresh,
   requestRoutePrompt,
   requestRunSelection,
   requestSelectedSessionPolicyDraftChange,
@@ -26,6 +28,7 @@ import {
   requestSessionDraftChange,
   requestSessionSelection,
   requestStartRun,
+  requestUndoRun,
   requestWorkspaceDraftCommit,
   subscribeShellControlsState,
   subscribeShellPanelsState,
@@ -34,6 +37,7 @@ import {
 } from './app-controller';
 import { ComparePanel } from './components/ComparePanel';
 import { PromptModal } from './components/PromptModal';
+import { ProviderSettings } from './components/ProviderSettings';
 import { QuickOpen } from './components/QuickOpen';
 import { Composer } from './components/shell/Composer';
 import { ConversationHeader } from './components/shell/ConversationHeader';
@@ -71,6 +75,7 @@ import {
 import { useShellLayout } from './lib/use-shell-layout';
 import { useAutoResizeTextarea } from './lib/use-auto-resize-textarea';
 import { useKeyboardShortcuts } from './lib/use-keyboard-shortcuts';
+import { useFocusContainment } from './lib/use-focus-containment';
 import { createDaemonApi } from './lib/daemon-api';
 import {
   applyTheme,
@@ -93,7 +98,7 @@ import {
   type UtilityView,
 } from './lib/shell-format';
 
-const UTILITY_COLLAPSED_KEY = 'qwemini:utility-collapsed';
+const UTILITY_COLLAPSED_KEY = 'codewave:utility-collapsed';
 
 const RAIL_VIEW_ORDER: RailView[] = ['recent', 'history', 'archive', 'flows'];
 const RUN_VIEW_ORDER: RunViewTab[] = ['chat', 'timeline'];
@@ -177,13 +182,23 @@ export default function App() {
   const [timelineExpandSignal, setTimelineExpandSignal] = useState(0);
   const [showThinking, setShowThinking] = useState(true);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
+  const [pendingUndoDetail, setPendingUndoDetail] = useState<string | null>(null);
+  const [compactNavigationOpen, setCompactNavigationOpen] = useState(false);
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
   const [appTheme, setAppTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
-  const compareApiRef = useRef(createDaemonApi());
+  const compareApiRef = useRef(
+    createDaemonApi({
+      onProviderRevisionConflict: async () => {
+        await requestRuntimeRefresh();
+      },
+    }),
+  );
 
   useEffect(() => {
     applyTheme(appTheme);
@@ -199,6 +214,15 @@ export default function App() {
   ]);
 
   const railFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const compactNavigationToggleRef = useRef<HTMLButtonElement | null>(null);
+  const compactNavigationRef = useRef<HTMLElement | null>(null);
+
+  const closeCompactNavigation = useCallback((restoreFocus = false) => {
+    setCompactNavigationOpen(false);
+    if (restoreFocus) {
+      window.setTimeout(() => compactNavigationToggleRef.current?.focus(), 0);
+    }
+  }, []);
 
   const {
     leftColumnWidth,
@@ -206,6 +230,12 @@ export default function App() {
     startLeftResize,
     startRightResize,
   } = useShellLayout();
+
+  useFocusContainment(
+    compactNavigationOpen,
+    compactNavigationRef,
+    railFilterInputRef,
+  );
 
   const inspectorViews = useMemo(
     () => splitRunInspectorViews(runViewState.events),
@@ -244,6 +274,59 @@ export default function App() {
       );
     } catch {}
   }, [utilityCollapsed]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const compactWorkbench = window.matchMedia('(max-width: 1180px)');
+    const collapseForCompactWorkbench = () => {
+      if (compactWorkbench.matches) {
+        setUtilityCollapsed(true);
+      }
+    };
+
+    collapseForCompactWorkbench();
+    compactWorkbench.addEventListener('change', collapseForCompactWorkbench);
+    return () => {
+      compactWorkbench.removeEventListener('change', collapseForCompactWorkbench);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const compactNavigation = window.matchMedia('(max-width: 700px)');
+    const closeAfterDesktopResize = () => {
+      if (!compactNavigation.matches) {
+        setCompactNavigationOpen(false);
+      }
+    };
+
+    closeAfterDesktopResize();
+    compactNavigation.addEventListener('change', closeAfterDesktopResize);
+    return () => {
+      compactNavigation.removeEventListener('change', closeAfterDesktopResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!compactNavigationOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCompactNavigation(true);
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [closeCompactNavigation, compactNavigationOpen]);
 
   useEffect(() => {
     if (!runMenuOpen) {
@@ -455,6 +538,12 @@ export default function App() {
   const activeSessionId =
     shellPanelsState.selectedSessionId?.slice(0, 8) ?? 'none';
   const hasActiveRun = Boolean(runViewState.selectedRun);
+  const runAcceptsSteering = Boolean(
+    runViewState.selectedRun &&
+      ['queued', 'running', 'awaiting_approval'].includes(
+        runViewState.selectedRun.status,
+      ),
+  );
   const hasPromptDraft = shellControlsState.prompt.trim().length > 0;
   const conversationTitle = hasActiveSession ? shellSummaryState.runTitle : 'New chat';
   const conversationWorkspace = shellControlsState.workspacePath
@@ -469,7 +558,7 @@ export default function App() {
     const segments = normalized.split(/[\\/]/).filter(Boolean);
     const leaf = segments.at(-1) ?? normalized;
     const parent = segments.at(-2) ?? null;
-    if (leaf.toLowerCase() === 'qwemini' && parent) {
+    if (leaf.toLowerCase() === 'codewave' && parent) {
       return `${parent}/${leaf}`;
     }
 
@@ -513,11 +602,15 @@ export default function App() {
     100,
     Math.round((contextUsageChars / 250000) * 100),
   );
-  const composerPlaceholder = hasActiveSession
-    ? 'Ask for follow-up changes'
+  const composerPlaceholder = runAcceptsSteering
+    ? 'Queue an update while the agent works'
+    : hasActiveSession
+      ? 'Ask for follow-up changes'
     : 'Ask CodeWave to work on this workspace';
-  const sendHelperPrimary = hasActiveSession
-    ? 'Enter to send'
+  const sendHelperPrimary = runAcceptsSteering
+    ? 'Enter to queue update'
+    : hasActiveSession
+      ? 'Enter to send'
     : 'Enter to send and create the session';
   const sendHelperSecondary = 'Shift+Enter adds a new line';
   const composerHint = shellControlsState.promptDisabled
@@ -641,6 +734,7 @@ export default function App() {
         open={compareVisible}
         prompt={shellControlsState.prompt}
         workspacePath={shellControlsState.workspacePath}
+        providerRevision={shellPanelsState.providerRegistry?.revision ?? null}
         api={compareApiRef.current}
         onClose={() => {
           setCompareVisible(false);
@@ -657,10 +751,22 @@ export default function App() {
         contextUsagePercent={contextUsagePercent}
         attentionBellOn={attentionBellOn}
         onToggleBell={handleToggleBell}
+        compactNavigationOpen={compactNavigationOpen}
+        onToggleCompactNavigation={() => {
+          setCompactNavigationOpen((current) => {
+            if (!current) {
+              setUtilityCollapsed(true);
+            }
+            return !current;
+          });
+        }}
+        compactNavigationToggleRef={compactNavigationToggleRef}
       />
 
       <section
-        className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}`}
+        className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}${
+          compactNavigationOpen ? ' compact-navigation-open' : ''
+        }`}
         style={shellStyle}
       >
         <Sidebar
@@ -668,7 +774,14 @@ export default function App() {
           shellPanelsState={shellPanelsState}
           shellSummaryState={shellSummaryState}
           runViewState={runViewState}
-          onAddFolder={handleAddFolderToRail}
+          onAddFolder={() => {
+            closeCompactNavigation();
+            handleAddFolderToRail();
+          }}
+          onOpenProviderSettings={() => {
+            closeCompactNavigation();
+            setProviderSettingsOpen(true);
+          }}
           showSessionSetup={showSessionSetup}
           onToggleSessionSetup={() => {
             setShowSessionSetup((current) => !current);
@@ -684,9 +797,11 @@ export default function App() {
           filteredArchiveSessions={filteredArchiveSessions}
           filteredOrchestrationFlows={filteredOrchestrationFlows}
           onSelectSession={(sessionId) => {
+            closeCompactNavigation();
             void requestSessionSelection(sessionId);
           }}
           onSelectRun={(runId) => {
+            closeCompactNavigation();
             void requestRunSelection(runId);
           }}
           onDeleteWorkspaceGroup={(workspacePath) => {
@@ -711,10 +826,22 @@ export default function App() {
             })();
           }}
           onDeleteSession={(sessionId) => {
-            void requestSessionDelete(sessionId);
+            closeCompactNavigation();
+            setPendingDeleteSessionId(sessionId);
           }}
           railFilterInputRef={railFilterInputRef}
+          navigationRef={compactNavigationRef}
         />
+
+        {compactNavigationOpen ? (
+          <button
+            type="button"
+            className="compact-navigation-scrim"
+            aria-label="Close navigation"
+            tabIndex={-1}
+            onClick={() => closeCompactNavigation(true)}
+          ></button>
+        ) : null}
 
         <div
           className="column-resize-handle dock-resize-handle"
@@ -728,6 +855,8 @@ export default function App() {
           className={`content-shell panel${focusView ? ' content-shell-focus' : ''}${
             utilityCollapsed ? ' content-shell-utility-collapsed' : ''
           }`}
+          aria-hidden={compactNavigationOpen || undefined}
+          inert={compactNavigationOpen ? '' : undefined}
         >
           <main className="run-column panes-main">
             <ThreadTabs
@@ -759,7 +888,7 @@ export default function App() {
               onDeleteSession={
                 hasActiveSession && shellPanelsState.selectedSessionId
                   ? () => {
-                      void requestSessionDelete(shellPanelsState.selectedSessionId!);
+                      setPendingDeleteSessionId(shellPanelsState.selectedSessionId!);
                     }
                   : undefined
               }
@@ -782,6 +911,7 @@ export default function App() {
                 setUtilityView('files');
                 setUtilityCollapsed(false);
               }}
+              onRequestUndo={setPendingUndoDetail}
             />
             <RunSurface
               runViewState={runViewState}
@@ -806,6 +936,7 @@ export default function App() {
               shellSummaryState={shellSummaryState}
               hasActiveSession={hasActiveSession}
               hasActiveRun={hasActiveRun}
+              runAcceptsSteering={runAcceptsSteering}
               conversationWorkspace={conversationWorkspace}
               activeProviderId={activeProviderId}
               activeApprovalPolicy={activeApprovalPolicy}
@@ -860,11 +991,50 @@ export default function App() {
         isOpen={isFolderModalOpen}
         title="Open Folder Workspace"
         subtitle="Specify the local directory where CodeWave should run agent tasks."
-        placeholder="e.g. C:\Users\User\archive\retired\qwemini"
+        placeholder="e.g. C:\Users\User\archive\retired\codewave"
         defaultValue={shellControlsState.workspacePath}
         confirmLabel="Open Folder"
         onConfirm={handleFolderConfirm}
         onClose={() => setIsFolderModalOpen(false)}
+      />
+      <PromptModal
+        isOpen={pendingDeleteSessionId !== null}
+        mode="confirm"
+        destructive
+        title="Delete this thread?"
+        subtitle="This permanently deletes the thread and its stored run history. This action cannot be undone."
+        defaultValue={pendingDeleteSessionId ?? ''}
+        confirmLabel="Delete thread"
+        onConfirm={(sessionId) => {
+          if (sessionId) void requestSessionDelete(sessionId);
+        }}
+        onClose={() => setPendingDeleteSessionId(null)}
+      />
+      <PromptModal
+        isOpen={pendingUndoDetail !== null}
+        mode="confirm"
+        destructive
+        title="Undo this run?"
+        subtitle={`${pendingUndoDetail || 'Tracked workspace changes made during this run will be reverted.'} This action restores the tracked workspace state from before the run.`}
+        defaultValue="undo"
+        confirmLabel="Undo run"
+        onConfirm={() => {
+          void requestUndoRun();
+        }}
+        onClose={() => {
+          setPendingUndoDetail(null);
+          window.setTimeout(() => {
+            document
+              .querySelector<HTMLButtonElement>('.run-toolbar-v2-menu > button')
+              ?.focus();
+          }, 0);
+        }}
+      />
+      <ProviderSettings
+        open={providerSettingsOpen}
+        registry={shellPanelsState.providerRegistry}
+        health={shellPanelsState.providerHealth}
+        onClose={() => setProviderSettingsOpen(false)}
       />
     </div>
   );

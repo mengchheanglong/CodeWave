@@ -1,6 +1,6 @@
 import type {
   WorkbenchSession,
-} from '@qwemini/protocol';
+} from '@codewave/protocol';
 import { toast } from '../toasts.js';
 import type {
   LoadArchive,
@@ -50,6 +50,7 @@ export function createControllerBootstrapHelpers(
   function clearRunSelectionView(title: string) {
     state.selectedRun = null;
     state.events = [];
+    state.transcript = null;
     state.contextChars = 0;
     state.undoAvailable = false;
     state.undoDetail = null;
@@ -62,6 +63,7 @@ export function createControllerBootstrapHelpers(
     state.runStatusClassName = 'status-pill status-idle';
     state.runStateNoteMessage =
       'Start a run to see normalized events, approvals, and artifacts.';
+    state.runUpdateFeedbackMessage = null;
     emitRunViewState();
     emitShellPanelsState();
     syncCancelAction();
