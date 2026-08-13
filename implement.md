@@ -1894,3 +1894,12 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Implemented all six vectors against isolated real daemon child processes and a protocol-qualified synthetic Freebuff bridge. The harness performs external parent-process kills at named test-only barriers, verifies cleanup, and refuses to weaken expected outcomes to match implementation behavior.
 - Added mandatory keyed mutations, strict UTF-8/canonical JSON and declared-schema validation, canonical query hashing, versioned receipt provenance, honest `outcome_unknown` recovery, atomic terminal persistence, and a persisted launch-intent/bridge-acknowledgement correlation.
 - Added safe workspace file preview/create/CAS-edit APIs and the matching shell lifecycle: conflict reload, bounded draft recovery, binary and truncated-file refusal, rename/delete confirmation, compact-layout keyboard recovery, and real desktop/compact browser QA.
+
+## Stable ACP v1 runtime — 2026-08-13
+
+- Exact-pinned `@agentclientprotocol/sdk` 1.3.0 and kept production on stable wire protocol v1; no experimental-v2 import or mixed state machine is permitted.
+- Replaced deprecated `ClientSideConnection`/`unstable_resumeSession` usage with the SDK app client, typed method calls, CodeWave client metadata, and exact protocol-version rejection.
+- Replaced quiet-period replay guessing with capability-gated stable `session/resume` or `session/load`; agents that advertise neither now fail closed instead of silently loading or creating replacement state.
+- Added a 5-second bounded initialize path, a 1 MiB stdout-record fence, absolute existing-workspace validation, bounded provider session IDs, message-ID-aware assembly, wrong-session rejection, and deterministic child/stream cleanup.
+- Corrected permission semantics: one-time allow/reject choices win over persistent choices, a missing semantically matching option returns ACP cancellation, and run cancellation resolves pending provider permissions before sending `session/cancel`.
+- Added `npm run check:acp` with an SDK-app fixture covering exact dependency integrity, initialize metadata, new/resume/load/no-continuity paths, replay suppression, interleaved messages, mismatch/timeout/malformed/oversized/EOF failures, stop reasons, permissions, cancellation races, daemon approval ordering, terminal uniqueness, and child cleanup.

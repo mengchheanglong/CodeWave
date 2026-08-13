@@ -110,7 +110,7 @@ simple, composable, and built for experimentation.
 - **Local daemon** — HTTP server on `127.0.0.1:4120` serving both REST APIs and the web shell
 - **SQLite state** — persistent sessions, runs, events, append-only transcript messages, approvals, checkpoints, tool invocations, and session registry with WAL journaling
 - **Shared protocol** — normalized `WorkbenchEvent` stream across providers (run.started, tool.requested, approval.resolved, etc.)
-- **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share one serialized ACP session/tool/permission state machine
+- **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share an exact-pinned stable ACP v1 runtime with capability-gated continuity and cancellation-aware permissions
 - **Scoped client handshake** — web and automation clients negotiate protocol v1, daemon capabilities, granular scopes, connection lifetime, and transport limits before protected API access
 - **Cursor-bounded event replay** — monotonic per-run event sequences, SSE resume cursors, and a 500-event replay ceiling keep reconnects ordered without rehydrating unbounded history
 - **Durable session memory** — prompts and normalized final messages are atomically recorded in a parent-linked, monotonic transcript chain; snapshots hydrate the latest 100 messages and the transcript API paginates backward up to 200 at a time
@@ -223,6 +223,7 @@ Validation:
 
 ```bash
 npm run check                           # TypeScript
+npm run check:acp                       # Stable ACP v1 protocol/lifecycle/permission E2E
 npm test -w @codewave/web                # React interaction/property suite
 npm run check:shell                      # Shell usability tests
 npm run check:providers                  # Provider policy and routing tests

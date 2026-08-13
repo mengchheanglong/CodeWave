@@ -849,6 +849,7 @@ export class CodeWaveDaemon {
   private readonly nativeSteeringChains = new Map<string, Promise<void>>();
   private readonly steeringFallbackSchedules = new Set<string>();
   private readonly sessionRunReservations = new Set<string>();
+  private readonly cancellationRequestedRuns = new Set<string>();
   private server: Server | null = null;
   private stopped = false;
 
@@ -4515,9 +4516,18 @@ export class CodeWaveDaemon {
       return this.getRunSnapshot(runId);
     }
 
+    this.cancellationRequestedRuns.add(runId);
+    await this.cancelPendingApprovalsForRun(
+      runId,
+      'Run cancellation resolved the pending provider permission.',
+    );
     const handle = this.runHandles.get(runId);
     if (handle) {
-      await handle.cancel();
+      try {
+        await handle.cancel();
+      } catch {
+        // The daemon-owned terminal fence below still records cancellation.
+      }
     }
 
     const current = this.stateStore.getRun(runId);
@@ -4535,6 +4545,7 @@ export class CodeWaveDaemon {
       });
     }
 
+    this.cancellationRequestedRuns.delete(runId);
     return this.getRunSnapshot(runId);
   }
 
@@ -4589,6 +4600,17 @@ export class CodeWaveDaemon {
     run: WorkbenchRun,
     request: ProviderApprovalRequest,
   ): Promise<ProviderApprovalDecision> {
+    const currentRun = this.stateStore.getRun(run.id);
+    if (
+      !currentRun ||
+      isTerminalRunStatus(currentRun.status) ||
+      this.cancellationRequestedRuns.has(run.id)
+    ) {
+      return {
+        behavior: 'cancel',
+        message: 'The run is cancelling, so this provider permission was cancelled.',
+      };
+    }
     const approval: ApprovalRecord = {
       id: randomUUID(),
       sessionId: run.sessionId,
@@ -4691,6 +4713,7 @@ export class CodeWaveDaemon {
   private async finalizeApproval(
     approvalId: string,
     body: ResolveApprovalRequest,
+    providerDecisionOverride?: ProviderApprovalDecision,
   ): Promise<ProviderApprovalDecision> {
     const approval = this.stateStore.getApproval(approvalId);
     if (!approval) {
@@ -4738,11 +4761,27 @@ export class CodeWaveDaemon {
           };
 
     if (pending) {
-      pending.resolve(decision);
+      pending.resolve(providerDecisionOverride ?? decision);
       this.pendingApprovals.delete(approval.id);
     }
 
-    return decision;
+    return providerDecisionOverride ?? decision;
+  }
+
+  private async cancelPendingApprovalsForRun(
+    runId: string,
+    reason: string,
+  ): Promise<void> {
+    const pending = [...this.pendingApprovals.values()].filter(
+      (approval) => approval.runId === runId,
+    );
+    for (const approval of pending) {
+      await this.finalizeApproval(
+        approval.approvalId,
+        { decision: 'denied', reason },
+        { behavior: 'cancel', message: reason },
+      );
+    }
   }
 
   private async denyPendingApprovalsForRun(
@@ -5114,6 +5153,7 @@ export class CodeWaveDaemon {
       );
       if (!terminalEvent) return;
       event = terminalEvent;
+      this.cancellationRequestedRuns.delete(event.runId);
       triggerContinuityCrashPoint('after_terminal_persistence');
     } else {
       event = this.stateStore.appendEvent(event);

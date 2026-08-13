@@ -468,7 +468,7 @@ export interface ProviderApprovalRequest {
 }
 
 export interface ProviderApprovalDecision {
-  behavior: ApprovalBehavior;
+  behavior: ApprovalBehavior | 'cancel';
   message?: string;
   updatedInput?: Record<string, unknown>;
 }

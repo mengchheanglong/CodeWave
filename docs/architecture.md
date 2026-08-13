@@ -796,6 +796,7 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 - mandatory durable idempotency keys, strict canonical mutation schemas, and configuration revision hashes (implemented)
 - monotonic event sequences and cursor-bounded SSE replay (implemented)
 - append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
+- exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in ACP paths); profile-driven custom agents remain the next slice
 
 ### Phase 5 — Research plugins
 

@@ -1,10 +1,14 @@
 import type { ChildProcess } from 'node:child_process';
+import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import {
-  ClientSideConnection,
+  client as createAcpClient,
+  methods,
   PROTOCOL_VERSION,
   ndJsonStream,
-  type Client,
+  type ClientConnection,
+  type InitializeResponse,
   type PermissionOption,
   type PromptResponse,
   type RequestPermissionRequest,
@@ -35,13 +39,13 @@ export type AcpProviderProfile = {
   ) => RoutingToolRequirement | null;
   registrationDetail?: string;
   toolFailureDetail?: string;
-  restoreQuietMs?: number;
-  restoreTimeoutMs?: number;
   cancelGraceMs?: number;
+  initializeTimeoutMs?: number;
 };
 
 export type AcpTransportTraceKind =
   | 'initialize'
+  | 'initialize.complete'
   | 'session.new'
   | 'session.resume'
   | 'session.load'
@@ -75,6 +79,10 @@ export type AcpRunHandle = {
   cancel: () => Promise<void>;
   settled: Promise<void>;
 };
+
+const CODEWAVE_ACP_CLIENT_VERSION = '0.1.0-dev';
+const ACP_STDOUT_LINE_LIMIT = 1024 * 1024;
+const ACP_SESSION_ID_LIMIT = 1024;
 
 type ToolTerminalState = 'completed' | 'failed' | 'denied';
 
@@ -114,6 +122,7 @@ function selectPermissionOption(
   options: PermissionOption[],
   decision: ProviderApprovalDecision,
 ): PermissionOption | null {
+  if (decision.behavior === 'cancel') return null;
   const preferredKinds =
     decision.behavior === 'allow'
       ? ['allow_once', 'allow_always']
@@ -122,9 +131,7 @@ function selectPermissionOption(
   return (
     preferredKinds
       .map((kind) => options.find((option) => option.kind === kind))
-      .find((option): option is PermissionOption => Boolean(option)) ??
-    options[0] ??
-    null
+      .find((option): option is PermissionOption => Boolean(option)) ?? null
   );
 }
 
@@ -147,23 +154,29 @@ function inferSourceFromRequirement(
 
 function getSessionId(
   sessionResult: object,
-  context: ProviderRunContext,
+  existingSessionId: string | null,
 ): string {
-  return (
-    ('sessionId' in sessionResult &&
-    typeof sessionResult.sessionId === 'string' &&
-    sessionResult.sessionId
-      ? sessionResult.sessionId
-      : context.session.providerSessionId) ?? context.session.id
-  );
+  const sessionId =
+    'sessionId' in sessionResult && typeof sessionResult.sessionId === 'string'
+      ? sessionResult.sessionId.trim()
+      : existingSessionId?.trim() ?? '';
+  if (
+    !sessionId ||
+    sessionId.length > ACP_SESSION_ID_LIMIT ||
+    /[\u0000-\u001f\u007f]/.test(sessionId)
+  ) {
+    throw new Error('ACP agent returned an invalid or missing session ID.');
+  }
+  return sessionId;
 }
 
-class CodeWaveAcpClient implements Client {
-  private assistantBuffer = '';
+class CodeWaveAcpClient {
+  private readonly assistantMessages = new Map<string, string>();
+  private readonly assistantMessageOrder: string[] = [];
   private readonly tools = new Map<string, TrackedTool>();
   private readonly registeredTools = new Set<string>();
   private captureUpdates = false;
-  private lastNotificationAt = 0;
+  private activeSessionId: string | null = null;
   private updateChain = Promise.resolve();
 
   constructor(
@@ -177,16 +190,20 @@ class CodeWaveAcpClient implements Client {
   ) {}
 
   getAssistantMessage(): string {
-    return this.assistantBuffer.trim();
+    return this.assistantMessageOrder
+      .map((messageId) => this.assistantMessages.get(messageId)?.trim() ?? '')
+      .filter(Boolean)
+      .join('\n\n');
   }
 
-  beginRestore(): void {
+  beginRestore(sessionId: string): void {
+    this.activeSessionId = sessionId;
     this.captureUpdates = false;
     this.resetTurnState();
-    this.lastNotificationAt = Date.now();
   }
 
-  startPromptTurn(): void {
+  startPromptTurn(sessionId: string): void {
+    this.activeSessionId = sessionId;
     this.captureUpdates = true;
     this.resetTurnState();
   }
@@ -199,23 +216,9 @@ class CodeWaveAcpClient implements Client {
     await this.updateChain;
   }
 
-  async waitForQuietPeriod(): Promise<void> {
-    const quietMs = Math.max(0, this.profile.restoreQuietMs ?? 400);
-    const timeoutMs = Math.max(quietMs, this.profile.restoreTimeoutMs ?? 5000);
-    const startedAt = Date.now();
-    if (this.lastNotificationAt === 0) this.lastNotificationAt = startedAt;
-
-    while (Date.now() - startedAt < timeoutMs) {
-      const idleForMs = Date.now() - this.lastNotificationAt;
-      if (idleForMs >= quietMs) return;
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(Math.max(quietMs - idleForMs, 25), 100)),
-      );
-    }
-  }
-
   private resetTurnState(): void {
-    this.assistantBuffer = '';
+    this.assistantMessages.clear();
+    this.assistantMessageOrder.length = 0;
     this.tools.clear();
     this.registeredTools.clear();
   }
@@ -356,6 +359,13 @@ class CodeWaveAcpClient implements Client {
   async requestPermission(
     params: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
+    if (!this.activeSessionId || params.sessionId !== this.activeSessionId) {
+      this.emitTrace('permission.resolve', {
+        rejected: 'session_mismatch',
+        sessionId: params.sessionId,
+      });
+      return { outcome: { outcome: 'cancelled' } };
+    }
     const toolName = params.toolCall.title || 'unknown';
     const toolUseId = params.toolCall.toolCallId ?? null;
     const input = asRecord(params.toolCall.rawInput);
@@ -384,13 +394,17 @@ class CodeWaveAcpClient implements Client {
       metadata,
     });
     const resolved = this.resolveTool(toolUseId, toolName, input);
-    if (decision.behavior === 'deny') {
+    if (decision.behavior === 'deny' || decision.behavior === 'cancel') {
       if (!resolved.tool.terminal) {
         await this.publish('tool.denied', {
           toolUseId,
           toolName: resolved.tool.toolName,
           input: resolved.tool.input,
-          detail: decision.message ?? 'Tool execution denied in CodeWave.',
+          detail:
+            decision.message ??
+            (decision.behavior === 'cancel'
+              ? 'Tool execution cancelled with the CodeWave run.'
+              : 'Tool execution denied in CodeWave.'),
         });
         resolved.tool.terminal = 'denied';
         this.tools.set(resolved.key, resolved.tool);
@@ -412,7 +426,14 @@ class CodeWaveAcpClient implements Client {
   }
 
   sessionUpdate(params: SessionNotification): Promise<void> {
-    this.lastNotificationAt = Date.now();
+    if (this.activeSessionId && params.sessionId !== this.activeSessionId) {
+      this.emitTrace('session.update', {
+        sessionUpdate: params.update.sessionUpdate,
+        rejected: 'session_mismatch',
+        sessionId: params.sessionId,
+      });
+      return Promise.resolve();
+    }
     const task = this.updateChain.then(() => this.processSessionUpdate(params));
     this.updateChain = task.catch(() => undefined);
     return task;
@@ -432,7 +453,14 @@ class CodeWaveAcpClient implements Client {
       case 'agent_message_chunk': {
         const text = update.content.type === 'text' ? update.content.text ?? '' : '';
         if (text) {
-          this.assistantBuffer += text;
+          const messageId = update.messageId?.trim() || 'assistant-default';
+          if (!this.assistantMessages.has(messageId)) {
+            this.assistantMessageOrder.push(messageId);
+          }
+          this.assistantMessages.set(
+            messageId,
+            `${this.assistantMessages.get(messageId) ?? ''}${text}`,
+          );
           await this.publish('run.output.delta', { stream: 'assistant', text });
         }
         return;
@@ -491,6 +519,88 @@ class CodeWaveAcpClient implements Client {
   }
 }
 
+function boundNdJsonInput(
+  input: ReadableStream<Uint8Array>,
+  maxLineBytes = ACP_STDOUT_LINE_LIMIT,
+): ReadableStream<Uint8Array> {
+  const reader = input.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const line = new Uint8Array(maxLineBytes);
+  let lineBytes = 0;
+
+  const validateLine = (): void => {
+    if (lineBytes === 0) return;
+    const text = decoder.decode(line.subarray(0, lineBytes)).trim();
+    if (!text) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new Error('ACP stdout contains malformed JSON.');
+    }
+    if (value === null || typeof value !== 'object') {
+      throw new Error('ACP stdout record must be a JSON object or batch array.');
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          validateLine();
+          controller.close();
+          return;
+        }
+        for (const byte of result.value) {
+          if (byte === 0x0a) {
+            validateLine();
+            lineBytes = 0;
+          } else {
+            if (lineBytes >= maxLineBytes) {
+              throw new Error(
+                `ACP stdout record exceeds the ${maxLineBytes}-byte line limit.`,
+              );
+            }
+            line[lineBytes] = byte;
+            lineBytes += 1;
+          }
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout: () => void,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(message));
+          onTimeout();
+        }, timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export async function startAcpRun({
   child,
   context,
@@ -500,6 +610,18 @@ export async function startAcpRun({
 }: AcpRunOptions): Promise<AcpRunHandle> {
   if (!child.stdin || !child.stdout) {
     throw new Error(`${profile.displayName} ACP process does not expose stdio.`);
+  }
+
+  const workspacePath = context.session.workspacePath.trim();
+  if (
+    !workspacePath ||
+    !path.isAbsolute(workspacePath) ||
+    !existsSync(workspacePath) ||
+    !statSync(workspacePath).isDirectory()
+  ) {
+    throw new Error(
+      `${profile.displayName} ACP workspace must be an existing absolute directory.`,
+    );
   }
 
   let traceSequence = 0;
@@ -517,65 +639,145 @@ export async function startAcpRun({
   };
 
   const input = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-  const output = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
-  const client = new CodeWaveAcpClient(context, publish, profile, emitTrace);
-  const clientConnection = new ClientSideConnection(() => client, ndJsonStream(input, output));
-
-  emitTrace('initialize');
-  const initializeResult = await clientConnection.initialize({
-    protocolVersion: PROTOCOL_VERSION,
-    clientCapabilities: {},
-  });
-  const supportsResume = Boolean(
-    initializeResult.agentCapabilities?.sessionCapabilities?.resume,
+  const output = boundNdJsonInput(
+    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
   );
+  const client = new CodeWaveAcpClient(context, publish, profile, emitTrace);
+  const clientApp = createAcpClient({ name: 'codewave' })
+    .onRequest(methods.client.session.requestPermission, ({ params }) =>
+      client.requestPermission(params),
+    )
+    .onNotification(methods.client.session.update, ({ params }) =>
+      client.sessionUpdate(params),
+    );
+  const connection: ClientConnection = clientApp.connect(
+    ndJsonStream(input, output),
+  );
+  let cleanedUp = false;
+  const cleanup = async (error?: unknown): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    connection.close(error);
+    if (child.exitCode === null && !child.killed) child.kill();
+    await Promise.race([
+      connection.closed.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 250);
+        timeout.unref?.();
+      }),
+    ]);
+  };
 
+  let initializeResult: InitializeResponse;
   let sessionResult: object;
-  if (!context.session.providerSessionId) {
-    emitTrace('session.new');
-    sessionResult = await clientConnection.newSession({
-      cwd: context.session.workspacePath,
-      mcpServers: [],
+  let sessionId: string;
+  try {
+    const initializeTimeoutMs = Math.min(
+      30_000,
+      Math.max(100, profile.initializeTimeoutMs ?? 5_000),
+    );
+    emitTrace('initialize', {
+      protocolVersion: PROTOCOL_VERSION,
+      timeoutMs: initializeTimeoutMs,
     });
-  } else if (supportsResume) {
-    emitTrace('session.resume', {
-      providerSessionId: context.session.providerSessionId,
+    initializeResult = await withTimeout(
+      connection.agent.request(methods.agent.initialize, {
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+        clientInfo: {
+          name: 'codewave',
+          title: 'CodeWave',
+          version: CODEWAVE_ACP_CLIENT_VERSION,
+        },
+      }),
+      initializeTimeoutMs,
+      `${profile.displayName} ACP initialize timed out.`,
+      () => {
+        connection.close(new Error('ACP initialize timeout'));
+        if (child.exitCode === null && !child.killed) child.kill();
+      },
+    );
+    if (initializeResult.protocolVersion !== PROTOCOL_VERSION) {
+      throw new Error(
+        `${profile.displayName} ACP selected incompatible protocol v${initializeResult.protocolVersion}; CodeWave requires v${PROTOCOL_VERSION}.`,
+      );
+    }
+    const capabilities = initializeResult.agentCapabilities;
+    const supportsResume = Boolean(capabilities?.sessionCapabilities?.resume);
+    const supportsLoad = capabilities?.loadSession === true;
+    emitTrace('initialize.complete', {
+      protocolVersion: initializeResult.protocolVersion,
+      agentName:
+        typeof initializeResult.agentInfo?.name === 'string'
+          ? initializeResult.agentInfo.name.slice(0, 128)
+          : null,
+      agentVersion:
+        typeof initializeResult.agentInfo?.version === 'string'
+          ? initializeResult.agentInfo.version.slice(0, 64)
+          : null,
+      continuity: supportsResume ? 'resume' : supportsLoad ? 'load' : 'none',
+      authMethodCount: Array.isArray(initializeResult.authMethods)
+        ? Math.min(initializeResult.authMethods.length, 32)
+        : 0,
     });
-    sessionResult = await clientConnection.unstable_resumeSession({
-      sessionId: context.session.providerSessionId,
-      cwd: context.session.workspacePath,
-      mcpServers: [],
-    });
-  } else {
-    emitTrace('session.load', {
-      providerSessionId: context.session.providerSessionId,
-    });
-    client.beginRestore();
-    sessionResult = await clientConnection.loadSession({
-      sessionId: context.session.providerSessionId,
-      cwd: context.session.workspacePath,
-      mcpServers: [],
-    });
-    await client.waitForQuietPeriod();
+
+    const existingSessionId = context.session.providerSessionId?.trim() || null;
+    if (!existingSessionId) {
+      emitTrace('session.new');
+      sessionResult = await connection.agent.request(methods.agent.session.new, {
+        cwd: workspacePath,
+        mcpServers: [],
+      });
+    } else if (supportsResume) {
+      emitTrace('session.resume', { providerSessionId: existingSessionId });
+      sessionResult = await connection.agent.request(methods.agent.session.resume, {
+        sessionId: existingSessionId,
+        cwd: workspacePath,
+        mcpServers: [],
+      });
+    } else if (supportsLoad) {
+      emitTrace('session.load', { providerSessionId: existingSessionId });
+      client.beginRestore(existingSessionId);
+      sessionResult =
+        (await connection.agent.request(methods.agent.session.load, {
+          sessionId: existingSessionId,
+          cwd: workspacePath,
+          mcpServers: [],
+        })) ?? {};
+      await client.drainUpdates();
+    } else {
+      throw new Error(
+        `${profile.displayName} ACP cannot restore this existing session; start a new CodeWave session.`,
+      );
+    }
+
+    sessionId = getSessionId(sessionResult, existingSessionId);
+    await context.updateSession({ providerSessionId: sessionId });
+    emitTrace('session.persist', { providerSessionId: sessionId });
+  } catch (error) {
+    await cleanup(error);
+    throw error;
   }
 
-  const sessionId = getSessionId(sessionResult, context);
-  await context.updateSession({ providerSessionId: sessionId });
-  emitTrace('session.persist', { providerSessionId: sessionId });
-
   let cancelled = false;
-  client.startPromptTurn();
+  let promptFinished = false;
+  const promptCancellation = new AbortController();
+  client.startPromptTurn(sessionId);
   emitTrace('prompt.start', { sessionId });
-  const settled = clientConnection
-    .prompt({
-      sessionId,
-      prompt: [{ type: 'text', text: context.run.prompt }],
-    })
+  const settled = connection.agent
+    .request(
+      methods.agent.session.prompt,
+      {
+        sessionId,
+        prompt: [{ type: 'text', text: context.run.prompt }],
+      },
+      { cancellationSignal: promptCancellation.signal },
+    )
     .then(async (result: PromptResponse) => {
       await client.drainUpdates();
       client.finishPromptTurn();
       const usage = extractUsage(result);
-      if (result.stopReason === 'cancelled') {
+      if (cancelled || result.stopReason === 'cancelled') {
         cancelled = true;
         emitTrace('prompt.complete', { stopReason: result.stopReason });
         await publish('run.cancelled', { reason: 'Cancelled by user.', usage });
@@ -611,7 +813,13 @@ export async function startAcpRun({
         await publish('run.failed', {
           message: error instanceof Error ? error.message : String(error),
         });
+      } else {
+        await publish('run.cancelled', { reason: 'Cancelled by user.' });
       }
+    })
+    .finally(async () => {
+      promptFinished = true;
+      await cleanup();
     });
   void settled.catch(() => undefined);
 
@@ -623,18 +831,22 @@ export async function startAcpRun({
       const graceMs = Math.max(0, profile.cancelGraceMs ?? 1500);
       emitTrace('cancel.request', { sessionId, graceMs });
       try {
-        await Promise.race([
-          clientConnection.cancel({ sessionId }),
-          new Promise<void>((resolve) => {
-            const timeout = setTimeout(resolve, graceMs);
-            timeout.unref?.();
-          }),
-        ]);
+        await connection.agent.notify(methods.agent.session.cancel, { sessionId });
       } catch {
-        // The normalized cancellation event below remains authoritative.
+        // The bounded terminal path below remains authoritative.
       }
-      await publish('run.cancelled', { reason: 'Cancelled by user.' });
-      if (child.exitCode === null && !child.killed) child.kill();
+      await Promise.race([
+        settled.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, graceMs);
+          timeout.unref?.();
+        }),
+      ]);
+      if (!promptFinished) {
+        await publish('run.cancelled', { reason: 'Cancelled by user.' });
+        promptCancellation.abort();
+        await cleanup(new Error('ACP prompt cancellation timed out'));
+      }
       emitTrace('cancel.complete', { sessionId });
     },
   };
