@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import path from 'node:path';
 import {
   parseProviderCommand,
   spawnProviderCommand,
@@ -195,13 +194,11 @@ export class FreebuffCliProvider implements ProviderAdapter {
   readonly displayName = 'Freebuff CLI';
 
   private readonly commandOverride: string | null;
-  private readonly rootPath: string;
   private bridgeQualified = false;
 
   constructor(options: FreebuffCliProviderOptions = {}) {
     const commandOverride = options.command ?? process.env.CODEWAVE_FREEBUFF_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
-    this.rootPath = path.resolve(options.rootPath ?? process.cwd());
   }
 
   private resolveLaunchSpec(): FreebuffLaunchSpec {
@@ -683,10 +680,4 @@ export class FreebuffCliProvider implements ProviderAdapter {
       },
     };
   }
-}
-
-export function createFreebuffAdapter(
-  options: FreebuffCliProviderOptions = {},
-): ProviderAdapter {
-  return new FreebuffCliProvider(options);
 }

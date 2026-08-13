@@ -4,7 +4,7 @@ import type {
   WorkbenchRun,
 } from '@codewave/protocol';
 
-export type RunViewSummary = Pick<
+type RunViewSummary = Pick<
   WorkbenchRun,
   'id' | 'status' | 'mode' | 'createdAt' | 'completedAt' | 'prompt'
 > & {

@@ -10,7 +10,3 @@ export function applyTheme(_theme: AppTheme = 'dark'): void {
   }
   document.documentElement.dataset.theme = 'dark';
 }
-
-export function cycleTheme(): AppTheme {
-  return 'dark';
-}

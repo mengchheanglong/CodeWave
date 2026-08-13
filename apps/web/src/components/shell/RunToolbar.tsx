@@ -1,7 +1,6 @@
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { RunViewState } from '../../lib/run-view-state';
-import { renderAccessLabel, renderProviderLabel } from '../../lib/shell-format';
 import {
   requestCancelSelectedRun,
   requestFollowUpRun,
@@ -47,12 +46,6 @@ export function RunToolbar({
   onRequestUndo,
 }: RunToolbarProps) {
   const hasActiveSession = Boolean(shellPanelsState.selectedSessionId);
-  const activeProviderId =
-    shellPanelsState.selectedProviderId ?? shellControlsState.providerId;
-  const activeApprovalPolicy = hasActiveSession
-    ? shellControlsState.selectedSessionApprovalPolicy
-    : shellControlsState.sessionApprovalPolicy;
-
   if (!hasActiveSession) {
     return null;
   }

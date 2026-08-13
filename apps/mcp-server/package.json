@@ -13,8 +13,5 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@codewave/protocol": "file:../../packages/protocol",
     "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0"
   }
 }

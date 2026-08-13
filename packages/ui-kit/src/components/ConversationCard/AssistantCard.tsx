@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { MarkdownRenderer } from '../MarkdownRenderer/MarkdownRenderer';
 import styles from './AssistantCard.module.css';
 

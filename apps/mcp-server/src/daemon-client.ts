@@ -11,7 +11,7 @@ const OBSERVER_SCOPES: DaemonClientScope[] = ['sessions:read', 'runs:read'];
 const MAX_DAEMON_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-export class CodeWaveDaemonError extends Error {
+class CodeWaveDaemonError extends Error {
   constructor(
     message: string,
     readonly status: number | null = null,
@@ -169,5 +169,3 @@ export class CodeWaveDaemonClient {
     );
   }
 }
-
-export { OBSERVER_SCOPES };

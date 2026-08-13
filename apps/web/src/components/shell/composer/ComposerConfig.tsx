@@ -1,4 +1,4 @@
-import { useRef, type RefObject } from 'react';
+import { useRef } from 'react';
 import type { ApprovalPolicy, ProviderId } from '@codewave/protocol';
 import type { ShellControlsState } from '../../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../../lib/shell-panels-state';

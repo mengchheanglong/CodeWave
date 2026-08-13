@@ -70,7 +70,7 @@ function toRunEvent(event: WorkbenchEvent): RunViewState['events'][number] {
   };
 }
 
-export function toProviderCapabilities(
+function toProviderCapabilities(
   capabilities: ProviderCapabilities | null,
 ): ShellPanelsState['selectedSessionCapabilities'] {
   if (!capabilities) {

@@ -37,7 +37,7 @@ export type StartRun = () => Promise<void>;
 export type RoutePrompt = () => Promise<void>;
 export type DelegatePrompt = () => Promise<void>;
 export type HandoffPrompt = () => Promise<void>;
-export type ApplySelectedSessionPolicyDraft = (
+type ApplySelectedSessionPolicyDraft = (
   policy: ApprovalPolicy,
 ) => void;
 export type TransitionToNewSession = (

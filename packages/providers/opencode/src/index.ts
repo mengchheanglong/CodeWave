@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -499,13 +499,11 @@ export class OpenCodeCliProvider implements ProviderAdapter {
   readonly displayName = 'OpenCode CLI';
 
   private readonly commandOverride: string | null;
-  private readonly rootPath: string;
   private readonly mode: OpenCodeMode;
 
   constructor(options: OpenCodeCliProviderOptions = {}) {
     const commandOverride = options.command ?? process.env.CODEWAVE_OPENCODE_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
-    this.rootPath = path.resolve(options.rootPath ?? process.cwd());
     this.mode = resolveMode();
   }
 

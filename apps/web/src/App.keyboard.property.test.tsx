@@ -39,7 +39,7 @@ describe('App - Keyboard Navigation Properties', () => {
       await fc.assert(
         fc.asyncProperty(
           fc.constantFrom('recent', 'history', 'archive', 'flows'),
-          async (railView) => {
+          async () => {
             const user = userEvent.setup();
             
             const { unmount } = render(<App />);

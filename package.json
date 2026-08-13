@@ -25,6 +25,7 @@
     "check:registrations:json": "node scripts/validate-registration-signals.mjs --summary-json artifacts/registration-summary.json"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "^24.6.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.3"

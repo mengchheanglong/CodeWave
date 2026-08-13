@@ -232,7 +232,6 @@ const {
 const {
   clearRunSelectionView,
   clearSessionSelectionState,
-  resetRunInspector,
   setArchiveUnavailableState,
   setSessionsUnavailableState,
   setToolPlaneUnavailableState,

@@ -40,7 +40,7 @@ export function formatTimestamp(timestamp: string): string {
   });
 }
 
-export function formatProviderCapabilities(
+function formatProviderCapabilities(
   capabilities: ProviderCapabilities,
 ): string {
   const approvalMode = capabilities.daemonApprovalMediation

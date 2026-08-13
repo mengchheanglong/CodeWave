@@ -1,7 +1,6 @@
 import type { RunViewState } from '../../lib/run-view-state';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
-import type { ShellSummaryState } from '../../lib/shell-summary-state';
 import type { RunViewTab } from '../../lib/shell-format';
 import {
   requestApprovalResolution,
@@ -18,7 +17,6 @@ type RunSurfaceProps = {
   runViewState: RunViewState;
   shellControlsState: ShellControlsState;
   shellPanelsState: ShellPanelsState;
-  shellSummaryState: ShellSummaryState;
   runViewTab: RunViewTab;
   onRunViewTabChange: (tab: RunViewTab) => void;
   showThinking: boolean;
@@ -38,7 +36,6 @@ export function RunSurface({
   runViewState,
   shellControlsState,
   shellPanelsState,
-  shellSummaryState,
   runViewTab,
   onRunViewTabChange,
   showThinking,

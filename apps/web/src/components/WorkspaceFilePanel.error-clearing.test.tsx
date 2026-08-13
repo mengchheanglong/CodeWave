@@ -42,7 +42,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
       })
     });
 
-    const { rerender } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
+    render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
     
     await waitFor(() => {
       expect(screen.queryByText(/Loading entries/i)).not.toBeInTheDocument();
