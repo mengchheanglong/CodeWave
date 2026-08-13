@@ -6,7 +6,6 @@ import {
   requestCancelSelectedRun,
   requestFollowUpRun,
   requestRecoverSelectedSession,
-  requestUndoRun,
 } from '../../app-controller';
 import {
   CheckIcon,
@@ -31,6 +30,7 @@ type RunToolbarProps = {
   runMenuOpen: boolean;
   onRunMenuOpenChange: (open: boolean) => void;
   onShowFiles: () => void;
+  onRequestUndo: (detail: string) => void;
 };
 
 export function RunToolbar({
@@ -44,6 +44,7 @@ export function RunToolbar({
   runMenuOpen,
   onRunMenuOpenChange,
   onShowFiles,
+  onRequestUndo,
 }: RunToolbarProps) {
   const hasActiveSession = Boolean(shellPanelsState.selectedSessionId);
   const activeProviderId =
@@ -180,14 +181,7 @@ export function RunToolbar({
                 disabled={!runViewState.undoAvailable}
                 onClick={() => {
                   onRunMenuOpenChange(false);
-                  const detail = runViewState.undoDetail ?? '';
-                  if (
-                    window.confirm(
-                      `Undo this run?\n\n${detail}\n\nTracked workspace changes made during the run will be reverted.`,
-                    )
-                  ) {
-                    void requestUndoRun();
-                  }
+                  onRequestUndo(runViewState.undoDetail ?? '');
                 }}
                 title={runViewState.undoDetail ?? 'Undo this run'}
               >

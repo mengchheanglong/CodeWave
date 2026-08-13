@@ -69,9 +69,12 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
-            
+            const normalizedFolderName = folderName.trim();
+            let folderButton: HTMLButtonElement;
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              folderButton = screen.getByTitle(
+                exactTitle(normalizedFolderName),
+              ) as HTMLButtonElement;
             });
 
             // Mock navigation into folder
@@ -85,11 +88,13 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(folderButton!);
 
             // Property: Path display should show the folder path
             await waitFor(() => {
-              expect(screen.getByText(`/${folderName.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(
+                `/${normalizedFolderName}`,
+              );
             });
             
             unmount();
@@ -128,7 +133,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folder1.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folder1.trim()))).toBeInTheDocument();
             });
 
             // Navigate into first folder
@@ -143,11 +148,13 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
               })
             });
 
-            await user.click(screen.getByText(folder1.trim()));
+            await user.click(screen.getByTitle(exactTitle(folder1.trim())));
 
             await waitFor(() => {
-              expect(screen.getByText(`/${folder1.trim()}`)).toBeInTheDocument();
-              expect(screen.getByText(folder2.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(`/${folder1.trim()}`);
+              expect(
+                screen.getByTitle(exactTitle(`${folder1.trim()}/${folder2.trim()}`)),
+              ).toBeInTheDocument();
             });
 
             // Navigate into second folder
@@ -160,11 +167,15 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
               })
             });
 
-            await user.click(screen.getByText(folder2.trim()));
+            await user.click(
+              screen.getByTitle(exactTitle(`${folder1.trim()}/${folder2.trim()}`)),
+            );
 
             // Property: Path display should show nested path
             await waitFor(() => {
-              expect(screen.getByText(`/${folder1.trim()}/${folder2.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(
+                `/${folder1.trim()}/${folder2.trim()}`,
+              );
             });
             
             unmount();
@@ -220,7 +231,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount, container } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Mock navigation into folder with files
@@ -240,7 +251,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(screen.getByTitle(exactTitle(folderName.trim())));
 
             // Property: All files should be displayed
             await waitFor(() => {
@@ -284,7 +295,7 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             const { unmount, container } = render(<WorkspaceFilePanel workspacePath={mockWorkspacePath} />);
             
             await waitFor(() => {
-              expect(screen.getByText(folderName.trim())).toBeInTheDocument();
+              expect(screen.getByTitle(exactTitle(folderName.trim()))).toBeInTheDocument();
             });
 
             // Mock navigation into empty folder
@@ -298,11 +309,11 @@ describe('WorkspaceFilePanel - Folder Navigation Properties', () => {
             });
 
             // Click on folder
-            await user.click(screen.getByText(folderName.trim()));
+            await user.click(screen.getByTitle(exactTitle(folderName.trim())));
 
             // Property: Should show empty folder (no entries)
             await waitFor(() => {
-              expect(screen.getByText(`/${folderName.trim()}`)).toBeInTheDocument();
+              expect(screen.getByTitle(mockWorkspacePath).textContent).toBe(`/${folderName.trim()}`);
               const fileEntries = container.querySelectorAll('.workspace-file-name');
               expect(fileEntries.length).toBe(0);
             });

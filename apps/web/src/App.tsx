@@ -28,6 +28,7 @@ import {
   requestSessionDraftChange,
   requestSessionSelection,
   requestStartRun,
+  requestUndoRun,
   requestWorkspaceDraftCommit,
   subscribeShellControlsState,
   subscribeShellPanelsState,
@@ -183,6 +184,7 @@ export default function App() {
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
+  const [pendingUndoDetail, setPendingUndoDetail] = useState<string | null>(null);
   const [compactNavigationOpen, setCompactNavigationOpen] = useState(false);
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
@@ -909,6 +911,7 @@ export default function App() {
                 setUtilityView('files');
                 setUtilityCollapsed(false);
               }}
+              onRequestUndo={setPendingUndoDetail}
             />
             <RunSurface
               runViewState={runViewState}
@@ -1006,6 +1009,26 @@ export default function App() {
           if (sessionId) void requestSessionDelete(sessionId);
         }}
         onClose={() => setPendingDeleteSessionId(null)}
+      />
+      <PromptModal
+        isOpen={pendingUndoDetail !== null}
+        mode="confirm"
+        destructive
+        title="Undo this run?"
+        subtitle={`${pendingUndoDetail || 'Tracked workspace changes made during this run will be reverted.'} This action restores the tracked workspace state from before the run.`}
+        defaultValue="undo"
+        confirmLabel="Undo run"
+        onConfirm={() => {
+          void requestUndoRun();
+        }}
+        onClose={() => {
+          setPendingUndoDetail(null);
+          window.setTimeout(() => {
+            document
+              .querySelector<HTMLButtonElement>('.run-toolbar-v2-menu > button')
+              ?.focus();
+          }, 0);
+        }}
       />
       <ProviderSettings
         open={providerSettingsOpen}
