@@ -135,10 +135,10 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       });
 
       // Attempt to delete - fails
-      vi.mocked(window.confirm).mockReturnValueOnce(true);
       (global.fetch as any).mockRejectedValueOnce(new Error('Permission denied'));
 
       await user.click(screen.getAllByRole('button', { name: /Delete/i })[0]);
+      await user.click(screen.getByRole('button', { name: 'Delete file' }));
 
       // Property: View state should be preserved
       await waitFor(() => {
@@ -200,8 +200,8 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
               await user.click(screen.getAllByRole('button', { name: /Rename/i })[0]);
               await submitWorkspacePrompt('newname');
             } else {
-              vi.mocked(window.confirm).mockReturnValueOnce(true);
               await user.click(screen.getAllByRole('button', { name: /Delete/i })[0]);
+              await user.click(screen.getByRole('button', { name: 'Delete file' }));
             }
 
             // Property: Error message should clearly indicate permission issue
@@ -308,10 +308,10 @@ describe('WorkspaceFilePanel - Error Handling Properties', () => {
       });
 
       // Trigger delete with not-found error
-      vi.mocked(window.confirm).mockReturnValueOnce(true);
       (global.fetch as any).mockRejectedValueOnce(new Error('File not found: missing.ts'));
 
       await user.click(screen.getAllByRole('button', { name: /Delete/i })[0]);
+      await user.click(screen.getByRole('button', { name: 'Delete file' }));
 
       // Property: Error message should clearly indicate not-found issue
       await waitFor(() => {

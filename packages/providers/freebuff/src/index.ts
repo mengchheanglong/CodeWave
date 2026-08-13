@@ -332,6 +332,8 @@ export class FreebuffCliProvider implements ProviderAdapter {
       context.run.prompt,
       '--output-format',
       'jsonl',
+      '--launch-attempt-id',
+      context.launchAttemptId,
     ];
     if (context.session.providerSessionId) {
       args.push('--resume', context.session.providerSessionId);
@@ -347,6 +349,18 @@ export class FreebuffCliProvider implements ProviderAdapter {
     let resolveSteeringNegotiation: ((supported: boolean) => void) | null = null;
     const steeringNegotiation = new Promise<boolean>((resolve) => {
       resolveSteeringNegotiation = resolve;
+    });
+    let resolveLaunchAcknowledgement: ((value: {
+      launchId: string;
+      protocol: string;
+      acknowledgedAt: string;
+    }) => void) | null = null;
+    const launchAcknowledgement = new Promise<{
+      launchId: string;
+      protocol: string;
+      acknowledgedAt: string;
+    }>((resolve) => {
+      resolveLaunchAcknowledgement = resolve;
     });
     const pendingSteering = new Map<string, PendingSteering>();
 
@@ -396,14 +410,21 @@ export class FreebuffCliProvider implements ProviderAdapter {
       if (!bridgeHelloReceived) {
         if (
           type === 'bridge.hello' &&
-          record.protocolVersion === FREEBUFF_BRIDGE_PROTOCOL_VERSION
+          record.protocolVersion === FREEBUFF_BRIDGE_PROTOCOL_VERSION &&
+          record.launchAttemptId === context.launchAttemptId
         ) {
           bridgeHelloReceived = true;
+          resolveLaunchAcknowledgement?.({
+            launchId: context.launchAttemptId,
+            protocol: `codewave-freebuff-bridge-v${FREEBUFF_BRIDGE_PROTOCOL_VERSION}`,
+            acknowledgedAt: new Date().toISOString(),
+          });
+          resolveLaunchAcknowledgement = null;
           return;
         }
         await publish('run.failed', {
           message: 'Freebuff bridge protocol qualification failed',
-          detail: `The first stdout record must be a CodeWave bridge.hello for protocol v${FREEBUFF_BRIDGE_PROTOCOL_VERSION}.`,
+          detail: `The first stdout record must be a CodeWave bridge.hello for protocol v${FREEBUFF_BRIDGE_PROTOCOL_VERSION} echoing the launch attempt ID.`,
         });
         void transport?.cancel();
         return;
@@ -609,6 +630,7 @@ export class FreebuffCliProvider implements ProviderAdapter {
     });
 
     return {
+      launched: launchAcknowledgement,
       steer: async (input) => {
         if (!inFlightSteeringNegotiated) {
           const negotiated = await Promise.race([

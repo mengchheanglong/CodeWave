@@ -31,6 +31,7 @@ if (rawCli.available) {
 
 function contextFor(events: WorkbenchEvent[]): ProviderRunContext {
   return {
+    launchAttemptId: '00000000-0000-4000-8000-000000000002',
     session: {
       id: 'freebuff-validation-session',
       workspacePath: repoRoot,

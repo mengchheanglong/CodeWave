@@ -65,6 +65,7 @@ const CLIENT_SCOPES = [
   'approvals:write',
 ];
 const connectionIdsByBaseUrl = new Map();
+let requestSequence = 0;
 const SCENARIOS = [
   {
     id: 'failure',
@@ -948,6 +949,15 @@ async function requestJson(baseUrl, method, pathname, body) {
   const headers = new Headers();
   if (body !== undefined) headers.set('Content-Type', 'application/json');
   if (connectionId) headers.set('X-CodeWave-Connection', connectionId);
+  if (
+    connectionId &&
+    (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')
+  ) {
+    headers.set(
+      'Idempotency-Key',
+      `registration-${Date.now()}-${requestSequence++}`,
+    );
+  }
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
     headers,

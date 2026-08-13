@@ -693,7 +693,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
   describe('Folder deletion shows confirmation (Requirement 3.1, 3.2)', () => {
     it('should show confirmation dialog when Delete button is clicked on folder', async () => {
       const user = userEvent.setup();
-      const confirmSpy = vi.mocked(window.confirm);
       
       // Mock initial load with folder
       (global.fetch as any).mockResolvedValueOnce({
@@ -713,18 +712,13 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('test-folder')).toBeInTheDocument();
       });
 
-      // User cancels deletion
-      confirmSpy.mockReturnValueOnce(false);
-
       await user.click(screen.getByRole('button', { name: /Delete/i }));
 
-      // Verify confirmation was shown with folder name
-      expect(confirmSpy).toHaveBeenCalledWith('Delete folder "test-folder"?');
+      expect(screen.getByRole('dialog', { name: /Delete folder “test-folder”/ })).toBeInTheDocument();
     });
 
     it('should not delete folder when user cancels confirmation', async () => {
       const user = userEvent.setup();
-      const confirmSpy = vi.mocked(window.confirm);
       
       // Mock initial load with folder
       (global.fetch as any).mockResolvedValueOnce({
@@ -744,10 +738,8 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('test-folder')).toBeInTheDocument();
       });
 
-      // User cancels deletion
-      confirmSpy.mockReturnValueOnce(false);
-
       await user.click(screen.getByRole('button', { name: /Delete/i }));
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
       // Verify no deletion API call was made (only initial load)
       expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -758,7 +750,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
 
     it('should delete folder when user confirms', async () => {
       const user = userEvent.setup();
-      const confirmSpy = vi.mocked(window.confirm);
       
       // Mock initial load with folder
       (global.fetch as any).mockResolvedValueOnce({
@@ -778,9 +769,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('test-folder')).toBeInTheDocument();
       });
 
-      // User confirms deletion
-      confirmSpy.mockReturnValueOnce(true);
-      
       (global.fetch as any)
         .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
         .mockResolvedValueOnce({
@@ -793,6 +781,7 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         });
 
       await user.click(screen.getByRole('button', { name: /Delete/i }));
+      await user.click(screen.getByRole('button', { name: 'Delete folder' }));
 
       // Verify folder was deleted
       await waitFor(() => {
@@ -802,7 +791,6 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
 
     it('should show confirmation for file deletion with "file" label', async () => {
       const user = userEvent.setup();
-      const confirmSpy = vi.mocked(window.confirm);
       
       // Mock initial load with file
       (global.fetch as any).mockResolvedValueOnce({
@@ -822,13 +810,9 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('test.ts')).toBeInTheDocument();
       });
 
-      // User cancels deletion
-      confirmSpy.mockReturnValueOnce(false);
-
       await user.click(screen.getByRole('button', { name: /Delete/i }));
 
-      // Verify confirmation was shown with "file" label
-      expect(confirmSpy).toHaveBeenCalledWith('Delete file "test.ts"?');
+      expect(screen.getByRole('dialog', { name: /Delete file “test.ts”/ })).toBeInTheDocument();
     });
   });
 
@@ -897,11 +881,17 @@ describe('WorkspaceFilePanel - Folder Operations Unit Tests', () => {
         expect(screen.getByText('README.md')).toBeInTheDocument();
       });
 
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ workspacePath: mockWorkspacePath, relativePath: 'README.md', name: 'README.md', content: '# Readme', encoding: 'utf-8', byteLength: 8, contentByteLength: 8, truncated: false, maxPreviewBytes: 262144, version: 'sha256:test' })
+      });
+
       // Click on file (should not navigate)
       await user.click(screen.getByText('README.md'));
 
-      // Verify no navigation occurred (still at root, only initial load)
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.getByText('# Readme')).toBeInTheDocument());
+      expect(screen.getByText('/')).toBeInTheDocument();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('should update path display when navigating into folder', async () => {

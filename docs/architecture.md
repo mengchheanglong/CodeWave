@@ -612,7 +612,7 @@ Trust boundaries matter.
 - run cancellation
 - provider health checks
 - tool audit logs
-- restart-safe idempotency receipts for mutating commands
+- mandatory restart-safe idempotency receipts for protected mutating commands, bound to strict canonical JSON and normalized query semantics
 - content-addressed provider-policy revisions on every provider-dependent mutation and persisted session/run lineage
 - one-active-run-per-session enforcement and stale-run fencing
 - persist-first steering with normalized lifecycle events, capability-proven native acknowledgement, serialized delivery attempts, atomic queued-to-applied transitions, and restart-safe queued fallback
@@ -623,7 +623,19 @@ Trust boundaries matter.
 - per-workspace policies
 - optional restricted mode
 
-### 13.3 Non-goals for v1
+### 13.3 Continuity conformance boundary
+
+As one trust foundation for the wider coding-agent control plane, CodeWave uses a product-owned continuity contract to test the daemon and existing SQLite state path under retries, races, external process termination, restart, and reconstruction. The contract translates ten runtime invariants into six deterministic vector families without importing a separate runtime or persistence framework. It does not replace the provider, worktree, review, desktop, or product roadmap. See [the CodeWave continuity contract](continuity-contract.md).
+
+The canonical boundary is the daemon-owned SQLite ledger. Provider processes, workspace and Git effects, MCP servers, remote services, and the operating-system user remain outside its transaction. CodeWave therefore persists intent before provider delivery, correlates acknowledgements where a structured protocol can prove them, and represents unresolved crash windows honestly; it does not claim exactly-once external effects.
+
+Workspace files remain outside that ledger and use a deliberately narrow daemon surface: bounded UTF-8 preview, exclusive create, and size-limited compare-and-swap edit. File versions are content digests; stale edits return a conflict instead of overwriting external changes. Truncated previews are never editable, binary data is refused, same-directory temporary files are synced before replacement, and realpath plus no-follow checks fence traversal and link escapes.
+
+Conformance evidence comes from `npm run check:continuity`, an isolated real-daemon harness, qualified synthetic provider fixtures, and its generated machine-readable report at `.codewave/qa/continuity-dogfood-2026-08-13/backend/validated-post-fix.json`. The report lives in the ignored `.codewave/` QA tree and is run evidence, not a checked-in attestation; its mere presence, documentation, and ordinary unit tests are not substitutes for a current validator pass. A passing report applies only to the identified tree and local synthetic topology.
+
+This boundary preserves the local-first architecture: SQLite remains the production store, and Restate, PostgreSQL, DBOS, Docker, or another durable runtime are not required. It also preserves content boundaries: prompts, tool payloads, and artifacts may intentionally live in content-bearing tables, while authority and audit projections should remain useful without duplicating those bytes.
+
+### 13.4 Non-goals for v1
 
 - enterprise multi-user auth
 - cloud multi-tenant orchestration
@@ -781,7 +793,7 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 - shared shell-safe provider process launcher, ordered line-bounded JSONL/Qwen control transport, exactly-once terminal ownership, and serialized ACP session/tool/permission mapping (implemented)
 - client handshake, protocol version, capabilities, limits, and fail-closed scopes (implemented)
 - queued steering with expected-run fencing plus runtime-negotiated Freebuff bridge steering and safe rejection/timeout/terminal/restart fallback (implemented)
-- durable idempotency keys and configuration revision hashes (implemented); client handshake scopes remain
+- mandatory durable idempotency keys, strict canonical mutation schemas, and configuration revision hashes (implemented)
 - monotonic event sequences and cursor-bounded SSE replay (implemented)
 - append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
 

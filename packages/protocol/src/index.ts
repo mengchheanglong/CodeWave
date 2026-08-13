@@ -6,6 +6,8 @@ export const CODEWAVE_MAX_SSE_REPLAY_EVENTS = 500;
 export const CODEWAVE_MAX_STEERING_PROMPT_CHARS = 20_000;
 export const CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES = 100;
 export const CODEWAVE_MAX_TRANSCRIPT_MESSAGES = 200;
+export const CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES = 256 * 1024;
+export const CODEWAVE_MAX_WORKSPACE_FILE_BYTES = 1024 * 1024;
 
 export const DAEMON_CLIENT_SCOPES = [
   'runtime:read',
@@ -54,6 +56,8 @@ export interface DaemonProtocolLimits {
   idempotencyKeyMaxLength: number;
   connectionTtlSeconds: number;
   maxClientConnections: number;
+  maxWorkspacePreviewBytes: number;
+  maxWorkspaceFileBytes: number;
 }
 
 export interface ClientHandshakeResponse {
@@ -160,6 +164,7 @@ export type TranscriptRole = 'user' | 'assistant' | 'system';
 
 export type WorkbenchEventType =
   | 'run.started'
+  | 'run.provider.launched'
   | 'run.steering.queued'
   | 'run.steering.applied'
   | 'run.steering.failed'
@@ -473,6 +478,7 @@ export interface ProviderSessionUpdate {
 }
 
 export interface ProviderRunContext {
+  launchAttemptId: string;
   session: WorkbenchSession;
   run: WorkbenchRun;
   emitEvent: (event: WorkbenchEvent) => Promise<void>;
@@ -484,6 +490,11 @@ export interface ProviderRunContext {
 
 export interface ProviderRunHandle {
   cancel: () => Promise<void>;
+  launched?: Promise<{
+    launchId: string;
+    protocol: string;
+    acknowledgedAt: string;
+  }>;
   steer?: (input: {
     steeringId: string;
     prompt: string;
@@ -526,6 +537,80 @@ export interface UpdateProviderConfigurationRequest {
 export interface UpdateDefaultProviderRequest {
   providerId: ProviderId;
   expectedProviderRevision: string;
+}
+
+export interface WorkspaceEntryRecord {
+  name: string;
+  relativePath: string;
+  kind: 'file' | 'folder';
+}
+
+export interface WorkspaceEntriesResponse {
+  workspacePath: string;
+  relativePath: string;
+  entries: WorkspaceEntryRecord[];
+}
+
+export interface WorkspaceFilePreviewResponse {
+  workspacePath: string;
+  relativePath: string;
+  name: string;
+  content: string;
+  encoding: 'utf-8';
+  byteLength: number;
+  contentByteLength: number;
+  truncated: boolean;
+  maxPreviewBytes: number;
+  version: string;
+}
+
+export interface CreateWorkspaceFileRequest {
+  workspacePath: string;
+  parentPath?: string | null;
+  name: string;
+  content?: string;
+}
+
+export interface CreateWorkspaceFileResponse {
+  workspacePath: string;
+  relativePath: string;
+  name: string;
+  byteLength: number;
+  created: true;
+  version: string;
+}
+
+export interface MutationReceiptStatusResponse {
+  key: string;
+  operation: string;
+  requestHash: string;
+  state: 'pending' | 'completed' | 'outcome_unknown' | 'response_redacted';
+  statusCode: number | null;
+  createdAt: string;
+  finalizedAt: string | null;
+  provenance: {
+    protocolVersion: number;
+    clientName: string;
+    clientVersion: string;
+    canonicalizationVersion: 'codewave-canonical-json-v1';
+    requestSchemaVersion: 'codewave-daemon-mutation-v1';
+  };
+}
+
+export interface UpdateWorkspaceFileRequest {
+  workspacePath: string;
+  targetPath: string;
+  content: string;
+  expectedVersion: string;
+}
+
+export interface UpdateWorkspaceFileResponse {
+  workspacePath: string;
+  relativePath: string;
+  name: string;
+  byteLength: number;
+  version: string;
+  updated: true;
 }
 
 export interface OrchestrationRecommendation {

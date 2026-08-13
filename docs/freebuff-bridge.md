@@ -20,7 +20,7 @@ Each probe has a five-second timeout and a 64 KiB aggregate output ceiling. A ra
 CodeWave launches a qualified bridge with:
 
 ```text
---cwd <absolute workspace> --prompt <prompt> --output-format jsonl
+--cwd <absolute workspace> --prompt <prompt> --output-format jsonl --launch-attempt-id <uuid>
 ```
 
 When provider session metadata exists, it also supplies `--resume <providerSessionId>`. Capability flags still declare Freebuff recovery unsupported in v1; the argument is reserved for compatible bridges and is not proof of resumability.
@@ -28,8 +28,10 @@ When provider session metadata exists, it also supplies `--resume <providerSessi
 Stdout is newline-delimited JSON. The first record must be:
 
 ```json
-{"type":"bridge.hello","protocolVersion":1}
+{"type":"bridge.hello","protocolVersion":1,"launchAttemptId":"<the supplied uuid>"}
 ```
+
+The daemon persists that launch-attempt ID in `run.started` before spawning the bridge. A matching hello becomes `run.provider.launched`, giving restart diagnostics one causal link without pretending the external process launch is part of the SQLite transaction. A missing or mismatched ID fails qualification for that run.
 
 Later records may be `capabilities`, `session`, `output`, `message`, `tool`, `checkpoint`, `steering`, or `result`. Unknown/plain records are diagnostic output only after the hello. Individual lines use the shared 1 MiB ceiling and aggregate transcript output is capped at 4 MiB.
 

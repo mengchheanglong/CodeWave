@@ -1,3 +1,4 @@
+import type { Ref } from 'react';
 import { PanelRightIcon, SearchIcon, TrashIcon } from '../icons';
 
 type ConversationHeaderProps = {
@@ -11,6 +12,7 @@ type ConversationHeaderProps = {
   toolPlaneNote: string;
   onOpenQuickOpen: () => void;
   utilityCollapsed: boolean;
+  utilityToggleRef?: Ref<HTMLButtonElement>;
   onToggleUtility: () => void;
   onDeleteSession?: () => void;
 };
@@ -26,6 +28,7 @@ export function ConversationHeader({
   toolPlaneNote,
   onOpenQuickOpen,
   utilityCollapsed,
+  utilityToggleRef,
   onToggleUtility,
   onDeleteSession,
 }: ConversationHeaderProps) {
@@ -82,6 +85,7 @@ export function ConversationHeader({
           <kbd>Ctrl K</kbd>
         </button>
         <button
+          ref={utilityToggleRef}
           type="button"
           className={`header-icon-button${!utilityCollapsed ? ' active' : ''}`}
           title={utilityCollapsed ? 'Open right rail' : 'Hide right rail'}

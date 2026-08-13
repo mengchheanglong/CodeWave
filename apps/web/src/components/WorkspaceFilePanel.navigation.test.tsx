@@ -91,11 +91,18 @@ describe('WorkspaceFilePanel - Folder Navigation Unit Tests', () => {
         expect(screen.getByText('README.md')).toBeInTheDocument();
       });
 
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ workspacePath: mockWorkspacePath, relativePath: 'README.md', name: 'README.md', content: '# Readme', encoding: 'utf-8', byteLength: 8, contentByteLength: 8, truncated: false, maxPreviewBytes: 262144, version: 'sha256:test' })
+      });
+
       // Click on file
       await user.click(screen.getByText('README.md'));
 
-      // Verify no navigation occurred (only initial load)
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      // Files preview without changing the directory path.
+      await waitFor(() => expect(screen.getByText('# Readme')).toBeInTheDocument());
+      expect(screen.getByText('/')).toBeInTheDocument();
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('should navigate into nested folders', async () => {

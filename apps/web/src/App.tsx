@@ -170,6 +170,7 @@ export default function App() {
   const railFilterInputRef = useRef<HTMLInputElement | null>(null);
   const compactNavigationToggleRef = useRef<HTMLButtonElement | null>(null);
   const compactNavigationRef = useRef<HTMLElement | null>(null);
+  const utilityToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const closeCompactNavigation = useCallback((restoreFocus = false) => {
     setCompactNavigationOpen(false);
@@ -308,6 +309,28 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [runMenuOpen]);
+
+  useEffect(() => {
+    if (utilityCollapsed || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const compactWorkbench = window.matchMedia('(max-width: 1180px)');
+    if (!compactWorkbench.matches) {
+      return;
+    }
+
+    function closeCompactInspector(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setUtilityCollapsed(true);
+      const toggle = utilityToggleRef.current;
+      window.setTimeout(() => toggle?.focus(), 0);
+    }
+
+    window.addEventListener('keydown', closeCompactInspector);
+    return () => window.removeEventListener('keydown', closeCompactInspector);
+  }, [utilityCollapsed]);
 
   const hasActiveSession = Boolean(shellPanelsState.selectedSessionId);
 
@@ -810,7 +833,7 @@ export default function App() {
             utilityCollapsed ? ' content-shell-utility-collapsed' : ''
           }`}
           aria-hidden={compactNavigationOpen || undefined}
-          inert={compactNavigationOpen ? '' : undefined}
+          {...(compactNavigationOpen ? ({ inert: '' } as Record<string, string>) : {})}
         >
           <main className="run-column panes-main">
             <ThreadTabs
@@ -836,6 +859,7 @@ export default function App() {
                 setQuickOpenVisible(true);
               }}
               utilityCollapsed={utilityCollapsed}
+              utilityToggleRef={utilityToggleRef}
               onToggleUtility={() => {
                 setUtilityCollapsed((current) => !current);
               }}

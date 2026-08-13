@@ -124,6 +124,21 @@ describe('App compact navigation', () => {
     });
   });
 
+  it('closes the compact inspector on Escape and restores focus to its toggle', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const toggle = screen.getByRole('button', { name: 'Open right rail' });
+
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: 'Hide right rail' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      const restoredToggle = screen.getByRole('button', { name: 'Open right rail' });
+      expect(restoredToggle).toHaveFocus();
+    });
+  });
+
   it('contains Tab navigation inside the open drawer', async () => {
     const user = userEvent.setup();
     render(<App />);

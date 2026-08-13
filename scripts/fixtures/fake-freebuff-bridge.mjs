@@ -1,3 +1,5 @@
+import { appendFileSync } from 'node:fs';
+
 const args = process.argv.slice(2);
 
 if (args.includes('--version')) {
@@ -7,16 +9,32 @@ if (args.includes('--version')) {
 
 if (args.includes('--codewave-bridge-info')) {
   process.stdout.write(
-    `${JSON.stringify({ name: 'codewave-freebuff-bridge', protocolVersion: 1 })}\n`,
+    `${JSON.stringify({
+      name: 'codewave-freebuff-bridge',
+      protocolVersion: Number(process.env.CODEWAVE_TEST_FREEBUFF_PROTOCOL_VERSION ?? 1),
+    })}\n`,
   );
   process.exit(0);
 }
 
 const promptIndex = args.indexOf('--prompt');
 const prompt = promptIndex >= 0 ? args[promptIndex + 1] ?? '' : '';
+const launchAttemptIndex = args.indexOf('--launch-attempt-id');
+const launchAttemptId = launchAttemptIndex >= 0 ? args[launchAttemptIndex + 1] ?? '' : '';
+if (process.env.CODEWAVE_TEST_PROVIDER_LAUNCH_LOG) {
+  appendFileSync(
+    process.env.CODEWAVE_TEST_PROVIDER_LAUNCH_LOG,
+    `${JSON.stringify({ launchId: launchAttemptId, protocolVersion: 1 })}\n`,
+    'utf8',
+  );
+}
 if (!prompt.includes('[missing-hello]')) {
   process.stdout.write(
-    `${JSON.stringify({ type: 'bridge.hello', protocolVersion: 1 })}\n`,
+    `${JSON.stringify({
+      type: 'bridge.hello',
+      protocolVersion: Number(process.env.CODEWAVE_TEST_FREEBUFF_PROTOCOL_VERSION ?? 1),
+      launchAttemptId,
+    })}\n`,
   );
 }
 const supportsSteering = prompt.includes('[native-steering]');
@@ -77,6 +95,7 @@ if (supportsSteering) {
 }
 
 const timer = setTimeout(() => {
+  const continuityPayloads = prompt.includes('[continuity-payloads]');
   const completedText = acceptedSteering.length
     ? `completed: ${prompt} | steered: ${acceptedSteering.join(' | ')}`
     : `completed: ${prompt}`;
@@ -95,17 +114,22 @@ const timer = setTimeout(() => {
   process.stdout.write(
     `${JSON.stringify({ type: 'session', sessionId: 'fake-freebuff-session' })}\n`,
   );
+  if (continuityPayloads) {
+    process.stdout.write(
+      `${JSON.stringify({ type: 'output', text: 'CW_PROVIDER_DIAGNOSTIC_SENTINEL_20260813' })}\n`,
+    );
+  }
   process.stdout.write(
-    `${JSON.stringify({ type: 'tool', status: 'requested', toolUseId: 'fake-tool-1', name: 'read', input: { path: 'README.md' } })}\n`,
+    `${JSON.stringify({ type: 'tool', status: 'requested', toolUseId: 'fake-tool-1', name: 'read', input: { path: continuityPayloads ? 'CW_TOOL_INPUT_SENTINEL_20260813' : 'README.md' } })}\n`,
   );
   process.stdout.write(
-    `${JSON.stringify({ type: 'tool', status: 'completed', toolUseId: 'fake-tool-1', name: 'read', output: 'ok' })}\n`,
+    `${JSON.stringify({ type: 'tool', status: 'completed', toolUseId: 'fake-tool-1', name: 'read', output: continuityPayloads ? 'CW_TOOL_OUTPUT_SENTINEL_20260813' : 'ok' })}\n`,
   );
   process.stdout.write(
     `${JSON.stringify({ type: 'checkpoint', title: 'fake-freebuff-checkpoint' })}\n`,
   );
   process.stdout.write(
-    `${JSON.stringify({ type: 'message', role: 'assistant', content: completedText })}\n`,
+    `${JSON.stringify({ type: 'message', role: 'assistant', content: continuityPayloads ? 'CW_ARTIFACT_BODY_SENTINEL_20260813' : completedText })}\n`,
   );
   if (!prompt.includes('[missing-result]')) {
     process.stdout.write(

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -33,6 +33,13 @@ export type MutationReceipt = {
   statusCode: number;
   responseJson: string;
   createdAt: string;
+  state: 'pending' | 'completed' | 'outcome_unknown' | 'response_redacted';
+  finalizedAt: string | null;
+  protocolVersion: number;
+  clientName: string;
+  clientVersion: string;
+  canonicalizationVersion: 'codewave-canonical-json-v1';
+  requestSchemaVersion: 'codewave-daemon-mutation-v1';
 };
 
 function parseJson<T>(value: string | null): T {
@@ -55,12 +62,27 @@ function toJson(value: unknown): string {
   return JSON.stringify(value ?? {});
 }
 
+function triggerContinuityTransactionCrash(point: string): void {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.CODEWAVE_TEST_CRASH_POINT === point
+  ) {
+    const signalPath = process.env.CODEWAVE_TEST_CRASH_SIGNAL_PATH;
+    if (!signalPath) {
+      throw new Error('A test crash signal path is required for continuity failpoints.');
+    }
+    writeFileSync(signalPath, point, { encoding: 'utf8', flag: 'wx' });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+  }
+}
+
 export function resolveDataDirectory(rootPath: string): string {
   return path.join(rootPath, '.codewave');
 }
 
 export class SQLiteStateStore {
   private readonly database: DatabaseSync;
+  private closed = false;
 
   constructor(databasePath: string) {
     mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -68,6 +90,12 @@ export class SQLiteStateStore {
     this.database.exec('PRAGMA journal_mode = WAL;');
     this.database.exec('PRAGMA foreign_keys = ON;');
     this.migrate();
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.database.close();
   }
 
   private migrate(): void {
@@ -203,7 +231,25 @@ export class SQLiteStateStore {
         request_hash TEXT NOT NULL,
         status_code INTEGER NOT NULL,
         response_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'pending',
+        finalized_at TEXT,
+        protocol_version INTEGER NOT NULL DEFAULT 1,
+        client_name TEXT NOT NULL DEFAULT 'legacy-client',
+        client_version TEXT NOT NULL DEFAULT 'legacy-unversioned',
+        canonicalization_version TEXT NOT NULL DEFAULT 'codewave-canonical-json-v1',
+        request_schema_version TEXT NOT NULL DEFAULT 'codewave-daemon-mutation-v1'
+      );
+
+      CREATE TABLE IF NOT EXISTS mutation_response_cache (
+        idempotency_key TEXT PRIMARY KEY REFERENCES mutation_receipts(idempotency_key) ON DELETE CASCADE,
+        response_json TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS codewave_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS run_steering_inputs (
@@ -288,7 +334,71 @@ export class SQLiteStateStore {
       "TEXT NOT NULL DEFAULT '{}'",
     );
 
+    const expectedMetadata = {
+      state_schema_version: 'codewave-state-v1',
+      event_schema_version: 'codewave-event-v1',
+    } as const;
+    for (const [key, expectedValue] of Object.entries(expectedMetadata)) {
+      const existing = this.database
+        .prepare('SELECT value FROM codewave_metadata WHERE key = ?')
+        .get(key) as Record<string, unknown> | undefined;
+      if (existing && existing.value !== expectedValue) {
+        throw new Error(
+          `Unsupported CodeWave ${key} '${String(existing.value)}'; expected '${expectedValue}'.`,
+        );
+      }
+      this.database
+        .prepare('INSERT OR IGNORE INTO codewave_metadata (key, value) VALUES (?, ?)')
+        .run(key, expectedValue);
+    }
+    this.ensureColumn(
+      'mutation_receipts',
+      'state',
+      "TEXT NOT NULL DEFAULT 'pending'",
+    );
+    this.ensureColumn('mutation_receipts', 'finalized_at', 'TEXT');
+    this.ensureColumn(
+      'mutation_receipts',
+      'protocol_version',
+      'INTEGER NOT NULL DEFAULT 1',
+    );
+    this.ensureColumn(
+      'mutation_receipts',
+      'client_name',
+      "TEXT NOT NULL DEFAULT 'legacy-client'",
+    );
+    this.ensureColumn(
+      'mutation_receipts',
+      'client_version',
+      "TEXT NOT NULL DEFAULT 'legacy-unversioned'",
+    );
+    this.ensureColumn(
+      'mutation_receipts',
+      'canonicalization_version',
+      "TEXT NOT NULL DEFAULT 'codewave-canonical-json-v1'",
+    );
+    this.ensureColumn(
+      'mutation_receipts',
+      'request_schema_version',
+      "TEXT NOT NULL DEFAULT 'codewave-daemon-mutation-v1'",
+    );
+
     this.database.exec(`
+      UPDATE mutation_receipts
+      SET state = 'completed', finalized_at = COALESCE(finalized_at, created_at)
+      WHERE status_code > 0 AND state = 'pending';
+
+      INSERT OR IGNORE INTO mutation_response_cache (
+        idempotency_key, response_json, created_at
+      )
+      SELECT idempotency_key, response_json, COALESCE(finalized_at, created_at)
+      FROM mutation_receipts
+      WHERE status_code > 0 AND response_json <> '';
+
+      UPDATE mutation_receipts
+      SET response_json = ''
+      WHERE response_json <> '';
+
       WITH ranked_events AS (
         SELECT
           id,
@@ -1029,6 +1139,10 @@ export class SQLiteStateStore {
         );
 
       if (nextEvent.type === 'message.created') {
+        triggerContinuityTransactionCrash('inside_message_event_transaction');
+      }
+
+      if (nextEvent.type === 'message.created') {
         const role = nextEvent.payload.role;
         const content =
           typeof nextEvent.payload.content === 'string'
@@ -1058,6 +1172,67 @@ export class SQLiteStateStore {
     });
 
     return persistedEvent;
+  }
+
+  appendTerminalEvent(
+    event: WorkbenchEvent,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled'>,
+    errorMessage: string | null,
+  ): WorkbenchEvent | null {
+    return this.withImmediateTransaction(() => {
+      const run = this.database
+        .prepare('SELECT status FROM runs WHERE id = ?')
+        .get(event.runId) as Record<string, unknown> | undefined;
+      if (
+        !run ||
+        run.status === 'completed' ||
+        run.status === 'failed' ||
+        run.status === 'cancelled'
+      ) {
+        return null;
+      }
+      const nextSequence = Number(
+        (
+          this.database
+            .prepare(
+              `SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+               FROM events WHERE run_id = ?`,
+            )
+            .get(event.runId) as Record<string, unknown>
+        ).next_sequence,
+      );
+      const nextEvent = {
+        ...event,
+        sequence:
+          typeof event.sequence === 'number' && event.sequence > 0
+            ? event.sequence
+            : nextSequence,
+      };
+      this.database
+        .prepare(
+          `INSERT INTO events (
+             id, session_id, run_id, sequence, timestamp, source, type, payload_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          nextEvent.id,
+          nextEvent.sessionId,
+          nextEvent.runId,
+          nextEvent.sequence,
+          nextEvent.timestamp,
+          nextEvent.source,
+          nextEvent.type,
+          toJson(nextEvent.payload),
+        );
+      this.database
+        .prepare(
+          `UPDATE runs
+           SET status = ?, completed_at = ?, error_message = ?
+           WHERE id = ? AND status IN ('queued', 'running', 'awaiting_approval')`,
+        )
+        .run(status, event.timestamp, errorMessage, event.runId);
+      return nextEvent;
+    });
   }
 
   listEvents(
@@ -1274,8 +1449,12 @@ export class SQLiteStateStore {
     const row = this.database
       .prepare(
         `
-          SELECT idempotency_key, operation, request_hash, status_code, response_json, created_at
+          SELECT mutation_receipts.idempotency_key, operation, request_hash, status_code,
+            COALESCE(mutation_response_cache.response_json, '') AS response_json,
+            mutation_receipts.created_at, state, finalized_at, protocol_version, client_name,
+            client_version, canonicalization_version, request_schema_version
           FROM mutation_receipts
+          LEFT JOIN mutation_response_cache USING (idempotency_key)
           WHERE idempotency_key = ?
         `,
       )
@@ -1288,6 +1467,17 @@ export class SQLiteStateStore {
       statusCode: Number(row.status_code),
       responseJson: String(row.response_json),
       createdAt: String(row.created_at),
+      state: String(row.state ?? 'pending') as MutationReceipt['state'],
+      finalizedAt: row.finalized_at ? String(row.finalized_at) : null,
+      protocolVersion: Number(row.protocol_version ?? 1),
+      clientName: String(row.client_name ?? 'legacy-client'),
+      clientVersion: String(row.client_version ?? 'legacy-unversioned'),
+      canonicalizationVersion: String(
+        row.canonicalization_version,
+      ) as MutationReceipt['canonicalizationVersion'],
+      requestSchemaVersion: String(
+        row.request_schema_version,
+      ) as MutationReceipt['requestSchemaVersion'],
     };
   }
 
@@ -1296,9 +1486,11 @@ export class SQLiteStateStore {
       .prepare(
         `
           INSERT INTO mutation_receipts (
-            idempotency_key, operation, request_hash, status_code, response_json, created_at
+            idempotency_key, operation, request_hash, status_code, response_json,
+            created_at, state, finalized_at, protocol_version, client_name,
+            client_version, canonicalization_version, request_schema_version
           )
-          VALUES (?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -1308,6 +1500,13 @@ export class SQLiteStateStore {
         receipt.statusCode,
         receipt.responseJson,
         receipt.createdAt,
+        receipt.state,
+        receipt.finalizedAt,
+        receipt.protocolVersion,
+        receipt.clientName,
+        receipt.clientVersion,
+        receipt.canonicalizationVersion,
+        receipt.requestSchemaVersion,
       );
     return receipt;
   }
@@ -1317,15 +1516,96 @@ export class SQLiteStateStore {
     statusCode: number,
     responseJson: string,
   ): void {
-    this.database
+    const finalizedAt = new Date().toISOString();
+    this.withImmediateTransaction(() => {
+      this.database
+        .prepare(
+          `
+            UPDATE mutation_receipts
+            SET status_code = ?, response_json = '', state = 'completed', finalized_at = ?
+            WHERE idempotency_key = ? AND state = 'pending'
+          `,
+        )
+        .run(statusCode, finalizedAt, key);
+      this.database
+        .prepare(
+          `INSERT OR REPLACE INTO mutation_response_cache (
+             idempotency_key, response_json, created_at
+           ) VALUES (?, ?, ?)`,
+        )
+        .run(key, responseJson, finalizedAt);
+    });
+  }
+
+  getMutationReceiptMetadata(key: string): MutationReceipt | null {
+    const row = this.database
+      .prepare(
+        `SELECT idempotency_key, operation, request_hash, status_code,
+          '' AS response_json, mutation_receipts.created_at, state, finalized_at,
+          protocol_version, client_name, client_version,
+          canonicalization_version, request_schema_version
+         FROM mutation_receipts WHERE idempotency_key = ?`,
+      )
+      .get(key) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      key: String(row.idempotency_key),
+      operation: String(row.operation),
+      requestHash: String(row.request_hash),
+      statusCode: Number(row.status_code),
+      responseJson: '',
+      createdAt: String(row.created_at),
+      state: String(row.state) as MutationReceipt['state'],
+      finalizedAt: row.finalized_at ? String(row.finalized_at) : null,
+      protocolVersion: Number(row.protocol_version),
+      clientName: String(row.client_name),
+      clientVersion: String(row.client_version),
+      canonicalizationVersion: String(
+        row.canonicalization_version,
+      ) as MutationReceipt['canonicalizationVersion'],
+      requestSchemaVersion: String(
+        row.request_schema_version,
+      ) as MutationReceipt['requestSchemaVersion'],
+    };
+  }
+
+  reconcilePendingMutationReceipts(reconciledAt: string): number {
+    const result = this.database
       .prepare(
         `
           UPDATE mutation_receipts
-          SET status_code = ?, response_json = ?
-          WHERE idempotency_key = ?
+          SET state = 'outcome_unknown', finalized_at = ?
+          WHERE state = 'pending' AND status_code = 0
         `,
       )
-      .run(statusCode, responseJson, key);
+      .run(reconciledAt);
+    return Number(result.changes ?? 0);
+  }
+
+  redactMutationResponsesContaining(value: string, redactedAt: string): number {
+    if (!value) return 0;
+    return this.withImmediateTransaction(() => {
+      const keys = this.database
+        .prepare(
+          `SELECT idempotency_key FROM mutation_response_cache
+           WHERE instr(response_json, ?) > 0`,
+        )
+        .all(value) as Array<Record<string, unknown>>;
+      if (keys.length === 0) return 0;
+      const update = this.database.prepare(
+        `UPDATE mutation_receipts
+         SET state = 'response_redacted', finalized_at = ?
+         WHERE idempotency_key = ?`,
+      );
+      const remove = this.database.prepare(
+        'DELETE FROM mutation_response_cache WHERE idempotency_key = ?',
+      );
+      for (const row of keys) {
+        update.run(redactedAt, String(row.idempotency_key));
+        remove.run(String(row.idempotency_key));
+      }
+      return keys.length;
+    });
   }
 
   pruneMutationReceipts(olderThan: string): number {
