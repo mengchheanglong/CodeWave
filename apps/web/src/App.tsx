@@ -82,6 +82,11 @@ import {
 } from './lib/attention-notifications';
 import { getWorkspaceLabel } from './lib/quick-open-helpers.js';
 import { buildQuickOpenItems } from './lib/quick-open-items.js';
+import {
+  chooseDesktopWorkspace,
+  observeDesktopRuntime,
+  type DesktopRuntimeStatus,
+} from './lib/desktop-bridge';
 import { formatTimestamp } from './shell-status-summary';
 import {
   parseApprovalPolicy,
@@ -144,6 +149,8 @@ export default function App() {
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
+  const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
+    useState<DesktopRuntimeStatus | null>(null);
   const [appTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
@@ -158,6 +165,8 @@ export default function App() {
   useEffect(() => {
     applyTheme(appTheme);
   }, [appTheme]);
+
+  useEffect(() => observeDesktopRuntime(setDesktopRuntimeStatus), []);
 
   useEffect(() => {
     const providerId =
@@ -635,8 +644,15 @@ export default function App() {
   const handleComposerPolicyChangeRef = useRef(handleComposerPolicyChange);
   handleComposerPolicyChangeRef.current = handleComposerPolicyChange;
 
-  function handleAddFolderToRail() {
-    setIsFolderModalOpen(true);
+  async function handleAddFolderToRail(): Promise<void> {
+    const selectedPath = await chooseDesktopWorkspace();
+    if (selectedPath === undefined) {
+      setIsFolderModalOpen(true);
+      return;
+    }
+    if (selectedPath !== null) {
+      handleFolderConfirm(selectedPath);
+    }
   }
 
   async function handleOpenWorkspace(nextWorkspacePath: string): Promise<void> {
@@ -668,14 +684,14 @@ export default function App() {
     })();
   }
 
-  function handleToggleBell() {
+  async function handleToggleBell(): Promise<void> {
     if (attentionBellOn) {
       toggleAttentionNotifications(false);
       setAttentionBellOn(false);
     } else {
-      requestAttentionPermission();
-      toggleAttentionNotifications(true);
-      setAttentionBellOn(true);
+      const enabled = await requestAttentionPermission();
+      toggleAttentionNotifications(enabled);
+      setAttentionBellOn(enabled);
     }
   }
 
@@ -770,6 +786,23 @@ export default function App() {
         compactNavigationToggleRef={compactNavigationToggleRef}
       />
 
+      {desktopRuntimeStatus &&
+      !['idle', 'ready'].includes(desktopRuntimeStatus.phase) ? (
+        <div
+          className={`desktop-runtime-banner desktop-runtime-${desktopRuntimeStatus.phase}`}
+          role={desktopRuntimeStatus.phase === 'failed' ? 'alert' : 'status'}
+        >
+          <span className="desktop-runtime-pulse" aria-hidden="true"></span>
+          <span>
+            {desktopRuntimeStatus.phase === 'restarting'
+              ? `Reconnecting local runtime · attempt ${desktopRuntimeStatus.restartAttempt}`
+              : desktopRuntimeStatus.phase === 'failed'
+                ? 'The local runtime stopped. Restart CodeWave to recover.'
+                : 'Preparing the local CodeWave runtime…'}
+          </span>
+        </div>
+      ) : null}
+
       <section
         className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}${
           compactNavigationOpen ? ' compact-navigation-open' : ''
@@ -783,7 +816,7 @@ export default function App() {
           runViewState={runViewState}
           onAddFolder={() => {
             closeCompactNavigation();
-            handleAddFolderToRail();
+            void handleAddFolderToRail();
           }}
           onOpenProviderSettings={() => {
             closeCompactNavigation();

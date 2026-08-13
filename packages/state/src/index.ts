@@ -98,7 +98,11 @@ export class SQLiteStateStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.database.close();
+    try {
+      this.database.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } finally {
+      this.database.close();
+    }
   }
 
   private migrate(): void {

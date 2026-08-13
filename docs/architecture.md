@@ -754,28 +754,28 @@ See [the 2026 harness research note](harness-research-2026.md) for primary sourc
 
 ### Slice goal
 
-Turn CodeWave from a session viewer into a safe local project workspace: each coding task gets an isolated Git branch/worktree and every accept or discard decision is explicit, review-fenced, and daemon-owned.
+Package the validated local workspace as a secure desktop alpha without creating a second source of runtime truth or exposing the private daemon address and bootstrap secret to renderer code.
 
 ### Slice contents
 
-1. register only an exact canonical Git root and require a clean source worktree
-2. create readable task branches in daemon-managed isolated worktrees
-3. expose a bounded changed-file/patch snapshot with a full-state review version
-4. commit accepted changes only to the task branch and never merge implicitly
-5. make revert explicit and destructive, with stale-review and active-run fencing
-6. hide and reject `.git`/daemon metadata through the workspace API
-7. validate hooks, traversal/junction escape, bounded output, branch preservation, and browser keyboard/compact behavior deterministically
+1. supervise the daemon in an Electron utility process on an ephemeral IPv4 loopback port
+2. serve the web shell and proxy its relative daemon API through a privileged `codewave://app/` origin
+3. keep a per-launch bootstrap secret, daemon address, filesystem, and process control in the main process
+4. expose only typed daemon status and native workspace selection through the sandboxed preload
+5. separate selected workspace data from the Electron-owned SQLite/log directory
+6. bound graceful shutdown, SSE/socket closure, provider cancellation, WAL checkpointing, log rotation, and crash recovery
+7. package hardened Electron fuses and validate permissions, CSP, origin/path containment, body/header ceilings, deterministic demo setup, and real packaged behavior
 
 ### Slice success criteria
 
-- user can register the current clean Git root and create a named isolated task
-- opening a task switches the shell to that worktree without changing the source checkout
-- Changes renders a bounded review and calls out incomplete review explicitly
-- stale acceptance/revert, active provider runs, protected paths, and junction escapes fail closed
-- acceptance creates a task-branch commit while the project default branch stays unchanged
-- revert cleans the task worktree while the project checkout stays unchanged
-- destructive dialogs support Escape, cancel, confirmation, and focus restoration
-- desktop and compact layouts remain usable without horizontal page overflow
+- the packaged renderer can use every daemon flow without learning the random port or bootstrap secret
+- direct daemon requests missing the exact main-owned secret fail closed, including health and handshake
+- closing the last window drains the daemon and SQLite within a bounded lifecycle
+- unexpected daemon exit recovers within a rolling three-restart budget, then fails visibly
+- first launch creates an isolated, clean, non-destructive demo repository
+- native folder selection uses canonical directories while browser development retains the product-owned path dialog
+- packaged desktop, 390px compact, and 320px stress layouts remain usable without horizontal page overflow
+- restart preserves sessions, projects, tasks, and accepted task-branch commits
 
 ---
 
@@ -823,11 +823,13 @@ Turn CodeWave from a session viewer into a safe local project workspace: each co
 - explicit task-branch commit or destructive revert; no implicit merge
 - protected Git/daemon control paths, disabled hooks, active-run fences, and junction containment
 
-### Phase 6 — Desktop alpha
+### Phase 6 — Desktop alpha (implemented baseline)
 
 - signed Electron shell supervising the local daemon on an ephemeral loopback port
 - secure product protocol, minimal typed IPC, lifecycle recovery, crash diagnostics, and native workspace selection
 - offline/install/upgrade/provider-PATH acceptance matrix before public binaries
+
+The local package/lifecycle/security baseline is implemented. Signed/notarized CI artifacts, installer upgrade/downgrade evidence, and an authenticated update channel remain release gates; see [the desktop alpha contract](desktop-alpha.md).
 
 ### Phase 7 — Research plugins
 
@@ -863,6 +865,7 @@ Turn CodeWave from a session viewer into a safe local project workspace: each co
 15. Steering is persist-first and acknowledgement-based. A writable provider stdin is not capability proof; unacknowledged inputs must remain queued and restart-recoverable.
 16. Outbound MCP adapters must remain narrow daemon clients, never raw daemon proxies or alternate state/provider control planes. Mutations require a separately reviewed scope, confirmation, idempotency, cancellation, and audit design.
 17. Project tasks begin from an exact clean Git root, live only in daemon-managed worktrees, and require a complete version-matched review before task-branch acceptance. CodeWave never exposes Git control paths or merges the project branch implicitly.
+18. Desktop renderer code receives neither the daemon port nor bootstrap secret. It uses only the product protocol proxy and a minimal, origin-checked preload; Electron main owns process lifecycle, native dialogs, and local release security policy.
 
 ---
 

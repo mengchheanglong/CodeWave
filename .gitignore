@@ -12,3 +12,5 @@ npm-debug.log*
 Thumbs.db
 *.tsbuildinfo
 .freebuff/
+apps/*/.vite/
+apps/desktop/out*/

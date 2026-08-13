@@ -7,13 +7,13 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 
 ### Now
 
-- package the validated local web/daemon product as a secure desktop alpha with supervised lifecycle, native workspace selection, crash diagnostics, and release gates
+- extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
+- add task-level execution budgets and attributable trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
 
 ### Next
 
-- extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
-- add task-level trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
 - add deterministic visual fixtures for specialty run states so UI-kit and shell polish can be regression-checked without depending on historical daemon data
+- add platform-native signed/notarized desktop release CI, installer upgrade/downgrade drills, and an authenticated update channel
 
 ### Blocked
 
@@ -1929,3 +1929,13 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Added the shell **Changes** view with project registration, autofocus task creation, dedicated task-session opening, bounded DiffCard review, explicit incomplete-review state, active-run controls, and accessible product-owned accept/revert confirmation dialogs.
 - Added `npm run check:worktrees` using a real temporary Git repository and daemon. It covers dirty/nested roots, readable branches, hook suppression, protected control paths, stale reviews, real commit/main preservation, concurrent same-worktree run refusal, destructive revert, oversized/binary review refusal, internal identity swaps, and junction escape containment.
 - Browser-verified the complete desktop and compact workflow at 1440×900, 390×844, and 320×568, including dialog Escape/focus restoration, zero page overflow, no console/page errors, a real task commit, and source-branch preservation.
+
+## Secure desktop alpha — 2026-08-13
+
+- Added `apps/desktop` with Electron 43.4.0 and Forge 7.11.2, a sandboxed/context-isolated renderer, an origin-checked minimal preload, and a privileged `codewave://app/` protocol that serves the Vite shell and proxies relative daemon APIs.
+- Added an Electron utility-process daemon supervisor using an ephemeral IPv4 loopback port, a per-launch 32-byte main-owned bootstrap secret, separate Electron-owned data/log directories, bounded log rotation, graceful stop with forced escalation, and a rolling three-restart-per-minute crash budget.
+- Made the daemon desktop-ready without changing CLI behavior: option-based workspace/data/host/port/bootstrap configuration, actual port-0 address reporting, exact timing-safe bootstrap gating on every route, bounded idempotent shutdown, provider/approval cancellation, SSE/socket closure, WAL checkpointing, and SQLite close.
+- Added a deterministic non-destructive first-run Git demo, native canonical directory selection, and renderer-visible runtime recovery status. Browser development retains the product-owned path prompt.
+- Hardened the package with CSP/header/body allowlists, asset containment, denied navigation/download/webview/certificate/device permissions, trusted-origin-only notifications, ASAR integrity/ASAR-only loading, and strict Electron fuses disabling Run-as-Node, `NODE_OPTIONS`, inspector CLI arguments, and file-protocol privilege elevation.
+- Added `check:desktop-daemon`, `check:desktop-security`, and `check:desktop-demo`. Packaged Windows dogfood covered first launch, provider setup, workspace file lifecycle, Git project registration, isolated task creation, review, Escape/cancel, task-branch acceptance with main preserved, compact 390/320 layouts, 2 MiB proxy rejection, origin rejection, restart persistence, forced daemon recovery, fuse inspection, and clean exit.
+- Public release remains gated on signed/notarized platform-native CI, installer upgrade/downgrade evidence, authenticated update metadata, and cross-platform package dogfood. The current package is an unsigned alpha.

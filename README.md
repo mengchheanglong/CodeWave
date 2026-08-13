@@ -191,6 +191,7 @@ CodeWave is structured as an npm monorepo with workspaces:
 |---|---|---|
 | **Daemon** | `apps/daemon` | HTTP server, provider lifecycle, API routing, static file hosting |
 | **Web shell** | `apps/web` | React + TypeScript + Vite frontend |
+| **Desktop shell** | `apps/desktop` | Electron main/preload, private protocol proxy, daemon supervision, native workspace picker |
 | **Protocol** | `packages/protocol` | Shared types: events, adapters, sessions, tools, orchestration |
 | **State** | `packages/state` | SQLite-backed persistence |
 | **Orchestrator** | `packages/orchestrator` | Routing, follow-up, delegate, handoff logic |
@@ -225,6 +226,15 @@ Frontend-only iteration:
 npm run dev:web
 ```
 
+Desktop iteration and a current-platform unpacked alpha package:
+
+```bash
+npm run dev:desktop
+npm run build:desktop
+```
+
+The desktop shell supervises the daemon on a random loopback port, keeps the bootstrap secret and port out of the renderer, stores SQLite separately from the selected workspace, and uses a native directory picker when available. See [the desktop alpha contract](docs/desktop-alpha.md) before changing its lifecycle or security boundary.
+
 Validation:
 
 ```bash
@@ -239,6 +249,9 @@ npm run check:harness                    # Daemon lifecycle/idempotency/steering
 npm run check:adversarial                # Daemon boundary and hostile-input regression suite
 npm run check:continuity                 # Crash/replay/reconstruction conformance suite
 npm run check:worktrees                  # Real Git project/worktree/review safety E2E
+npm run check:desktop-daemon             # Random-port/auth/shutdown/restart persistence E2E
+npm run check:desktop-security           # Protocol, CSP, permission, and fuse policy checks
+npm run check:desktop-demo               # Non-destructive isolated demo workspace checks
 npm run check:registrations              # Tool registration E2E tests
 npm run check:registrations:json         # CI-friendly JSON summary
 ```
@@ -282,6 +295,7 @@ Except for `/api/health` and `/api/handshake`, daemon APIs require a negotiated 
 - OpenCode defaults to ACP; use `CODEWAVE_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
 - Project-task acceptance creates a commit only on the isolated `codewave/task-*` branch. Merge, rebase, conflict resolution, remote push, and pull-request creation remain explicit external Git operations in this baseline
 - Git is outside SQLite's transaction. If the daemon process is killed during worktree creation or task acceptance, the idempotency receipt fails closed as outcome-unknown; inspect the named task branch/worktree rather than retrying the same external effect blindly
+- The desktop package is an unsigned alpha. Forge makers exist, but signed/notarized platform-native CI, installer upgrade/downgrade evidence, and an authenticated auto-update channel are still required before publishing binaries
 
 See [the 2026 harness research note](docs/harness-research-2026.md) for provider evidence, donor analysis, and the next backend milestones.
 

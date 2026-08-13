@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   constants as fsConstants,
   createReadStream,
@@ -23,6 +23,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,6 +155,8 @@ const MIME_TYPES = new Map<string, string>([
 ]);
 const CLIENT_CONNECTION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_CLIENT_CONNECTIONS = 256;
+const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 5_000;
+const DESKTOP_BOOTSTRAP_HEADER = 'x-codewave-desktop-bootstrap';
 const DAEMON_SERVER_VERSION = '0.1.0-dev';
 const DAEMON_PROTOCOL_LIMITS = {
   maxRequestBytes: CODEWAVE_MAX_REQUEST_BYTES,
@@ -652,6 +655,17 @@ class RunEventBroker {
       response.write(payload);
     }
   }
+
+  closeAll(): void {
+    for (const subscribers of this.subscribers.values()) {
+      for (const response of subscribers) {
+        if (!response.writableEnded) {
+          response.end(': daemon stopping\n\n');
+        }
+      }
+    }
+    this.subscribers.clear();
+  }
 }
 
 type PendingApproval = {
@@ -673,6 +687,28 @@ type RenameWorkspaceEntryRequest = {
   targetPath: string;
   nextName: string;
 };
+
+export type CodeWaveDaemonOptions = {
+  workspaceRoot: string;
+  dataDirectory?: string;
+  host?: '127.0.0.1';
+  port?: number;
+  desktopBootstrapSecret?: string;
+  shutdownTimeoutMs?: number;
+};
+
+export type CodeWaveDaemonStartResult = {
+  host: '127.0.0.1';
+  port: number;
+  baseUrl: string;
+};
+
+type DaemonLifecycle =
+  | 'created'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped';
 
 type WorkspaceFileErrorCode =
   | 'workspace_path_escape'
@@ -882,9 +918,46 @@ function decodeUtf8Prefix(bytes: Buffer): { content: string; byteLength: number 
   throw new Error('Unable to find a valid UTF-8 preview boundary.');
 }
 
+function validateDaemonPort(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 65_535) {
+    throw new Error('CodeWave daemon port must be an integer from 0 through 65535.');
+  }
+  return value;
+}
+
+function validateShutdownTimeout(value: number | undefined): number {
+  const timeout = value ?? DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
+  if (!Number.isInteger(timeout) || timeout < 100 || timeout > 30_000) {
+    throw new Error('CodeWave daemon shutdown timeout must be 100-30000 milliseconds.');
+  }
+  return timeout;
+}
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | null> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export class CodeWaveDaemon {
-  private readonly port: number;
+  private readonly requestedPort: number;
+  private readonly host: '127.0.0.1';
+  private readonly rootPath: string;
   private readonly dataDirectory: string;
+  private readonly desktopBootstrapSecret: Buffer | null;
+  private readonly shutdownTimeoutMs: number;
   private readonly stateStore: SQLiteStateStore;
   private readonly worktreeManager: WorktreeManager;
   private readonly eventBroker = new RunEventBroker();
@@ -903,17 +976,56 @@ export class CodeWaveDaemon {
   private readonly steeringFallbackSchedules = new Set<string>();
   private readonly sessionRunReservations = new Set<string>();
   private readonly cancellationRequestedRuns = new Set<string>();
+  private readonly inFlightRequests = new Set<Promise<void>>();
+  private readonly sockets = new Set<Socket>();
   private server: Server | null = null;
-  private stopped = false;
+  private actualPort: number | null = null;
+  private lifecycle: DaemonLifecycle = 'created';
+  private stopPromise: Promise<void> | null = null;
 
-  constructor(private readonly rootPath: string, port = DEFAULT_DAEMON_PORT) {
-    this.port = port;
-    this.dataDirectory = resolveDataDirectory(rootPath);
+  constructor(workspaceRoot: string, port?: number);
+  constructor(options: CodeWaveDaemonOptions);
+  constructor(
+    workspaceRootOrOptions: string | CodeWaveDaemonOptions,
+    legacyPort = DEFAULT_DAEMON_PORT,
+  ) {
+    const options: CodeWaveDaemonOptions =
+      typeof workspaceRootOrOptions === 'string'
+        ? { workspaceRoot: workspaceRootOrOptions, port: legacyPort }
+        : workspaceRootOrOptions;
+    if (!options.workspaceRoot?.trim()) {
+      throw new Error('CodeWave daemon workspaceRoot is required.');
+    }
+    if (options.host !== undefined && options.host !== '127.0.0.1') {
+      throw new Error('CodeWave daemon host is locked to 127.0.0.1.');
+    }
+    if (
+      options.desktopBootstrapSecret !== undefined &&
+      (options.desktopBootstrapSecret.length === 0 ||
+        Buffer.byteLength(options.desktopBootstrapSecret, 'utf8') > 4_096 ||
+        /[\r\n\0]/.test(options.desktopBootstrapSecret))
+    ) {
+      throw new Error(
+        'Desktop bootstrap secret must be 1-4096 UTF-8 bytes without control delimiters.',
+      );
+    }
+    this.host = '127.0.0.1';
+    this.rootPath = path.resolve(options.workspaceRoot);
+    this.requestedPort = validateDaemonPort(
+      options.port ?? DEFAULT_DAEMON_PORT,
+    );
+    this.dataDirectory = path.resolve(
+      options.dataDirectory ?? resolveDataDirectory(this.rootPath),
+    );
+    this.desktopBootstrapSecret = options.desktopBootstrapSecret
+      ? Buffer.from(options.desktopBootstrapSecret, 'utf8')
+      : null;
+    this.shutdownTimeoutMs = validateShutdownTimeout(options.shutdownTimeoutMs);
     this.stateStore = new SQLiteStateStore(
       path.join(this.dataDirectory, 'state.sqlite'),
     );
-    this.worktreeManager = new WorktreeManager(rootPath, this.stateStore);
-    this.providerPolicy = new ProviderPolicyStore(rootPath);
+    this.worktreeManager = new WorktreeManager(this.rootPath, this.stateStore);
+    this.providerPolicy = new ProviderPolicyStore(this.rootPath);
     this.installProviders(this.providerPolicy.snapshot());
     this.stateStore.pruneMutationReceipts(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -922,46 +1034,143 @@ export class CodeWaveDaemon {
     this.reconcileInterruptedRuns();
   }
 
-  async start(): Promise<void> {
-    if (this.server || this.stopped) {
+  async start(): Promise<CodeWaveDaemonStartResult> {
+    if (this.lifecycle !== 'created') {
       throw new Error('CodeWave daemon instances can only be started once.');
     }
+    this.lifecycle = 'starting';
     const server = createServer((request, response) => {
-      void this.handleIncomingRequest(request, response).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-          sendJson(response, 400, {
-            error: `Daemon request failed: ${message}`,
-          });
-        } catch {
-          response.destroy();
-        }
-      });
+      const requestTask = this.handleIncomingRequest(request, response);
+      this.inFlightRequests.add(requestTask);
+      void requestTask
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            sendJson(response, 400, {
+              error: `Daemon request failed: ${message}`,
+            });
+          } catch {
+            response.destroy();
+          }
+        })
+        .finally(() => this.inFlightRequests.delete(requestTask));
     });
-
-    await new Promise<void>((resolve) => {
-      server.listen(this.port, '127.0.0.1', () => resolve());
+    server.on('connection', (socket) => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
     });
     this.server = server;
-    await this.resumeQueuedSteeringInputs();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off('listening', onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off('error', onError);
+          resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(this.requestedPort, this.host);
+      });
+      const address = server.address() as AddressInfo | null;
+      if (!address || typeof address === 'string') {
+        throw new Error('CodeWave daemon did not receive a loopback TCP address.');
+      }
+      this.actualPort = address.port;
+      this.lifecycle = 'running';
+      await this.resumeQueuedSteeringInputs();
+      return {
+        host: this.host,
+        port: this.actualPort,
+        baseUrl: this.getBaseUrl(),
+      };
+    } catch (error) {
+      this.lifecycle = 'stopped';
+      this.server = null;
+      await new Promise<void>((resolve) => {
+        if (!server.listening) {
+          resolve();
+          return;
+        }
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+      this.desktopBootstrapSecret?.fill(0);
+      this.stateStore.close();
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
-    if (this.stopped) return;
-    this.stopped = true;
+    if (this.stopPromise) return this.stopPromise;
+    if (this.lifecycle === 'stopped') return;
+    this.stopPromise = this.performStop();
+    return this.stopPromise;
+  }
+
+  private async performStop(): Promise<void> {
+    this.lifecycle = 'stopping';
+    this.eventBroker.closeAll();
+    this.clientConnections.clear();
     const server = this.server;
     this.server = null;
-    if (server) {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-        server.closeAllConnections();
-      });
+    const closePromise = server
+      ? new Promise<void>((resolve) => {
+          if (!server.listening) {
+            resolve();
+            return;
+          }
+          server.close(() => resolve());
+          server.closeIdleConnections();
+        })
+      : Promise.resolve();
+    const shutdownDeadline = Date.now() + this.shutdownTimeoutMs;
+    const remainingShutdownMs = () =>
+      Math.max(1, shutdownDeadline - Date.now());
+
+    try {
+      const runIds = [
+        ...new Set([
+          ...this.runHandles.keys(),
+          ...this.stateStore.listNonTerminalRuns().map((run) => run.id),
+        ]),
+      ];
+      await settleWithin(
+        Promise.allSettled(runIds.map((runId) => this.cancelRun(runId))).then(
+          () => undefined,
+        ),
+        remainingShutdownMs(),
+      );
+      await settleWithin(
+        Promise.allSettled([...this.inFlightRequests]).then(() => undefined),
+        remainingShutdownMs(),
+      );
+      const closed = await settleWithin(closePromise, remainingShutdownMs());
+      if (closed === null) {
+        for (const socket of this.sockets) socket.destroy();
+        server?.closeAllConnections();
+      }
+    } finally {
+      this.lifecycle = 'stopped';
+      this.runHandles.clear();
+      this.pendingApprovals.clear();
+      this.inFlightMutationKeys.clear();
+      this.sockets.clear();
+      this.desktopBootstrapSecret?.fill(0);
+      this.stateStore.close();
     }
-    this.stateStore.close();
   }
 
   getBaseUrl(): string {
-    return `http://127.0.0.1:${this.port}`;
+    if (this.actualPort === null && this.requestedPort === 0) {
+      throw new Error(
+        'CodeWave daemon base URL is unavailable until an OS-selected port is listening.',
+      );
+    }
+    return `http://${this.host}:${this.actualPort ?? this.requestedPort}`;
   }
 
   private getRequiredClientScope(
@@ -1007,6 +1216,27 @@ export class CodeWaveDaemon {
     if (pathname.startsWith('/api/approvals/')) return 'approvals:write';
     if (pathname.startsWith('/api/checkpoints/')) return 'sessions:write';
     return 'runtime:read';
+  }
+
+  private authorizeDesktopBootstrap(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): boolean {
+    const expected = this.desktopBootstrapSecret;
+    if (!expected) return true;
+    const rawHeader = request.headers[DESKTOP_BOOTSTRAP_HEADER];
+    const supplied =
+      typeof rawHeader === 'string' ? Buffer.from(rawHeader, 'utf8') : null;
+    const sameLength = supplied?.length === expected.length;
+    const comparison = sameLength ? supplied! : Buffer.alloc(expected.length);
+    if (!timingSafeEqual(expected, comparison) || !sameLength) {
+      sendJson(response, 401, {
+        error: 'A valid desktop bootstrap credential is required.',
+        code: 'desktop_bootstrap_required',
+      });
+      return false;
+    }
+    return true;
   }
 
   private authorizeClient(
@@ -1174,6 +1404,14 @@ export class CodeWaveDaemon {
     response: ServerResponse,
   ): Promise<void> {
     if (!authorizeLocalHost(request, response)) return;
+    if (!this.authorizeDesktopBootstrap(request, response)) return;
+    if (this.lifecycle !== 'running') {
+      sendJson(response, 503, {
+        error: 'The CodeWave daemon is shutting down.',
+        code: 'daemon_shutting_down',
+      });
+      return;
+    }
     const method = request.method?.toUpperCase() ?? 'GET';
     const url = new URL(request.url ?? '/', this.getBaseUrl());
     if (!this.authorizeClient(request, url, response)) return;
@@ -4469,6 +4707,7 @@ export class CodeWaveDaemon {
   }
 
   private scheduleQueuedSteeringDispatch(targetRunId: string): void {
+    if (this.lifecycle !== 'running') return;
     if (this.steeringFallbackSchedules.has(targetRunId)) return;
     this.steeringFallbackSchedules.add(targetRunId);
     void (async () => {
@@ -4489,6 +4728,7 @@ export class CodeWaveDaemon {
   }
 
   private async dispatchQueuedSteering(targetRunId: string): Promise<void> {
+    if (this.lifecycle !== 'running') return;
     if (this.steeringDispatches.has(targetRunId)) return;
     const targetRun = this.stateStore.getRun(targetRunId);
     if (!targetRun || !isTerminalRunStatus(targetRun.status)) return;
@@ -4559,6 +4799,12 @@ export class CodeWaveDaemon {
     sessionId: string,
     body: StartRunRequest,
   ): Promise<RunSnapshot | Error | null> {
+    if (this.lifecycle !== 'running') {
+      return new DaemonConflictError(
+        'The daemon is shutting down and cannot start another provider run.',
+        'daemon_shutting_down',
+      );
+    }
     const registry = this.requireProviderRevision(body.expectedProviderRevision);
     if (registry instanceof Error) return registry;
     const session = this.stateStore.getSession(sessionId);
@@ -4620,6 +4866,12 @@ export class CodeWaveDaemon {
         provider = configuredProvider;
 
         const health = await this.getProviderHealth(session.providerId);
+        if (this.lifecycle !== 'running') {
+          return new DaemonConflictError(
+            'The daemon began shutting down while this run was being prepared.',
+            'daemon_shutting_down',
+          );
+        }
         if (!health) {
           return new Error(`Provider ${session.providerId} is not configured.`);
         }
@@ -4669,6 +4921,13 @@ export class CodeWaveDaemon {
       }
     } finally {
       taskRunReservation?.release();
+    }
+    if (this.lifecycle !== 'running') {
+      await this.cancelRun(run.id);
+      return new DaemonConflictError(
+        'The daemon began shutting down before the provider could launch.',
+        'daemon_shutting_down',
+      );
     }
     if (run.preRunCommit) {
       this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);
@@ -4801,7 +5060,7 @@ export class CodeWaveDaemon {
     const handle = this.runHandles.get(runId);
     if (handle) {
       try {
-        await handle.cancel();
+        await settleWithin(handle.cancel(), this.shutdownTimeoutMs);
       } catch {
         // The daemon-owned terminal fence below still records cancellation.
       }

@@ -20,22 +20,23 @@ function notificationsEnabled(): boolean {
   }
 }
 
-export function requestAttentionPermission(): void {
+export async function requestAttentionPermission(): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) {
-    return;
+    return false;
   }
-  if (window.Notification.permission !== 'default') {
-    return;
+  if (window.Notification.permission === 'granted') {
+    return true;
   }
-  void window.Notification.requestPermission().then((permission) => {
-    if (permission === 'granted') {
-      try {
-        window.localStorage.setItem(NOTIFICATION_PERMISSION_KEY, 'true');
-      } catch {
-        // ignore storage failures
-      }
-    }
-  });
+  if (window.Notification.permission === 'denied') {
+    return false;
+  }
+
+  try {
+    const permission = await window.Notification.requestPermission();
+    return permission === 'granted';
+  } catch {
+    return false;
+  }
 }
 
 export function toggleAttentionNotifications(enabled: boolean): void {

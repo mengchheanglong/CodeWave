@@ -1,12 +1,28 @@
 import { DEFAULT_DAEMON_PORT } from '@codewave/protocol';
 import { CodeWaveDaemon } from './server.js';
 
-const port = Number(process.env.CODEWAVE_PORT ?? DEFAULT_DAEMON_PORT);
-const daemon = new CodeWaveDaemon(process.cwd(), port);
+function readPort(value: string | undefined): number {
+  const port = Number(value ?? DEFAULT_DAEMON_PORT);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error('CODEWAVE_PORT must be an integer from 0 through 65535.');
+  }
+  return port;
+}
 
-await daemon.start();
+const workspaceRoot = process.env.CODEWAVE_WORKSPACE_ROOT?.trim() || process.cwd();
+const dataDirectory = process.env.CODEWAVE_DATA_DIRECTORY?.trim() || undefined;
+const desktopBootstrapSecret =
+  process.env.CODEWAVE_DESKTOP_BOOTSTRAP_SECRET ?? undefined;
+const daemon = new CodeWaveDaemon({
+  workspaceRoot,
+  dataDirectory,
+  port: readPort(process.env.CODEWAVE_PORT),
+  desktopBootstrapSecret,
+});
 
-console.log(`CodeWave daemon listening on ${daemon.getBaseUrl()}`);
+const started = await daemon.start();
+
+console.log(`CodeWave daemon listening on ${started.baseUrl}`);
 
 let shuttingDown = false;
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
