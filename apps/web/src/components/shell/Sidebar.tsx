@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { ShellSummaryState } from '../../lib/shell-summary-state';
@@ -58,6 +58,7 @@ type SidebarProps = {
   onDeleteWorkspaceGroup: (workspacePath: string) => void;
   onDeleteSession: (sessionId: string) => void;
   railFilterInputRef: RefObject<HTMLInputElement | null>;
+  navigationRef?: Ref<HTMLElement>;
 };
 
 export function Sidebar({
@@ -84,11 +85,27 @@ export function Sidebar({
   onDeleteWorkspaceGroup,
   onDeleteSession,
   railFilterInputRef,
+  navigationRef,
 }: SidebarProps) {
   const normalizedRailFilter = railFilter.trim().toLowerCase();
+  const visibleOrchestrationFlows = filteredOrchestrationFlows.filter(
+    (flow) =>
+      flow.sessions.length > 1 || flow.rootSession.orchestration?.kind === 'route',
+  );
+  const visibleRailSectionBadge =
+    railView === 'flows' ? visibleOrchestrationFlows.length : railSectionBadge;
+  const selectedProviderNote = shellSummaryState.sessionProviderNote.replace(
+    /^(Qwen|Gemini|Freebuff|OpenCode)/,
+    renderProviderLabel(shellControlsState.providerId),
+  );
 
   return (
-    <aside className="workspace-column panes-sidebar">
+    <aside
+      ref={navigationRef}
+      id="workspace-navigation"
+      className="workspace-column panes-sidebar"
+      tabIndex={-1}
+    >
       <div className="sidebar-top">
         <div className="sidebar-brand-block">
           <div className="sidebar-intro">
@@ -212,7 +229,7 @@ export function Sidebar({
           </div>
 
           <p id="session-provider-note" className="chip-note session-dock-hint">
-            {shellSummaryState.sessionProviderNote}
+            {selectedProviderNote}
           </p>
 
           <div className="session-dock-actions">
@@ -225,8 +242,8 @@ export function Sidebar({
         <div className="sidebar-section-header">
           <span className="sidebar-section-label">
             {getRailSectionLabel(railView)}
-            {railSectionBadge > 0 ? (
-              <span className="sidebar-section-count">{railSectionBadge}</span>
+            {visibleRailSectionBadge > 0 ? (
+              <span className="sidebar-section-count">{visibleRailSectionBadge}</span>
             ) : null}
           </span>
           <button
@@ -288,6 +305,7 @@ export function Sidebar({
                     ? `No threads match "${railFilter.trim()}".`
                     : shellPanelsState.recentSessionsMessage ?? 'No sessions yet.'
                 }
+                emptyTitle={normalizedRailFilter ? 'No matching threads' : undefined}
                 onSelectSession={onSelectSession}
                 onDeleteWorkspaceGroup={onDeleteWorkspaceGroup}
                 onDeleteSession={onDeleteSession}
@@ -334,7 +352,7 @@ export function Sidebar({
           {railView === 'flows' ? (
             <div id="orchestration-board" className="list rail-list compact">
               <OrchestrationSwimlanes
-                orchestrationFlows={filteredOrchestrationFlows}
+                orchestrationFlows={visibleOrchestrationFlows}
                 selectedSessionId={shellPanelsState.selectedSessionId}
                 emptyMessage={
                   normalizedRailFilter
@@ -364,7 +382,9 @@ export function Sidebar({
                     {railViewIcon(item.id)}
                     {getRailSectionLabel(item.id)}
                   </span>
-                  <span className="sidebar-nav-count">{item.badge ?? 0}</span>
+                  <span className="sidebar-nav-count">
+                    {item.id === 'flows' ? visibleOrchestrationFlows.length : item.badge ?? 0}
+                  </span>
                 </button>
               ))}
           </div>

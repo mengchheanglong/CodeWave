@@ -46,6 +46,32 @@ describe('RecentSessionList - Context Menu Behavior', () => {
     onDeleteSession: vi.fn(),
   };
 
+  it('distinguishes an empty filter result from an empty session ledger', () => {
+    render(
+      <RecentSessionList
+        {...defaultProps}
+        sessions={[]}
+        emptyTitle="No matching threads"
+        emptyMessage={'No threads match "missing".'}
+      />,
+    );
+
+    expect(screen.getByText('No matching threads')).toBeInTheDocument();
+    expect(screen.queryByText('No sessions yet')).not.toBeInTheDocument();
+  });
+
+  it('requests deletion without deleting directly from the context menu', () => {
+    const onDeleteSession = vi.fn();
+    render(
+      <RecentSessionList {...defaultProps} onDeleteSession={onDeleteSession} />,
+    );
+
+    fireEvent.click(screen.getAllByLabelText(/Thread menu for/)[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete thread' }));
+
+    expect(onDeleteSession).toHaveBeenCalledWith('session-1');
+  });
+
   describe('Click-outside closes context menus', () => {
     it('should close session context menu when clicking outside', () => {
       const { container } = render(<RecentSessionList {...defaultProps} />);

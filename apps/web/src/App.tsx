@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -73,6 +74,7 @@ import {
 import { useShellLayout } from './lib/use-shell-layout';
 import { useAutoResizeTextarea } from './lib/use-auto-resize-textarea';
 import { useKeyboardShortcuts } from './lib/use-keyboard-shortcuts';
+import { useFocusContainment } from './lib/use-focus-containment';
 import { createDaemonApi } from './lib/daemon-api';
 import {
   applyTheme,
@@ -180,6 +182,8 @@ export default function App() {
   const [showThinking, setShowThinking] = useState(true);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
+  const [compactNavigationOpen, setCompactNavigationOpen] = useState(false);
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
@@ -208,6 +212,15 @@ export default function App() {
   ]);
 
   const railFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const compactNavigationToggleRef = useRef<HTMLButtonElement | null>(null);
+  const compactNavigationRef = useRef<HTMLElement | null>(null);
+
+  const closeCompactNavigation = useCallback((restoreFocus = false) => {
+    setCompactNavigationOpen(false);
+    if (restoreFocus) {
+      window.setTimeout(() => compactNavigationToggleRef.current?.focus(), 0);
+    }
+  }, []);
 
   const {
     leftColumnWidth,
@@ -215,6 +228,12 @@ export default function App() {
     startLeftResize,
     startRightResize,
   } = useShellLayout();
+
+  useFocusContainment(
+    compactNavigationOpen,
+    compactNavigationRef,
+    railFilterInputRef,
+  );
 
   const inspectorViews = useMemo(
     () => splitRunInspectorViews(runViewState.events),
@@ -272,6 +291,40 @@ export default function App() {
       compactWorkbench.removeEventListener('change', collapseForCompactWorkbench);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const compactNavigation = window.matchMedia('(max-width: 700px)');
+    const closeAfterDesktopResize = () => {
+      if (!compactNavigation.matches) {
+        setCompactNavigationOpen(false);
+      }
+    };
+
+    closeAfterDesktopResize();
+    compactNavigation.addEventListener('change', closeAfterDesktopResize);
+    return () => {
+      compactNavigation.removeEventListener('change', closeAfterDesktopResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!compactNavigationOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCompactNavigation(true);
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [closeCompactNavigation, compactNavigationOpen]);
 
   useEffect(() => {
     if (!runMenuOpen) {
@@ -696,10 +749,22 @@ export default function App() {
         contextUsagePercent={contextUsagePercent}
         attentionBellOn={attentionBellOn}
         onToggleBell={handleToggleBell}
+        compactNavigationOpen={compactNavigationOpen}
+        onToggleCompactNavigation={() => {
+          setCompactNavigationOpen((current) => {
+            if (!current) {
+              setUtilityCollapsed(true);
+            }
+            return !current;
+          });
+        }}
+        compactNavigationToggleRef={compactNavigationToggleRef}
       />
 
       <section
-        className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}`}
+        className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}${
+          compactNavigationOpen ? ' compact-navigation-open' : ''
+        }`}
         style={shellStyle}
       >
         <Sidebar
@@ -707,8 +772,14 @@ export default function App() {
           shellPanelsState={shellPanelsState}
           shellSummaryState={shellSummaryState}
           runViewState={runViewState}
-          onAddFolder={handleAddFolderToRail}
-          onOpenProviderSettings={() => setProviderSettingsOpen(true)}
+          onAddFolder={() => {
+            closeCompactNavigation();
+            handleAddFolderToRail();
+          }}
+          onOpenProviderSettings={() => {
+            closeCompactNavigation();
+            setProviderSettingsOpen(true);
+          }}
           showSessionSetup={showSessionSetup}
           onToggleSessionSetup={() => {
             setShowSessionSetup((current) => !current);
@@ -724,9 +795,11 @@ export default function App() {
           filteredArchiveSessions={filteredArchiveSessions}
           filteredOrchestrationFlows={filteredOrchestrationFlows}
           onSelectSession={(sessionId) => {
+            closeCompactNavigation();
             void requestSessionSelection(sessionId);
           }}
           onSelectRun={(runId) => {
+            closeCompactNavigation();
             void requestRunSelection(runId);
           }}
           onDeleteWorkspaceGroup={(workspacePath) => {
@@ -751,10 +824,22 @@ export default function App() {
             })();
           }}
           onDeleteSession={(sessionId) => {
-            void requestSessionDelete(sessionId);
+            closeCompactNavigation();
+            setPendingDeleteSessionId(sessionId);
           }}
           railFilterInputRef={railFilterInputRef}
+          navigationRef={compactNavigationRef}
         />
+
+        {compactNavigationOpen ? (
+          <button
+            type="button"
+            className="compact-navigation-scrim"
+            aria-label="Close navigation"
+            tabIndex={-1}
+            onClick={() => closeCompactNavigation(true)}
+          ></button>
+        ) : null}
 
         <div
           className="column-resize-handle dock-resize-handle"
@@ -768,6 +853,8 @@ export default function App() {
           className={`content-shell panel${focusView ? ' content-shell-focus' : ''}${
             utilityCollapsed ? ' content-shell-utility-collapsed' : ''
           }`}
+          aria-hidden={compactNavigationOpen || undefined}
+          inert={compactNavigationOpen ? '' : undefined}
         >
           <main className="run-column panes-main">
             <ThreadTabs
@@ -799,7 +886,7 @@ export default function App() {
               onDeleteSession={
                 hasActiveSession && shellPanelsState.selectedSessionId
                   ? () => {
-                      void requestSessionDelete(shellPanelsState.selectedSessionId!);
+                      setPendingDeleteSessionId(shellPanelsState.selectedSessionId!);
                     }
                   : undefined
               }
@@ -906,6 +993,19 @@ export default function App() {
         confirmLabel="Open Folder"
         onConfirm={handleFolderConfirm}
         onClose={() => setIsFolderModalOpen(false)}
+      />
+      <PromptModal
+        isOpen={pendingDeleteSessionId !== null}
+        mode="confirm"
+        destructive
+        title="Delete this thread?"
+        subtitle="This permanently deletes the thread and its stored run history. This action cannot be undone."
+        defaultValue={pendingDeleteSessionId ?? ''}
+        confirmLabel="Delete thread"
+        onConfirm={(sessionId) => {
+          if (sessionId) void requestSessionDelete(sessionId);
+        }}
+        onClose={() => setPendingDeleteSessionId(null)}
       />
       <ProviderSettings
         open={providerSettingsOpen}

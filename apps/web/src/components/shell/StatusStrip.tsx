@@ -1,9 +1,10 @@
 import { Badge, ContextMeter } from '@codewave/ui-kit';
+import type { Ref } from 'react';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
 import type { ShellSummaryState } from '../../lib/shell-summary-state';
 import { renderAccessLabel, renderProviderLabel } from '../../lib/shell-format';
-import { BellIcon, BellOffIcon, FolderIcon } from '../icons';
+import { BellIcon, BellOffIcon, FolderIcon, MenuIcon } from '../icons';
 
 type StatusStripProps = {
   shellControlsState: ShellControlsState;
@@ -16,6 +17,9 @@ type StatusStripProps = {
   onToggleTheme?: () => void;
   attentionBellOn: boolean;
   onToggleBell: () => void;
+  compactNavigationOpen: boolean;
+  onToggleCompactNavigation: () => void;
+  compactNavigationToggleRef?: Ref<HTMLButtonElement>;
 };
 
 export function StatusStrip({
@@ -27,6 +31,9 @@ export function StatusStrip({
   contextUsagePercent,
   attentionBellOn,
   onToggleBell,
+  compactNavigationOpen,
+  onToggleCompactNavigation,
+  compactNavigationToggleRef,
 }: StatusStripProps) {
   const hasActiveSession = Boolean(shellPanelsState.selectedSessionId);
   const daemonConnection = shellSummaryState.daemonConnectionLabel;
@@ -46,6 +53,17 @@ export function StatusStrip({
   return (
     <div className="status-strip app-status-strip" aria-label="Status">
       <div className="status-strip-group status-strip-group-primary">
+        <button
+          ref={compactNavigationToggleRef}
+          type="button"
+          className="status-strip-navigation-toggle"
+          aria-label={compactNavigationOpen ? 'Close navigation' : 'Open navigation'}
+          aria-controls="workspace-navigation"
+          aria-expanded={compactNavigationOpen}
+          onClick={onToggleCompactNavigation}
+        >
+          <MenuIcon size={16} />
+        </button>
         <span className="status-strip-brand">
           <span className="status-strip-brand-mark" aria-hidden="true">
             <img src="/codewave-mark.svg" alt="" />

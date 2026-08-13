@@ -56,6 +56,7 @@ export function ProviderSettings({
   );
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
   const [busyProviderId, setBusyProviderId] = useState<ProviderId | null>(null);
   const [defaultBusy, setDefaultBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState<{
@@ -65,6 +66,8 @@ export function ProviderSettings({
   const [commandDrafts, setCommandDrafts] = useState<
     Partial<Record<ProviderId, string>>
   >({});
+
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!registry) return;
@@ -84,7 +87,9 @@ export function ProviderSettings({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -117,7 +122,7 @@ export function ProviderSettings({
       window.removeEventListener('keydown', onKeyDown, true);
       previouslyFocused?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   const healthByProvider = useMemo(
     () => new Map(health.map((entry) => [entry.providerId, entry] as const)),
