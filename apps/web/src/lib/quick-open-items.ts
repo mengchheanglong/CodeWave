@@ -28,7 +28,7 @@ export type QuickOpenRuntime = {
   setRailView: (v: 'recent' | 'history' | 'archive' | 'flows') => void;
   setRunViewTab: (v: 'chat' | 'timeline') => void;
   setUtilityView: (
-    v: 'approvals' | 'tools' | 'artifacts' | 'checkpoints',
+    v: 'approvals' | 'tools' | 'changes' | 'artifacts' | 'checkpoints',
   ) => void;
   setUtilityCollapsed: (v: boolean) => void;
   setFocusView: (v: boolean) => void;
@@ -164,6 +164,15 @@ const STATIC_ITEMS: StubbedItem[] = [
     badge: 'Artifacts',
     keywords: ['right column', 'utility'],
     runStub: 'artifacts',
+  },
+  {
+    id: 'show-changes',
+    group: 'Utility',
+    title: 'Show Project Changes',
+    subtitle: 'Review isolated task worktrees and accept or revert their changes.',
+    badge: 'Changes',
+    keywords: ['git', 'worktree', 'task', 'diff', 'review'],
+    runStub: 'changes',
   },
   {
     id: 'show-checkpoints',
@@ -436,6 +445,9 @@ function runStub(stub: string, runtime: QuickOpenRuntime) {
       break;
     case 'tools':
       runtime.setUtilityView('tools');
+      break;
+    case 'changes':
+      runtime.setUtilityView('changes');
       break;
     case 'artifacts':
       runtime.setUtilityView('artifacts');

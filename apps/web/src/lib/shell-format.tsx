@@ -16,6 +16,7 @@ export type UtilityView =
   | 'approvals'
   | 'tools'
   | 'files'
+  | 'changes'
   | 'artifacts'
   | 'checkpoints';
 

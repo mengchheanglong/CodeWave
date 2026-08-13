@@ -120,6 +120,9 @@ simple, composable, and built for experimentation.
 - **Deterministic run lifecycle** — one active run per session, stale-run fencing for updates, restart reconciliation, capability-proven in-flight steering, and a durable follow-up queue whenever native delivery is unavailable or unacknowledged
 - **Reviewed provider policy** — every provider-dependent mutation carries the exact content-addressed provider revision the user reviewed; stale launches fail closed with the current revision and the shell refreshes before retry
 
+- **Isolated project tasks** — register an exact, clean Git root and create named task branches in daemon-managed worktrees; source checkout and main branch remain untouched
+- **Review-fenced Git mutations** — the daemon hashes the reviewed file state, bounds retained diff output to 512 KiB, rejects stale or incomplete acceptance, suppresses repository hooks, and fences accept/revert while a provider run is active in the task workspace
+
 ### Providers
 - **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, v1-to-v2 migration, atomic updates, built-in and custom `acp.*` profiles, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
 - **Freebuff primary** — first policy priority and clearly labeled free cloud/ad-supported access; because the public Freebuff CLI is interactive-only, CodeWave requires a configured automation bridge before marking daemon runs ready
@@ -163,6 +166,8 @@ simple, composable, and built for experimentation.
 - **Archive explorer** — per-session run summaries with recovery/lineage metadata
 - **Quick open** — grouped command palette with keyboard shortcuts (`Ctrl/Cmd+K`)
 - **Checkpoints** — persisted recovery points visible in the inspector
+
+- **Changes** — register the current Git project, create an isolated task workspace, inspect its changed-file list and bounded patch, then explicitly commit to the task branch or destructively discard non-ignored task changes; CodeWave never merges the project branch automatically
 
 ### Validation
 - `npm run check` — TypeScript type checking
@@ -233,6 +238,7 @@ npm run check:providers                  # Provider policy and routing tests
 npm run check:harness                    # Daemon lifecycle/idempotency/steering E2E
 npm run check:adversarial                # Daemon boundary and hostile-input regression suite
 npm run check:continuity                 # Crash/replay/reconstruction conformance suite
+npm run check:worktrees                  # Real Git project/worktree/review safety E2E
 npm run check:registrations              # Tool registration E2E tests
 npm run check:registrations:json         # CI-friendly JSON summary
 ```
@@ -274,6 +280,8 @@ Except for `/api/health` and `/api/handshake`, daemon APIs require a negotiated 
 - Qwen's current headless stream-JSON input processes additional messages as ordered turns rather than proving same-turn steering. CodeWave therefore keeps Qwen steering on the durable follow-up path until its machine protocol exposes an acknowledged in-flight boundary
 - Gemini defaults to ACP; use `CODEWAVE_GEMINI_MODE=stream-json` as fallback if ACP regresses on another machine
 - OpenCode defaults to ACP; use `CODEWAVE_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
+- Project-task acceptance creates a commit only on the isolated `codewave/task-*` branch. Merge, rebase, conflict resolution, remote push, and pull-request creation remain explicit external Git operations in this baseline
+- Git is outside SQLite's transaction. If the daemon process is killed during worktree creation or task acceptance, the idempotency receipt fails closed as outcome-unknown; inspect the named task branch/worktree rather than retrying the same external effect blindly
 
 See [the 2026 harness research note](docs/harness-research-2026.md) for provider evidence, donor analysis, and the next backend milestones.
 

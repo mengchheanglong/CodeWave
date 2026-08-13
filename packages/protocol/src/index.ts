@@ -22,6 +22,8 @@ export const DAEMON_CLIENT_SCOPES = [
   'tools:read',
   'workspace:read',
   'workspace:write',
+  'projects:read',
+  'projects:write',
   'approvals:write',
 ] as const;
 export type DaemonClientScope = (typeof DAEMON_CLIENT_SCOPES)[number];
@@ -35,6 +37,7 @@ export const DAEMON_CAPABILITIES = [
   'session-recovery',
   'orchestration',
   'workspace-files',
+  'project-worktrees',
   'append-only-transcripts',
 ] as const;
 export type DaemonCapability = (typeof DAEMON_CAPABILITIES)[number];
@@ -58,6 +61,7 @@ export interface DaemonProtocolLimits {
   maxClientConnections: number;
   maxWorkspacePreviewBytes: number;
   maxWorkspaceFileBytes: number;
+  maxWorktreeDiffBytes: number;
 }
 
 export interface ClientHandshakeResponse {
@@ -116,6 +120,85 @@ export type ProviderDataBoundary =
   | 'cloud-ad-supported'
   | 'local-or-user-configured'
   | 'provider-managed';
+
+export type WorktreeTaskStatus = 'active' | 'accepted' | 'reverted';
+export type WorktreeChangeKind =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'untracked'
+  | 'conflicted';
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  rootPath: string;
+  defaultBranch: string;
+  createdAt: string;
+}
+
+export interface WorktreeTaskRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  branchName: string;
+  baseRef: string;
+  baseCommit: string;
+  worktreePath: string;
+  status: WorktreeTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  acceptedCommit: string | null;
+}
+
+export interface ProjectTaskGroup {
+  project: ProjectRecord;
+  tasks: WorktreeTaskRecord[];
+}
+
+export interface ProjectListResponse {
+  projects: ProjectTaskGroup[];
+}
+
+export interface WorktreeChangeRecord {
+  path: string;
+  originalPath: string | null;
+  kind: WorktreeChangeKind;
+  indexStatus: string;
+  worktreeStatus: string;
+}
+
+export interface WorktreeChangesSnapshot {
+  task: WorktreeTaskRecord;
+  headCommit: string;
+  version: string;
+  clean: boolean;
+  changes: WorktreeChangeRecord[];
+  diff: string;
+  diffTruncated: boolean;
+  maxDiffBytes: number;
+}
+
+export interface CreateProjectRequest {
+  rootPath: string;
+  name?: string;
+}
+
+export interface CreateWorktreeTaskRequest {
+  title: string;
+  baseRef?: string;
+}
+
+export interface AcceptWorktreeChangesRequest {
+  expectedVersion: string;
+  commitMessage: string;
+}
+
+export interface RevertWorktreeChangesRequest {
+  expectedVersion: string;
+}
 export type ProviderConfigurationSource =
   | 'default'
   | 'file'

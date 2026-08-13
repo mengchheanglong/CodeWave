@@ -49,6 +49,9 @@ import {
   type CompareRunLane,
   type CompareRunRequest,
   type CompareRunResponse,
+  type CreateProjectRequest,
+  type CreateWorktreeTaskRequest,
+  type AcceptWorktreeChangesRequest,
   type CreateAcpProviderRequest,
   type CreateSessionRequest,
   type CreateWorkspaceFileRequest,
@@ -80,6 +83,7 @@ import {
   type ResolveApprovalRequest,
   type RecoverSessionRequest,
   type RecoverSessionResponse,
+  type RevertWorktreeChangesRequest,
   type RoutingToolRequirement,
   type RoutePromptRequest,
   type RoutePromptResponse,
@@ -132,6 +136,11 @@ import {
   ProviderPolicyStore,
   ProviderRevisionConflictError,
 } from './provider-policy.js';
+import {
+  MAX_WORKTREE_DIFF_BYTES,
+  WorktreeManager,
+  WorktreeManagerError,
+} from './worktree-manager.js';
 
 const WEB_DIST_ROOT = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const MIME_TYPES = new Map<string, string>([
@@ -158,6 +167,7 @@ const DAEMON_PROTOCOL_LIMITS = {
   maxClientConnections: MAX_CLIENT_CONNECTIONS,
   maxWorkspacePreviewBytes: CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
   maxWorkspaceFileBytes: CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
+  maxWorktreeDiffBytes: MAX_WORKTREE_DIFF_BYTES,
 } as const;
 
 type ClientConnection = {
@@ -738,6 +748,14 @@ function validateDeclaredMutationSchema(
       'args',
       'displayName',
     ]);
+  } else if (pathname === '/api/projects' && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'rootPath', 'name']);
+  } else if (/^\/api\/projects\/[^/]+\/tasks$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'title', 'baseRef']);
+  } else if (/^\/api\/tasks\/[^/]+\/accept$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'expectedVersion', 'commitMessage']);
+  } else if (/^\/api\/tasks\/[^/]+\/revert$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'expectedVersion']);
   }
   if (allowed) {
     const undeclared = Object.keys(record).find((key) => !allowed!.has(key));
@@ -782,6 +800,14 @@ async function gitResetToCommit(
 
 function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+/, '').trim();
+}
+
+function isProtectedWorkspaceControlPath(value: string): boolean {
+  const segments = normalizeRelativePath(value)
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+  return segments.includes('.git') || segments[0] === '.codewave';
 }
 
 function isValidEntryName(value: string): boolean {
@@ -860,6 +886,7 @@ export class CodeWaveDaemon {
   private readonly port: number;
   private readonly dataDirectory: string;
   private readonly stateStore: SQLiteStateStore;
+  private readonly worktreeManager: WorktreeManager;
   private readonly eventBroker = new RunEventBroker();
   private readonly providers = new Map<ProviderId, ProviderAdapter>();
   private readonly providerPolicy: ProviderPolicyStore;
@@ -885,6 +912,7 @@ export class CodeWaveDaemon {
     this.stateStore = new SQLiteStateStore(
       path.join(this.dataDirectory, 'state.sqlite'),
     );
+    this.worktreeManager = new WorktreeManager(rootPath, this.stateStore);
     this.providerPolicy = new ProviderPolicyStore(rootPath);
     this.installProviders(this.providerPolicy.snapshot());
     this.stateStore.pruneMutationReceipts(
@@ -955,6 +983,9 @@ export class CodeWaveDaemon {
     if (pathname === '/api/tool-plane') return 'tools:read';
     if (pathname.startsWith('/api/workspace/')) {
       return method === 'GET' ? 'workspace:read' : 'workspace:write';
+    }
+    if (pathname.startsWith('/api/projects') || pathname.startsWith('/api/tasks/')) {
+      return method === 'GET' ? 'projects:read' : 'projects:write';
     }
     if (pathname.startsWith('/api/orchestrator/')) {
       return method === 'GET' || pathname.endsWith('/recommend')
@@ -1467,6 +1498,86 @@ export class CodeWaveDaemon {
       }
 
       sendJson(response, 200, listing satisfies WorkspaceEntriesResponse);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/projects') {
+      sendJson(response, 200, { projects: this.worktreeManager.listProjects() });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/projects') {
+      const body = await readJsonBody<CreateProjectRequest>(request);
+      try {
+        const project = await this.worktreeManager.registerProject(body);
+        sendJson(response, 201, project);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const projectTaskMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks$/);
+    if (request.method === 'POST' && projectTaskMatch) {
+      const body = await readJsonBody<CreateWorktreeTaskRequest>(request);
+      try {
+        const task = await this.worktreeManager.createTask(
+          projectTaskMatch[1]!,
+          body,
+        );
+        sendJson(response, 201, task);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskChangesMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/changes$/);
+    if (request.method === 'GET' && taskChangesMatch) {
+      try {
+        const changes = await this.worktreeManager.changes(
+          taskChangesMatch[1]!,
+        );
+        sendJson(response, 200, changes);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskAcceptMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/accept$/);
+    if (request.method === 'POST' && taskAcceptMatch) {
+      const taskId = taskAcceptMatch[1]!;
+      const body = await readJsonBody<AcceptWorktreeChangesRequest>(request);
+      try {
+        if (this.taskHasActiveRun(taskId)) {
+          throw new WorktreeManagerError(
+            'Wait for the active agent run to finish before accepting task changes.',
+            'task_conflict',
+          );
+        }
+        sendJson(response, 200, await this.worktreeManager.accept(taskId, body));
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskRevertMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/revert$/);
+    if (request.method === 'POST' && taskRevertMatch) {
+      const taskId = taskRevertMatch[1]!;
+      const body = await readJsonBody<RevertWorktreeChangesRequest>(request);
+      try {
+        if (this.taskHasActiveRun(taskId)) {
+          throw new WorktreeManagerError(
+            'Wait for the active agent run to finish before reverting task changes.',
+            'task_conflict',
+          );
+        }
+        sendJson(response, 200, await this.worktreeManager.revert(taskId, body));
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
       return;
     }
 
@@ -2052,6 +2163,45 @@ export class CodeWaveDaemon {
     await this.serveStatic(pathname, response);
   }
 
+  private taskHasActiveRun(taskId: string): boolean {
+    const task = this.worktreeManager.getTask(taskId);
+    const normalizedTaskPath = path.resolve(task.worktreePath);
+    return this.stateStore.listSessions().some((session) => {
+      const sameWorkspace =
+        process.platform === 'win32'
+          ? path.resolve(session.workspacePath).toLowerCase() ===
+            normalizedTaskPath.toLowerCase()
+          : path.resolve(session.workspacePath) === normalizedTaskPath;
+      return (
+        sameWorkspace &&
+        this.stateStore
+          .listRuns(session.id)
+          .some((run) =>
+            run.status === 'queued' ||
+            run.status === 'running' ||
+            run.status === 'awaiting_approval',
+          )
+      );
+    });
+  }
+
+  private sendWorktreeError(response: ServerResponse, error: unknown): void {
+    if (!(error instanceof WorktreeManagerError)) {
+      sendJson(response, 409, {
+        error: error instanceof Error ? error.message : 'Worktree operation failed.',
+        code: 'worktree_operation_failed',
+      });
+      return;
+    }
+    const statusCode =
+      error.code === 'task_not_found'
+        ? 404
+        : error.code === 'invalid_project' || error.code === 'invalid_task'
+          ? 400
+          : 409;
+    sendJson(response, statusCode, { error: error.message, code: error.code });
+  }
+
   private async serveStatic(
     pathname: string,
     response: ServerResponse,
@@ -2130,6 +2280,11 @@ export class CodeWaveDaemon {
   ): { workspaceRoot: string; absolutePath: string } | Error {
     const workspaceRoot = path.resolve(workspacePath);
     const normalizedRelativePath = normalizeRelativePath(relativePath);
+    if (isProtectedWorkspaceControlPath(normalizedRelativePath)) {
+      return new Error(
+        'Repository and CodeWave control paths are protected from workspace file operations.',
+      );
+    }
     const absolutePath = path.resolve(
       workspaceRoot,
       normalizedRelativePath || '.',
@@ -2198,6 +2353,15 @@ export class CodeWaveDaemon {
       const entries = await readdir(absolutePath, { withFileTypes: true });
       const mappedEntries: WorkspaceEntriesResponse['entries'] = entries
         .filter((entry) => entry.isDirectory() || entry.isFile())
+        .filter(
+          (entry) =>
+            !isProtectedWorkspaceControlPath(
+              this.toWorkspaceRelativePath(
+                workspaceRoot,
+                path.join(absolutePath, entry.name),
+              ),
+            ),
+        )
         .map((entry) => {
           const entryAbsolutePath = path.join(absolutePath, entry.name);
           const kind: WorkspaceEntryKind = entry.isDirectory() ? 'folder' : 'file';
@@ -2436,6 +2600,17 @@ export class CodeWaveDaemon {
       if (pathEscapesRoot(resolvedParent.workspaceRoot, absolutePath)) {
         return new WorkspaceFileError(
           'Created path escapes the selected workspace.',
+          'workspace_path_escape',
+          409,
+        );
+      }
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedParent.workspaceRoot, absolutePath),
+        )
+      ) {
+        return new WorkspaceFileError(
+          'Repository and CodeWave control paths cannot be created or replaced.',
           'workspace_path_escape',
           409,
         );
@@ -2703,7 +2878,15 @@ export class CodeWaveDaemon {
         return new Error('The parent path is not a folder.');
       }
 
-      await mkdir(path.join(resolvedParent.absolutePath, folderName));
+      const folderPath = path.join(resolvedParent.absolutePath, folderName);
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedParent.workspaceRoot, folderPath),
+        )
+      ) {
+        return new Error('Repository and CodeWave control paths cannot be created.');
+      }
+      await mkdir(folderPath);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2738,6 +2921,13 @@ export class CodeWaveDaemon {
       const nextAbsolutePath = path.resolve(parentPath, nextName);
       if (pathEscapesRoot(resolvedTarget.workspaceRoot, nextAbsolutePath)) {
         return new Error('Renamed path escapes the selected workspace.');
+      }
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedTarget.workspaceRoot, nextAbsolutePath),
+        )
+      ) {
+        return new Error('Entries cannot be renamed into repository or CodeWave control paths.');
       }
       const parentContainmentError = await this.validateRealWorkspaceContainment(
         resolvedTarget.workspaceRoot,
@@ -4379,81 +4569,106 @@ export class CodeWaveDaemon {
       return new Error('A non-empty run prompt is required.');
     }
 
-    await waitAtContinuityRunBarrier();
-
-    const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
-    if (activeRun) {
+    const taskRunReservation = this.worktreeManager.reserveRunForWorkspace(
+      session.workspacePath,
+    );
+    if (taskRunReservation instanceof Error) {
       return new DaemonConflictError(
-        `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
-        'active_run_conflict',
+        taskRunReservation.message,
+        taskRunReservation.code === 'task_closed'
+          ? 'task_workspace_closed'
+          : 'task_workspace_busy',
       );
     }
-
-    if (this.sessionRunReservations.has(session.id)) {
-      return new DaemonConflictError(
-        'A run launch is already being prepared for this session. Refresh before retrying.',
-        'active_run_conflict',
-      );
-    }
-
-    this.sessionRunReservations.add(session.id);
     const now = new Date().toISOString();
     let run: WorkbenchRun;
     let provider: ProviderAdapter;
     try {
-      const configuredProvider = this.providers.get(session.providerId);
-      if (!configuredProvider) {
-        return new Error(`Provider ${session.providerId} is not configured.`);
-      }
-      provider = configuredProvider;
+      await waitAtContinuityRunBarrier();
 
-      const health = await this.getProviderHealth(session.providerId);
-      if (!health) {
-        return new Error(`Provider ${session.providerId} is not configured.`);
-      }
-      if (!health.available) {
-        return new Error(
-          `${provider.displayName} is not ready for runs: ${health.detail}`,
-        );
-      }
-
-      run = {
-        id: randomUUID(),
-        sessionId: session.id,
-        providerId: session.providerId,
-        providerConfigurationRevision: registry.revision,
-        prompt: body.prompt,
-        status: 'running',
-        mode: body.mode === 'plan' ? 'plan' : 'execute',
-        preRunCommit: null,
-        createdAt: now,
-        startedAt: now,
-        completedAt: null,
-        errorMessage: null,
-      };
-
-      const preRunCommit = await getGitHeadCommit(session.workspacePath);
-      if (preRunCommit) {
-        run.preRunCommit = preRunCommit;
-      }
-
-      const confirmedRegistry = this.requireProviderRevision(
-        body.expectedProviderRevision,
-      );
-      if (confirmedRegistry instanceof Error) return confirmedRegistry;
-      const newlyActiveRun = this.stateStore
-        .listNonTerminalRuns(session.id)
-        .at(-1);
-      if (newlyActiveRun) {
+      if (
+        taskRunReservation &&
+        this.taskHasActiveRun(taskRunReservation.taskId)
+      ) {
         return new DaemonConflictError(
-          `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+          'A provider run is already active in this task workspace.',
           'active_run_conflict',
         );
       }
-      this.stateStore.createRun(run);
-      triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
+
+      const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
+      if (activeRun) {
+        return new DaemonConflictError(
+          `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
+          'active_run_conflict',
+        );
+      }
+
+      if (this.sessionRunReservations.has(session.id)) {
+        return new DaemonConflictError(
+          'A run launch is already being prepared for this session. Refresh before retrying.',
+          'active_run_conflict',
+        );
+      }
+
+      this.sessionRunReservations.add(session.id);
+      try {
+        const configuredProvider = this.providers.get(session.providerId);
+        if (!configuredProvider) {
+          return new Error(`Provider ${session.providerId} is not configured.`);
+        }
+        provider = configuredProvider;
+
+        const health = await this.getProviderHealth(session.providerId);
+        if (!health) {
+          return new Error(`Provider ${session.providerId} is not configured.`);
+        }
+        if (!health.available) {
+          return new Error(
+            `${provider.displayName} is not ready for runs: ${health.detail}`,
+          );
+        }
+
+        run = {
+          id: randomUUID(),
+          sessionId: session.id,
+          providerId: session.providerId,
+          providerConfigurationRevision: registry.revision,
+          prompt: body.prompt,
+          status: 'running',
+          mode: body.mode === 'plan' ? 'plan' : 'execute',
+          preRunCommit: null,
+          createdAt: now,
+          startedAt: now,
+          completedAt: null,
+          errorMessage: null,
+        };
+
+        const preRunCommit = await getGitHeadCommit(session.workspacePath);
+        if (preRunCommit) {
+          run.preRunCommit = preRunCommit;
+        }
+
+        const confirmedRegistry = this.requireProviderRevision(
+          body.expectedProviderRevision,
+        );
+        if (confirmedRegistry instanceof Error) return confirmedRegistry;
+        const newlyActiveRun = this.stateStore
+          .listNonTerminalRuns(session.id)
+          .at(-1);
+        if (newlyActiveRun) {
+          return new DaemonConflictError(
+            `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+            'active_run_conflict',
+          );
+        }
+        this.stateStore.createRun(run);
+        triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
+      } finally {
+        this.sessionRunReservations.delete(session.id);
+      }
     } finally {
-      this.sessionRunReservations.delete(session.id);
+      taskRunReservation?.release();
     }
     if (run.preRunCommit) {
       this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);

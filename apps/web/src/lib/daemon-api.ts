@@ -6,6 +6,9 @@ import type {
   ApprovalRecord,
   ArchiveSnapshot,
   ClientHandshakeResponse,
+  CreateProjectRequest,
+  CreateWorktreeTaskRequest,
+  AcceptWorktreeChangesRequest,
   CreateAcpProviderRequest,
   CompareRunRequest,
   CompareRunResponse,
@@ -33,6 +36,9 @@ import type {
   RuntimeInfo,
   ProviderId,
   ProviderRegistrySnapshot,
+  ProjectListResponse,
+  ProjectRecord,
+  RevertWorktreeChangesRequest,
   SessionSnapshot,
   StartRunRequest,
   ToolPlaneResponse,
@@ -42,6 +48,8 @@ import type {
   UpdateDefaultProviderRequest,
   UpdateProviderConfigurationRequest,
   WorkbenchSession,
+  WorktreeChangesSnapshot,
+  WorktreeTaskRecord,
 } from '@codewave/protocol';
 
 type RequestOptions = Omit<RequestInit, 'body'> & {
@@ -67,6 +75,21 @@ export interface DaemonApi {
     input: UpdateDefaultProviderRequest,
   ): Promise<ProviderRegistrySnapshot>;
   getToolPlane(query?: ToolPlaneQuery): Promise<ToolPlaneResponse>;
+  getProjects(): Promise<ProjectListResponse>;
+  createProject(input: CreateProjectRequest): Promise<ProjectRecord>;
+  createWorktreeTask(
+    projectId: string,
+    input: CreateWorktreeTaskRequest,
+  ): Promise<WorktreeTaskRecord>;
+  getWorktreeChanges(taskId: string): Promise<WorktreeChangesSnapshot>;
+  acceptWorktreeChanges(
+    taskId: string,
+    input: AcceptWorktreeChangesRequest,
+  ): Promise<WorktreeChangesSnapshot>;
+  revertWorktreeChanges(
+    taskId: string,
+    input: RevertWorktreeChangesRequest,
+  ): Promise<WorktreeChangesSnapshot>;
   getSessions(): Promise<WorkbenchSession[]>;
   createSession(input: CreateSessionRequest): Promise<WorkbenchSession>;
   deleteSession(sessionId: string): Promise<DeleteSessionResponse>;
@@ -358,6 +381,38 @@ export function createDaemonApi({
       }
       const suffix = params.toString() ? `?${params.toString()}` : '';
       return requestJson<ToolPlaneResponse>(`/api/tool-plane${suffix}`);
+    },
+    getProjects() {
+      return requestJson<ProjectListResponse>('/api/projects');
+    },
+    createProject(input) {
+      return requestJson<ProjectRecord>('/api/projects', {
+        method: 'POST',
+        body: input,
+      });
+    },
+    createWorktreeTask(projectId, input) {
+      return requestJson<WorktreeTaskRecord>(
+        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+        { method: 'POST', body: input },
+      );
+    },
+    getWorktreeChanges(taskId) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/changes`,
+      );
+    },
+    acceptWorktreeChanges(taskId, input) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/accept`,
+        { method: 'POST', body: input },
+      );
+    },
+    revertWorktreeChanges(taskId, input) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/revert`,
+        { method: 'POST', body: input },
+      );
     },
     getSessions() {
       return requestJson<WorkbenchSession[]>('/api/sessions');

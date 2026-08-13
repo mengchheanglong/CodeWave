@@ -38,6 +38,7 @@ const UTILITY_VIEW_ORDER: readonly UtilityView[] = [
   'approvals',
   'tools',
   'files',
+  'changes',
   'artifacts',
   'checkpoints',
 ];

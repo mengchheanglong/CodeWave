@@ -16,6 +16,7 @@ import { TabBar } from '../TabBar';
 import { ToolActivityList } from '../ToolActivityList';
 import { ToolRegistrationEvidenceList } from '../ToolRegistrationEvidenceList';
 import { WorkspaceFilePanel } from '../WorkspaceFilePanel';
+import { ProjectChangesPanel } from '../ProjectChangesPanel';
 import { BrainIcon, PanelRightIcon } from '../icons';
 
 export type UtilityTab = {
@@ -39,6 +40,7 @@ type InspectorProps = {
   contextUsagePercent: number;
   shellPanelsState: ShellPanelsState;
   shellControlsState: ShellControlsState;
+  onOpenWorkspace: (workspacePath: string) => Promise<void>;
 };
 
 export function Inspector({
@@ -54,6 +56,7 @@ export function Inspector({
   contextUsagePercent,
   shellPanelsState,
   shellControlsState,
+  onOpenWorkspace,
 }: InspectorProps) {
   const workspacePath = shellControlsState.workspacePath;
 
@@ -178,6 +181,20 @@ export function Inspector({
                   <h3>Files</h3>
                 </div>
                 <WorkspaceFilePanel workspacePath={workspacePath} />
+              </section>
+            ) : null}
+
+            {utilityView === 'changes' ? (
+              <section className="utility-section utility-stack">
+                <div className="utility-section-heading">
+                  <p className="eyebrow">Project</p>
+                  <h3>Changes</h3>
+                </div>
+                <ProjectChangesPanel
+                  workspacePath={workspacePath}
+                  hasActiveRun={hasActiveRun}
+                  onOpenWorkspace={onOpenWorkspace}
+                />
               </section>
             ) : null}
 

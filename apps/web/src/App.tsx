@@ -49,6 +49,7 @@ import {
   FileTextIcon,
   FolderIcon,
   ScaleIcon,
+  WorkflowIcon,
   WrenchIcon,
 } from './components/icons';
 import { splitRunInspectorViews } from './lib/run-inspector-views';
@@ -498,6 +499,11 @@ export default function App() {
         icon: <FolderIcon size={13} />,
       },
       {
+        id: 'changes',
+        label: 'Changes',
+        icon: <WorkflowIcon size={13} />,
+      },
+      {
         id: 'artifacts',
         label: 'Artifacts',
         badge: shellPanelsState.artifacts.length,
@@ -631,6 +637,22 @@ export default function App() {
 
   function handleAddFolderToRail() {
     setIsFolderModalOpen(true);
+  }
+
+  async function handleOpenWorkspace(nextWorkspacePath: string): Promise<void> {
+    const normalized = nextWorkspacePath.replace(/\\/g, '/').toLowerCase();
+    const existingSession = shellPanelsState.recentSessions.find(
+      (session) => session.workspacePath.replace(/\\/g, '/').toLowerCase() === normalized,
+    );
+    if (existingSession) {
+      await requestSessionSelection(existingSession.id);
+    } else {
+      await requestSessionDraftChange({ workspacePath: nextWorkspacePath });
+      await requestWorkspaceDraftCommit();
+      await requestCreateSession();
+    }
+    setUtilityView('changes');
+    setUtilityCollapsed(false);
   }
 
   function handleFolderConfirm(nextWorkspacePathInput: string) {
@@ -968,6 +990,7 @@ export default function App() {
             contextUsagePercent={contextUsagePercent}
             shellPanelsState={shellPanelsState}
             shellControlsState={shellControlsState}
+            onOpenWorkspace={handleOpenWorkspace}
           />
         </div>
       </section>

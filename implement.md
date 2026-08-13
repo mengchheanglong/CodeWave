@@ -7,10 +7,11 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 
 ### Now
 
-- extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
+- package the validated local web/daemon product as a secure desktop alpha with supervised lifecycle, native workspace selection, crash diagnostics, and release gates
 
 ### Next
 
+- extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
 - add task-level trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
 - add deterministic visual fixtures for specialty run states so UI-kit and shell polish can be regression-checked without depending on historical daemon data
 
@@ -1918,3 +1919,13 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Added a Providers flow that requires explicit local-executable trust, creates profiles disabled, edits arguments without lossy shell splitting, and exposes honest protocol/continuity/credential diagnostics after a real initialize probe.
 - Removed a built-in-only controller coercion that silently changed custom session creation to Freebuff. Desktop and compact browser QA now prove custom selection, persisted Browser Wave identity, a real completed ACP run, bounded layouts, initial form focus, Escape dismissal, and compact focus restoration.
 - Added `npm run check:acp-custom` to exercise invalid IDs, disabled fail-closed behavior, enablement, health, session/run completion, restart persistence and resume, profile updates, and disablement through a real daemon process.
+
+## Isolated project tasks and Changes review — 2026-08-13
+
+- Added daemon-owned `projects` and `worktree_tasks` state plus exact `projects:read`/`projects:write` scopes. Registration accepts only the canonical Git root; task creation requires a clean source checkout and creates a readable `codewave/task-*` branch in the daemon-managed worktree root.
+- Added bounded change snapshots with Git porcelain file state, at most 512 KiB of retained patch text, complete changed-file hashing for review freshness, explicit binary/non-UTF-8/unexpanded/truncation signaling, and safe untracked previews.
+- Added version-fenced accept/revert mutations. Accept refuses incomplete review and commits only inside the task branch; revert discards tracked and non-ignored untracked task changes; neither operation merges or mutates the project branch. Accepted/reverted task workspaces remain inspectable but reject later provider runs.
+- Suppressed repository hooks, signing, pagers, and interactive Git prompts; bounded subprocess output; made task-worktree run preparation mutually exclusive with accept/revert; rebound every review to the persisted top-level/branch/common-Git identity; canonicalized task worktrees below the managed root; and hid/rejected `.git` plus root `.codewave` paths through every workspace file route.
+- Added the shell **Changes** view with project registration, autofocus task creation, dedicated task-session opening, bounded DiffCard review, explicit incomplete-review state, active-run controls, and accessible product-owned accept/revert confirmation dialogs.
+- Added `npm run check:worktrees` using a real temporary Git repository and daemon. It covers dirty/nested roots, readable branches, hook suppression, protected control paths, stale reviews, real commit/main preservation, concurrent same-worktree run refusal, destructive revert, oversized/binary review refusal, internal identity swaps, and junction escape containment.
+- Browser-verified the complete desktop and compact workflow at 1440×900, 390×844, and 320×568, including dialog Escape/focus restoration, zero page overflow, no console/page errors, a real task commit, and source-branch preservation.

@@ -10,6 +10,7 @@ import {
   type ArtifactRecord,
   type CheckpointRecord,
   type ProviderId,
+  type ProjectRecord,
   type RunSteeringInput,
   type RunSteeringStatus,
   type RunStatus,
@@ -21,6 +22,8 @@ import {
   type TranscriptMessage,
   type TranscriptRole,
   type TranscriptWindow,
+  type WorktreeTaskRecord,
+  type WorktreeTaskStatus,
   type WorkbenchEvent,
   type WorkbenchRun,
   type WorkbenchSession,
@@ -251,6 +254,31 @@ export class SQLiteStateStore {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_path TEXT NOT NULL UNIQUE,
+        default_branch TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS worktree_tasks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        branch_name TEXT NOT NULL UNIQUE,
+        base_ref TEXT NOT NULL,
+        base_commit TEXT NOT NULL,
+        worktree_path TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('active', 'accepted', 'reverted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        accepted_commit TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_worktree_tasks_project_created
+        ON worktree_tasks(project_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS run_steering_inputs (
         id TEXT PRIMARY KEY,
@@ -1172,6 +1200,129 @@ export class SQLiteStateStore {
     });
 
     return persistedEvent;
+  }
+
+  private mapProjectRow(row: Record<string, unknown>): ProjectRecord {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      rootPath: String(row.root_path),
+      defaultBranch: String(row.default_branch),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  createProject(project: ProjectRecord): ProjectRecord {
+    this.database
+      .prepare(
+        `INSERT INTO projects (id, name, root_path, default_branch, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        project.id,
+        project.name,
+        project.rootPath,
+        project.defaultBranch,
+        project.createdAt,
+      );
+    return project;
+  }
+
+  listProjects(): ProjectRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, name, root_path, default_branch, created_at
+         FROM projects ORDER BY created_at ASC, name ASC`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapProjectRow(row));
+  }
+
+  getProject(projectId: string): ProjectRecord | null {
+    const row = this.database
+      .prepare(
+        `SELECT id, name, root_path, default_branch, created_at
+         FROM projects WHERE id = ?`,
+      )
+      .get(projectId) as Record<string, unknown> | undefined;
+    return row ? this.mapProjectRow(row) : null;
+  }
+
+  private mapWorktreeTaskRow(row: Record<string, unknown>): WorktreeTaskRecord {
+    return {
+      id: String(row.id),
+      projectId: String(row.project_id),
+      title: String(row.title),
+      branchName: String(row.branch_name),
+      baseRef: String(row.base_ref),
+      baseCommit: String(row.base_commit),
+      worktreePath: String(row.worktree_path),
+      status: String(row.status) as WorktreeTaskStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      acceptedCommit: row.accepted_commit ? String(row.accepted_commit) : null,
+    };
+  }
+
+  createWorktreeTask(task: WorktreeTaskRecord): WorktreeTaskRecord {
+    this.database
+      .prepare(
+        `INSERT INTO worktree_tasks (
+           id, project_id, title, branch_name, base_ref, base_commit,
+           worktree_path, status, created_at, updated_at, accepted_commit
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        task.id,
+        task.projectId,
+        task.title,
+        task.branchName,
+        task.baseRef,
+        task.baseCommit,
+        task.worktreePath,
+        task.status,
+        task.createdAt,
+        task.updatedAt,
+        task.acceptedCommit,
+      );
+    return task;
+  }
+
+  listWorktreeTasks(projectId?: string): WorktreeTaskRecord[] {
+    const rows = (projectId
+      ? this.database
+          .prepare(
+            `SELECT * FROM worktree_tasks
+             WHERE project_id = ? ORDER BY created_at DESC`,
+          )
+          .all(projectId)
+      : this.database
+          .prepare('SELECT * FROM worktree_tasks ORDER BY created_at DESC')
+          .all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapWorktreeTaskRow(row));
+  }
+
+  getWorktreeTask(taskId: string): WorktreeTaskRecord | null {
+    const row = this.database
+      .prepare('SELECT * FROM worktree_tasks WHERE id = ?')
+      .get(taskId) as Record<string, unknown> | undefined;
+    return row ? this.mapWorktreeTaskRow(row) : null;
+  }
+
+  updateWorktreeTaskStatus(
+    taskId: string,
+    status: WorktreeTaskStatus,
+    updatedAt: string,
+    acceptedCommit: string | null,
+  ): WorktreeTaskRecord | null {
+    this.database
+      .prepare(
+        `UPDATE worktree_tasks
+         SET status = ?, updated_at = ?, accepted_commit = ?
+         WHERE id = ?`,
+      )
+      .run(status, updatedAt, acceptedCommit, taskId);
+    return this.getWorktreeTask(taskId);
   }
 
   appendTerminalEvent(

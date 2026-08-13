@@ -393,13 +393,27 @@ Core entities:
 - artifacts
 - checkpoints
 - providers
+- projects
+- worktree_tasks
 - plugins
 - routes
 - archived_runs
 
 Provider credentials are intentionally not stored in the CodeWave database or `.codewave/providers.json`. The registry stores only enablement, priority, and command overrides; provider CLIs and environment variables own secrets.
 
-### 8.3 Checkpoints
+### 8.3 Projects and isolated task worktrees
+
+Projects are exact, canonical Git repository roots registered with the daemon. A task begins only from a clean source worktree and receives a readable `codewave/task-*` branch plus a dedicated worktree below the daemon-owned `.codewave/worktrees/` root. The source checkout is never repurposed as an agent sandbox, and CodeWave does not merge the task branch into the project's default branch.
+
+The daemon is the only authority for project/task registration, change snapshots, acceptance, and revert. Change snapshots combine Git porcelain state with a bounded patch and a version derived from the current `HEAD` plus the complete changed-file bytes. Acceptance requires the exact reviewed version, refuses a clean, binary, unexpanded, or truncated review, stages and commits only inside the task worktree, and suppresses repository Git hooks. Revert requires the same freshness check and removes tracked plus non-ignored untracked task changes. A shared task-worktree reservation prevents provider launch and accept/revert preparation from crossing; only one provider run may prepare against a task workspace at a time. Accepted and reverted task workspaces are inspectable but closed to later provider runs, so a completed review cannot silently acquire new agent edits.
+
+Filesystem APIs hide and reject Git control paths and daemon metadata paths rather than relying on the UI to avoid them. Task paths are canonicalized below the managed root and rebound on every review to the persisted branch, top level, and registered repository common-Git directory. Junction/symlink replacement and identity swaps fail closed, Git subprocesses have bounded output and disabled prompting/signing/hooks, and failed task creation removes only the exact managed worktree/branch it attempted to create.
+
+This baseline intentionally excludes automatic merge/rebase, remote push, pull-request creation, conflict resolution, worktree garbage collection policy, and multi-user authorization. Those are later workflow layers, not implicit side effects of **Accept changes**.
+
+Git remains an external effect outside SQLite's transaction. Durable idempotency prevents an interrupted request from blindly repeating a worktree or commit operation, but this baseline does not claim exactly-once Git effects across an operating-system process kill. An outcome-unknown response requires inspection of the named task branch/worktree before further mutation; durable Git-intent reconciliation is a desktop-alpha hardening item.
+
+### 8.4 Checkpoints
 
 A checkpoint should capture:
 
@@ -412,7 +426,7 @@ A checkpoint should capture:
 - tool execution state
 - orchestration context
 
-### 8.4 Why separate archive storage later
+### 8.5 Why separate archive storage later
 
 As runs grow, analytics and exploration become different workloads from operational storage.  
 That is where DuckDB becomes useful.
@@ -534,6 +548,7 @@ The shell should make the product feel like an environment, not a transcript win
 - tool activity pane
 - orchestration board
 - provider inspector
+- project/task registry and bounded Changes review
 
 ### 11.2 Essential views for v1
 
@@ -739,30 +754,28 @@ See [the 2026 harness research note](harness-research-2026.md) for primary sourc
 
 ### Slice goal
 
-Keep the single-machine workspace usable after the free-tier changes while strengthening the daemon/provider boundary.
+Turn CodeWave from a session viewer into a safe local project workspace: each coding task gets an isolated Git branch/worktree and every accept or discard decision is explicit, review-fenced, and daemon-owned.
 
 ### Slice contents
 
-1. persist provider enablement, priority, and command configuration
-2. default product policy to Freebuff and keep OpenCode/local ready as fallback
-3. require explicit configuration for Qwen and Gemini
-4. expose access/data boundaries and setup state to the shell
-5. cache capability-aware health probes
-6. route from live tool evidence plus explicit provider priority
-7. validate policy persistence, environment precedence, and routing deterministically
+1. register only an exact canonical Git root and require a clean source worktree
+2. create readable task branches in daemon-managed isolated worktrees
+3. expose a bounded changed-file/patch snapshot with a full-state review version
+4. commit accepted changes only to the task branch and never merge implicitly
+5. make revert explicit and destructive, with stale-review and active-run fencing
+6. hide and reject `.git`/daemon metadata through the workspace API
+7. validate hooks, traversal/junction escape, bounded output, branch preservation, and browser keyboard/compact behavior deterministically
 
 ### Slice success criteria
 
-- user can open a workspace
-- user can see, enable, disable, prioritize, and configure provider commands
-- paid providers cannot be selected until explicitly enabled
-- a missing or interactive-only Freebuff runtime falls back to an enabled automation-ready provider before session creation
-- prompt launches a run
-- output streams live
-- tool activity is visible
-- approval requests are actionable
-- run can be resumed after restart
-- artifacts are stored and inspectable
+- user can register the current clean Git root and create a named isolated task
+- opening a task switches the shell to that worktree without changing the source checkout
+- Changes renders a bounded review and calls out incomplete review explicitly
+- stale acceptance/revert, active provider runs, protected paths, and junction escapes fail closed
+- acceptance creates a task-branch commit while the project default branch stays unchanged
+- revert cleans the task worktree while the project checkout stays unchanged
+- destructive dialogs support Escape, cancel, confirmation, and focus restoration
+- desktop and compact layouts remain usable without horizontal page overflow
 
 ---
 
@@ -802,13 +815,27 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 - exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in and custom ACP paths)
 - profile-driven ACP v1 adapter with coalesced initialize probes, capability-derived resumability, bounded diagnostics/process cleanup, OpenCode as the reference descriptor, and durable provider-policy-v2 `acp.*` profiles (implemented)
 
-### Phase 5 — Research plugins
+### Phase 5 — Isolated project tasks (implemented baseline)
+
+- daemon-owned project and task registry
+- clean-base, managed Git worktrees and readable task branches
+- bounded, versioned Changes review with stale-review fencing
+- explicit task-branch commit or destructive revert; no implicit merge
+- protected Git/daemon control paths, disabled hooks, active-run fences, and junction containment
+
+### Phase 6 — Desktop alpha
+
+- signed Electron shell supervising the local daemon on an ephemeral loopback port
+- secure product protocol, minimal typed IPC, lifecycle recovery, crash diagnostics, and native workspace selection
+- offline/install/upgrade/provider-PATH acceptance matrix before public binaries
+
+### Phase 7 — Research plugins
 
 - NotebookLM plugin
 - source bundles
 - briefing artifacts
 
-### Phase 6 — Advanced routing and evals
+### Phase 8 — Advanced routing and evals
 
 - dynamic engine selection
 - cost/speed preference routing
@@ -835,6 +862,7 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 14. ACP notifications must be serialized before normalization, and each tool invocation may emit at most one terminal tool outcome even when a provider repeats terminal updates.
 15. Steering is persist-first and acknowledgement-based. A writable provider stdin is not capability proof; unacknowledged inputs must remain queued and restart-recoverable.
 16. Outbound MCP adapters must remain narrow daemon clients, never raw daemon proxies or alternate state/provider control planes. Mutations require a separately reviewed scope, confirmation, idempotency, cancellation, and audit design.
+17. Project tasks begin from an exact clean Git root, live only in daemon-managed worktrees, and require a complete version-matched review before task-branch acceptance. CodeWave never exposes Git control paths or merges the project branch implicitly.
 
 ---
 
