@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
+import { renderProviderLabel } from '../lib/shell-format';
 import { EmptyState } from './EmptyState';
 import { ChevronDownIcon, HomeIcon, MoreIcon } from './icons';
 
@@ -238,7 +239,7 @@ export function RecentSessionList({
                     </div>
                     <div className="qw-session-row-meta">
                       <span className="qw-session-row-provider">
-                        {session.providerId}
+                        {renderProviderLabel(session.providerId)}
                       </span>
                       <span className="qw-session-row-policy">
                         {session.approvalPolicy === 'allow'

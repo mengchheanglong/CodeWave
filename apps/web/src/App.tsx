@@ -179,6 +179,13 @@ export default function App() {
     }
   }, []);
 
+  const closeProviderSettings = useCallback(() => {
+    setProviderSettingsOpen(false);
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      window.setTimeout(() => compactNavigationToggleRef.current?.focus(), 0);
+    }
+  }, []);
+
   const {
     leftColumnWidth,
     rightColumnWidth,
@@ -712,6 +719,7 @@ export default function App() {
         prompt={shellControlsState.prompt}
         workspacePath={shellControlsState.workspacePath}
         providerRevision={shellPanelsState.providerRegistry?.revision ?? null}
+        providers={shellPanelsState.providerRegistry?.providers ?? []}
         api={compareApiRef.current}
         onClose={() => {
           setCompareVisible(false);
@@ -1010,7 +1018,7 @@ export default function App() {
         open={providerSettingsOpen}
         registry={shellPanelsState.providerRegistry}
         health={shellPanelsState.providerHealth}
-        onClose={() => setProviderSettingsOpen(false)}
+        onClose={closeProviderSettings}
       />
     </div>
   );

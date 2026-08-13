@@ -307,6 +307,9 @@ Bridge protocol v1 can prove in-flight steering at runtime. The bridge announces
 #### OpenCode adapter
 OpenCode is enabled by default as the automation-ready fallback. ACP is preferred; its local Ollama and custom OpenAI-compatible provider support make it the best current no-subscription path.
 
+#### Custom ACP profiles
+Provider policy v2 admits runtime-validated lowercase `acp.*` IDs without widening built-in-provider assumptions inside adapters. Each profile is a product-owned display/access descriptor plus an exact executable and argument array for the shared ACP v1 adapter. Creation requires explicit local-command trust and always starts disabled; disabled profiles must never be probed or spawned. Enablement, launch changes, defaults, and run lineage remain protected by the same content-addressed provider revision as built-ins. Credentials are never stored in the policy file.
+
 #### Qwen adapter
 Keep the mature stream-JSON/control adapter, approval mediation, resumability, and checkpoints. Qwen OAuth's free tier has ended, so the registry disables Qwen by default. Users may enable it after configuring a Coding Plan, API key, third-party provider, or compatible local/custom endpoint.
 
@@ -796,8 +799,8 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 - mandatory durable idempotency keys, strict canonical mutation schemas, and configuration revision hashes (implemented)
 - monotonic event sequences and cursor-bounded SSE replay (implemented)
 - append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
-- exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in ACP paths); profile-driven custom agents remain the next slice
-- profile-driven ACP v1 adapter with coalesced initialize probes, capability-derived resumability, bounded diagnostics/process cleanup, and OpenCode as the reference descriptor (implemented); durable custom `acp.*` policy records remain the next slice
+- exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in and custom ACP paths)
+- profile-driven ACP v1 adapter with coalesced initialize probes, capability-derived resumability, bounded diagnostics/process cleanup, OpenCode as the reference descriptor, and durable provider-policy-v2 `acp.*` profiles (implemented)
 
 ### Phase 5 — Research plugins
 

@@ -28,7 +28,6 @@ import {
   PlusIcon,
 } from '../../icons';
 
-const PROVIDER_OPTIONS: ProviderId[] = ['freebuff', 'opencode', 'qwen', 'gemini'];
 const POLICY_OPTIONS: ApprovalPolicy[] = ['manual', 'allow', 'deny'];
 const ROUTING_TOOL_OPTIONS = [
   'workspace-read',
@@ -64,13 +63,11 @@ export function ComposerConfig({
   const composerPlusMenuRef = useRef<HTMLDetailsElement | null>(null);
   const composerProviderMenuRef = useRef<HTMLDetailsElement | null>(null);
   const composerAccessMenuRef = useRef<HTMLDetailsElement | null>(null);
-  const providerOptions = PROVIDER_OPTIONS.map((providerId) => ({
-    providerId,
-    configuration: shellPanelsState.providerRegistry?.providers.find(
-      (provider) => provider.providerId === providerId,
-    ),
+  const providerOptions = (shellPanelsState.providerRegistry?.providers ?? []).map((configuration) => ({
+    providerId: configuration.providerId,
+    configuration,
     health: shellPanelsState.providerHealth.find(
-      (provider) => provider.providerId === providerId,
+      (provider) => provider.providerId === configuration.providerId,
     ),
   }));
 
@@ -249,7 +246,7 @@ export function ComposerConfig({
               }}
             >
               <span className="composer-provider-option-copy">
-                <span>{renderProviderLabel(providerId)}</span>
+                <span>{configuration?.displayName ?? renderProviderLabel(providerId)}</span>
                 <small>
                   {health?.available
                     ? configuration?.accessMode === 'free-cloud'

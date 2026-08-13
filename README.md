@@ -111,7 +111,7 @@ simple, composable, and built for experimentation.
 - **SQLite state** — persistent sessions, runs, events, append-only transcript messages, approvals, checkpoints, tool invocations, and session registry with WAL journaling
 - **Shared protocol** — normalized `WorkbenchEvent` stream across providers (run.started, tool.requested, approval.resolved, etc.)
 - **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share an exact-pinned stable ACP v1 runtime with capability-gated continuity and cancellation-aware permissions
-- **Generic ACP provider** — profile-only command/argument descriptors receive an initialize compatibility probe, negotiated continuity, bounded stderr, and the same daemon-owned lifecycle; OpenCode ACP is the first built-in reference profile
+- **Generic ACP providers** — profile-only command/argument descriptors receive an initialize compatibility probe, negotiated continuity, bounded stderr, and the same daemon-owned lifecycle; OpenCode ACP is the built-in reference and user-defined `acp.*` profiles use the same path
 - **Scoped client handshake** — web and automation clients negotiate protocol v1, daemon capabilities, granular scopes, connection lifetime, and transport limits before protected API access
 - **Cursor-bounded event replay** — monotonic per-run event sequences, SSE resume cursors, and a 500-event replay ceiling keep reconnects ordered without rehydrating unbounded history
 - **Durable session memory** — prompts and normalized final messages are atomically recorded in a parent-linked, monotonic transcript chain; snapshots hydrate the latest 100 messages and the transcript API paginates backward up to 200 at a time
@@ -121,7 +121,7 @@ simple, composable, and built for experimentation.
 - **Reviewed provider policy** — every provider-dependent mutation carries the exact content-addressed provider revision the user reviewed; stale launches fail closed with the current revision and the shell refreshes before retry
 
 ### Providers
-- **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, atomic updates, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
+- **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, v1-to-v2 migration, atomic updates, built-in and custom `acp.*` profiles, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
 - **Freebuff primary** — first policy priority and clearly labeled free cloud/ad-supported access; because the public Freebuff CLI is interactive-only, CodeWave requires a configured automation bridge before marking daemon runs ready
 - **Structured Freebuff bridge** — configured bridges emit JSONL session, output, message, tool, checkpoint, and terminal records; protocol-v1 bridges may also negotiate acknowledged in-flight steering over stdin without weakening the durable queue
 - **OpenCode fallback** — enabled by default with ACP, daemon-mediated permissions, session resume, and local models through Ollama or other OpenAI-compatible endpoints
@@ -226,6 +226,7 @@ Validation:
 npm run check                           # TypeScript
 npm run check:acp                       # Stable ACP v1 protocol/lifecycle/permission E2E
 npm run check:acp-provider              # Generic profile/probe/OpenCode reference E2E
+npm run check:acp-custom                # Dynamic policy/UI/daemon/restart custom-profile E2E
 npm test -w @codewave/web                # React interaction/property suite
 npm run check:shell                      # Shell usability tests
 npm run check:providers                  # Provider policy and routing tests
@@ -238,7 +239,9 @@ npm run check:registrations:json         # CI-friendly JSON summary
 
 ### Provider configuration
 
-Open **Providers** in the left rail or edit `.codewave/providers.json`. CodeWave stores enablement, priority, and optional command overrides there—never API keys. Provider credentials remain in the provider CLI or environment.
+Open **Providers** in the left rail or edit `.codewave/providers.json`. CodeWave stores enablement, priority, optional command overrides, and custom ACP launch profiles there—never API keys. Provider credentials remain in the provider CLI or environment.
+
+To connect another ACP v1 agent, choose **Add agent**, assign a lowercase `acp.*` ID, display name, executable, and one argument per line, then explicitly confirm that you trust the local command. New profiles are always created disabled. CodeWave will not spawn a disabled custom executable; after you enable it, readiness is based on a real bounded ACP `initialize` exchange rather than a version-string guess. Custom profiles run with your user permissions, so use only commands you installed and trust, and keep tokens in the agent's own credential store or environment rather than profile arguments.
 
 Environment overrides take precedence:
 

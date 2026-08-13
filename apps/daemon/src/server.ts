@@ -49,6 +49,7 @@ import {
   type CompareRunLane,
   type CompareRunRequest,
   type CompareRunResponse,
+  type CreateAcpProviderRequest,
   type CreateSessionRequest,
   type CreateWorkspaceFileRequest,
   type CreateWorkspaceFileResponse,
@@ -121,12 +122,13 @@ import {
   recommendProviderRoute,
 } from '@codewave/orchestrator';
 import { FreebuffCliProvider } from '@codewave/provider-freebuff';
+import { AcpV1ProviderAdapter } from '@codewave/provider-acp';
 import { GeminiCliProvider } from '@codewave/provider-gemini';
 import { OpenCodeCliProvider } from '@codewave/provider-opencode';
 import { QwenCliProvider } from '@codewave/provider-qwen';
 import { SQLiteStateStore, resolveDataDirectory } from '@codewave/state';
 import {
-  isKnownProviderId,
+  isConfiguredProviderId,
   ProviderPolicyStore,
   ProviderRevisionConflictError,
 } from './provider-policy.js';
@@ -711,6 +713,30 @@ function validateDeclaredMutationSchema(
   } else if (pathname === '/api/workspace/files' && method === 'PUT') {
     allowed = new Set([
       'requestSchemaVersion', 'workspacePath', 'targetPath', 'content', 'expectedVersion',
+    ]);
+  } else if (pathname === '/api/providers' && method === 'POST') {
+    allowed = new Set([
+      'requestSchemaVersion',
+      'expectedProviderRevision',
+      'providerId',
+      'displayName',
+      'command',
+      'args',
+      'priority',
+    ]);
+  } else if (pathname === '/api/providers/default' && method === 'PATCH') {
+    allowed = new Set([
+      'requestSchemaVersion', 'expectedProviderRevision', 'providerId',
+    ]);
+  } else if (/^\/api\/providers\/[^/]+$/.test(pathname) && method === 'PATCH') {
+    allowed = new Set([
+      'requestSchemaVersion',
+      'expectedProviderRevision',
+      'enabled',
+      'priority',
+      'command',
+      'args',
+      'displayName',
     ]);
   }
   if (allowed) {
@@ -1299,8 +1325,26 @@ export class CodeWaveDaemon {
           'qwen',
           new QwenCliProvider({ rootPath: this.rootPath, command }),
         );
-      } else {
+      } else if (configuration.providerId === 'gemini') {
         this.providers.set('gemini', new GeminiCliProvider(command));
+      } else if (
+        configuration.profileKind === 'custom' &&
+        configuration.adapterKind === 'acp-v1' &&
+        configuration.command
+      ) {
+        this.providers.set(
+          configuration.providerId,
+          new AcpV1ProviderAdapter({
+            profile: {
+              providerId: configuration.providerId,
+              displayName: configuration.displayName,
+              command: configuration.command,
+              args: configuration.args,
+              probeCwd: this.rootPath,
+              surface: `${configuration.providerId}.acp`,
+            },
+          }),
+        );
       }
     }
     this.providerHealthCache.clear();
@@ -1343,9 +1387,21 @@ export class CodeWaveDaemon {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/providers') {
+      const body = await readJsonBody<CreateAcpProviderRequest>(request);
+      try {
+        const registry = await this.providerPolicy.createAcpProvider(body);
+        this.installProviders(registry);
+        sendJson(response, 201, registry);
+      } catch (error) {
+        sendConflict(response, error, 'ACP provider could not be created.');
+      }
+      return;
+    }
+
     if (request.method === 'PATCH' && pathname === '/api/providers/default') {
       const body = await readJsonBody<UpdateDefaultProviderRequest>(request);
-      if (!isKnownProviderId(body.providerId)) {
+      if (!isConfiguredProviderId(this.providerPolicy.snapshot(), body.providerId)) {
         sendJson(response, 400, { error: 'Invalid default provider.' });
         return;
       }
@@ -1365,7 +1421,7 @@ export class CodeWaveDaemon {
     const providerConfigurationMatch = pathname.match(/^\/api\/providers\/([^/]+)$/);
     if (request.method === 'PATCH' && providerConfigurationMatch) {
       const providerId = providerConfigurationMatch[1];
-      if (!isKnownProviderId(providerId)) {
+      if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
         sendJson(response, 404, { error: 'Unknown provider.' });
         return;
       }
@@ -2805,13 +2861,17 @@ export class CodeWaveDaemon {
           } satisfies ProviderHealth;
         }
 
-        const capabilities = await provider.capabilities();
         if (!configuration.enabled) {
           return {
             providerId: configuration.providerId,
             available: false,
             detail: `${configuration.displayName} is disabled by CodeWave provider policy. ${configuration.setupHint}`,
-            capabilities,
+            capabilities: {
+              daemonApprovalMediation: configuration.adapterKind === 'acp-v1',
+              resumableSessions: false,
+              checkpointEvents: false,
+              inFlightSteering: 'unsupported',
+            },
             enabled: false,
             configured:
               configuration.configurationSource !== 'default' ||
@@ -2825,6 +2885,8 @@ export class CodeWaveDaemon {
             latencyMs: 0,
           } satisfies ProviderHealth;
         }
+
+        const capabilities = await provider.capabilities();
 
         const cached = this.providerHealthCache.get(configuration.providerId);
         if (cached && cached.expiresAt > Date.now()) {
@@ -2929,7 +2991,7 @@ export class CodeWaveDaemon {
   private async getProviderCapabilities(
     providerId: string,
   ): Promise<ProviderCapabilities | null> {
-    if (!isKnownProviderId(providerId)) {
+    if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
       return null;
     }
     const provider = this.providers.get(providerId);
@@ -2941,7 +3003,7 @@ export class CodeWaveDaemon {
   }
 
   private async getProviderHealth(providerId: string): Promise<ProviderHealth | null> {
-    if (!isKnownProviderId(providerId)) {
+    if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
       return null;
     }
     return (

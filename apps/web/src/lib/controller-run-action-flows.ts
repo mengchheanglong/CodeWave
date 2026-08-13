@@ -66,13 +66,6 @@ export function createControllerRunActionFlows(
     getRequiredTools,
   } = deps;
 
-  function toProviderId(value: ProviderId): ProviderId {
-    if (value === 'qwen' || value === 'gemini' || value === 'opencode') {
-      return value;
-    }
-    return 'freebuff';
-  }
-
   function toApprovalPolicy(value: ApprovalPolicy): ApprovalPolicy {
     return value === 'allow' || value === 'deny' ? value : 'manual';
   }
@@ -146,7 +139,7 @@ export function createControllerRunActionFlows(
         prompt,
         workspacePath,
         sessionId,
-        preferredProviderId: toProviderId(preferredProviderId),
+        preferredProviderId,
         requiredTools: toRoutingToolRequirements(requiredTools),
       });
 
@@ -178,7 +171,7 @@ export function createControllerRunActionFlows(
 
     const payload = {
       workspacePath,
-      providerId: toProviderId(state.providerIdDraft),
+      providerId: state.providerIdDraft,
       expectedProviderRevision: requireProviderRevision(),
       approvalPolicy: toApprovalPolicy(state.sessionApprovalPolicyDraft),
     };
@@ -257,7 +250,7 @@ export function createControllerRunActionFlows(
       workspacePath,
       expectedProviderRevision: requireProviderRevision(),
       sessionId: state.selectedSession?.id || null,
-      preferredProviderId: toProviderId(getPreferredProviderId()),
+      preferredProviderId: getPreferredProviderId(),
       approvalPolicy: toApprovalPolicy(getRouteApprovalPolicy()),
       requiredTools: toRoutingToolRequirements(getRequiredTools()),
     });

@@ -81,13 +81,33 @@ export interface DaemonProtocolInfo {
   limits: DaemonProtocolLimits;
 }
 
-export type ProviderId = 'qwen' | 'gemini' | 'opencode' | 'freebuff';
-export const PROVIDER_IDS: ProviderId[] = [
+export type BuiltinProviderId = 'qwen' | 'gemini' | 'opencode' | 'freebuff';
+export type CustomAcpProviderId = `acp.${string}`;
+export type ProviderId = BuiltinProviderId | CustomAcpProviderId;
+export const PROVIDER_IDS: BuiltinProviderId[] = [
   'freebuff',
   'opencode',
   'qwen',
   'gemini',
 ];
+export function isBuiltinProviderId(value: unknown): value is BuiltinProviderId {
+  return (
+    typeof value === 'string' &&
+    PROVIDER_IDS.includes(value as BuiltinProviderId)
+  );
+}
+export function isCustomAcpProviderId(
+  value: unknown,
+): value is CustomAcpProviderId {
+  return (
+    typeof value === 'string' &&
+    value.length <= 64 &&
+    /^acp\.[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(value)
+  );
+}
+export function isProviderId(value: unknown): value is ProviderId {
+  return isBuiltinProviderId(value) || isCustomAcpProviderId(value);
+}
 export type ProviderAccessMode =
   | 'free-cloud'
   | 'local-or-byok'
@@ -363,19 +383,22 @@ export interface ProviderHealth {
 export interface ProviderConfiguration {
   providerId: ProviderId;
   displayName: string;
+  profileKind: 'builtin' | 'custom';
+  adapterKind: 'native' | 'acp-v1';
   enabled: boolean;
   priority: number;
   accessMode: ProviderAccessMode;
   dataBoundary: ProviderDataBoundary;
   requiresExplicitEnable: boolean;
   command: string | null;
+  args: string[];
   setupHint: string;
   documentationUrl: string;
   configurationSource: ProviderConfigurationSource;
 }
 
 export interface ProviderRegistrySnapshot {
-  version: 1;
+  version: 2;
   revision: string;
   defaultProviderId: ProviderId;
   configPath: string;
@@ -532,6 +555,17 @@ export interface UpdateProviderConfigurationRequest {
   enabled?: boolean;
   priority?: number;
   command?: string | null;
+  args?: string[];
+  displayName?: string;
+}
+
+export interface CreateAcpProviderRequest {
+  expectedProviderRevision: string;
+  providerId: CustomAcpProviderId;
+  displayName: string;
+  command: string;
+  args?: string[];
+  priority?: number;
 }
 
 export interface UpdateDefaultProviderRequest {

@@ -1,7 +1,10 @@
 import { appendFileSync } from 'node:fs';
 import readline from 'node:readline';
 
-const logPath = process.env.CODEWAVE_MINIMAL_ACP_LOG;
+const logArgumentIndex = process.argv.indexOf('--log');
+const logPath =
+  process.env.CODEWAVE_MINIMAL_ACP_LOG ??
+  (logArgumentIndex >= 0 ? process.argv[logArgumentIndex + 1] : undefined);
 const holdPrompt = process.env.CODEWAVE_MINIMAL_ACP_HOLD === '1';
 const protocolVersion = Number(process.env.CODEWAVE_MINIMAL_ACP_PROTOCOL ?? '1');
 const stderrBytes = Number(process.env.CODEWAVE_MINIMAL_ACP_STDERR_BYTES ?? '0');

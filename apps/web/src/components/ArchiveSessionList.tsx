@@ -1,5 +1,6 @@
 import type { RunStatus } from '@codewave/protocol';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
+import { renderProviderLabel } from '../lib/shell-format';
 import { EmptyState } from './EmptyState';
 
 type ArchiveSessionListProps = {
@@ -62,7 +63,9 @@ export function ArchiveSessionList({
               <span className="sb-thread-title">
                 {getWorkspaceLabel(summary.session.workspacePath)}
               </span>
-              <span className="sidebar-item-badge">{summary.session.providerId}</span>
+              <span className="sidebar-item-badge">
+                {renderProviderLabel(summary.session.providerId)}
+              </span>
             </div>
             <span className="sb-thread-time sidebar-item-subline">
               {summary.runCount} runs · {summary.session.approvalPolicy}

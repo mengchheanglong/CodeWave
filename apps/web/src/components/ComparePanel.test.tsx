@@ -15,6 +15,7 @@ function renderCompare(onClose = vi.fn()) {
       prompt="Review the workspace"
       workspacePath="C:\\workspace"
       providerRevision="revision-1"
+      providers={[]}
       api={{} as DaemonApi}
       onClose={onClose}
       formatTimestamp={(timestamp) => timestamp}
@@ -44,6 +45,7 @@ describe('ComparePanel modal keyboard lifecycle', () => {
         prompt="Review the workspace"
         workspacePath="C:\\workspace"
         providerRevision="revision-1"
+        providers={[]}
         api={{} as DaemonApi}
         onClose={vi.fn()}
         formatTimestamp={(timestamp) => timestamp}

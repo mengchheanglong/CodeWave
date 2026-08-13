@@ -1,3 +1,4 @@
+import { isProviderId } from '@codewave/protocol';
 import type {
   ApprovalRecord,
   ArchiveSessionSummary,
@@ -88,7 +89,7 @@ function getSavedProviderId(): ProviderId {
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem('codewave.preferred_provider');
-      if (saved === 'qwen' || saved === 'gemini' || saved === 'opencode' || saved === 'freebuff') {
+      if (isProviderId(saved)) {
         return saved;
       }
     } catch {}

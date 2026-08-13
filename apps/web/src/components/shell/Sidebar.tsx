@@ -192,7 +192,7 @@ export function Sidebar({
                       value={provider.providerId}
                       disabled={!provider.enabled || !providerHealth?.available}
                     >
-                      {renderProviderLabel(provider.providerId)} ·{' '}
+                      {provider.displayName} ·{' '}
                       {providerHealth?.available
                         ? provider.accessMode === 'free-cloud'
                           ? 'Free'

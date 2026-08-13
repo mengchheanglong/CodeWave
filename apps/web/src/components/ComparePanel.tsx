@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CompareRunResponse, ProviderId, WorkbenchEvent } from '@codewave/protocol';
+import type {
+  CompareRunResponse,
+  ProviderConfiguration,
+  ProviderId,
+  WorkbenchEvent,
+} from '@codewave/protocol';
 import type { DaemonApi } from '../lib/daemon-api';
 import { buildTimelineSteps, type TimelineStep } from '../lib/run-inspector-views';
 import { StepTimeline } from './StepTimeline';
 import { CheckIcon, ScaleIcon, XIcon } from './icons';
-
-const PROVIDER_OPTIONS: ProviderId[] = ['freebuff', 'opencode', 'qwen', 'gemini'];
 
 type CompareLaneState = {
   providerId: ProviderId;
@@ -56,6 +59,7 @@ type ComparePanelProps = {
   prompt: string;
   workspacePath: string;
   providerRevision: string | null;
+  providers: ProviderConfiguration[];
   api: DaemonApi;
   onClose: () => void;
   formatTimestamp: (timestamp: string) => string;
@@ -66,6 +70,7 @@ export function ComparePanel({
   prompt,
   workspacePath,
   providerRevision,
+  providers,
   api,
   onClose,
   formatTimestamp,
@@ -230,9 +235,30 @@ export function ComparePanel({
   }
 
   const providerOptions = useMemo(
-    () => PROVIDER_OPTIONS.filter((providerId) => providerId !== 'qwen' || selected.length > 0),
-    [selected],
+    () => providers.filter((provider) => provider.enabled),
+    [providers],
   );
+  const providerLabelById = useMemo(
+    () =>
+      new Map(
+        providers.map((provider) => [provider.providerId, provider.displayName] as const),
+      ),
+    [providers],
+  );
+
+  useEffect(() => {
+    if (!open || providerOptions.length < 2) return;
+    setSelected((current) => {
+      const eligible = current.filter((providerId) =>
+        providerOptions.some((provider) => provider.providerId === providerId),
+      );
+      for (const provider of providerOptions) {
+        if (eligible.length >= 2) break;
+        if (!eligible.includes(provider.providerId)) eligible.push(provider.providerId);
+      }
+      return eligible;
+    });
+  }, [open, providerOptions]);
 
   if (!open) {
     return null;
@@ -265,19 +291,19 @@ export function ComparePanel({
         {!started ? (
           <div className="compare-setup">
             <div className="compare-provider-pick">
-              {providerOptions.map((providerId) => (
+              {providerOptions.map((provider) => (
                 <button
-                  key={providerId}
+                  key={provider.providerId}
                   type="button"
                   className={`compare-provider-option${
-                    selected.includes(providerId) ? ' active' : ''
+                    selected.includes(provider.providerId) ? ' active' : ''
                   }`}
                   onClick={() => {
-                    toggleProvider(providerId);
+                    toggleProvider(provider.providerId);
                   }}
                 >
-                  {providerId}
-                  {selected.includes(providerId) ? (
+                  {provider.displayName}
+                  {selected.includes(provider.providerId) ? (
                     <span className="compare-provider-check" aria-hidden="true">
                       <CheckIcon size={12} />
                     </span>
@@ -305,7 +331,9 @@ export function ComparePanel({
             {lanes.map((lane) => (
               <div key={lane.providerId} className={`compare-lane compare-lane-${lane.providerId}`}>
                 <header className="compare-lane-header">
-                  <span className="compare-lane-provider">{lane.providerId}</span>
+                  <span className="compare-lane-provider">
+                    {providerLabelById.get(lane.providerId) ?? lane.providerId}
+                  </span>
                   <span className={`compare-lane-status compare-lane-status-${lane.status}`}>
                     {summarizeStatus(lane.status)}
                   </span>

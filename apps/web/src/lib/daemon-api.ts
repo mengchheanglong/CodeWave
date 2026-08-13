@@ -6,6 +6,7 @@ import type {
   ApprovalRecord,
   ArchiveSnapshot,
   ClientHandshakeResponse,
+  CreateAcpProviderRequest,
   CompareRunRequest,
   CompareRunResponse,
   CreateSessionRequest,
@@ -55,6 +56,9 @@ interface ToolPlaneQuery {
 export interface DaemonApi {
   getRuntime(): Promise<RuntimeInfo>;
   getProviders(): Promise<ProviderRegistrySnapshot>;
+  createAcpProvider(
+    input: CreateAcpProviderRequest,
+  ): Promise<ProviderRegistrySnapshot>;
   updateProvider(
     providerId: ProviderId,
     input: UpdateProviderConfigurationRequest,
@@ -325,6 +329,12 @@ export function createDaemonApi({
     },
     getProviders() {
       return requestJson<ProviderRegistrySnapshot>('/api/providers');
+    },
+    createAcpProvider(input) {
+      return requestJson<ProviderRegistrySnapshot>('/api/providers', {
+        method: 'POST',
+        body: input,
+      });
     },
     updateProvider(providerId, input) {
       return requestJson<ProviderRegistrySnapshot>(`/api/providers/${providerId}`, {

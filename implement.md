@@ -1910,3 +1910,11 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Moved OpenCode ACP launch, stderr handling, cancellation, and terminal ownership into the generic adapter while retaining OpenCode's built-in command resolution, tool hints, and optional legacy JSON-run mode.
 - Bounded stderr lines to 64 KiB and aggregate emitted stderr to 256 KiB, escalated ACP cleanup after a graceful close window, and retained the 1 MiB strict stdout JSON record fence.
 - Added a second, hand-written ACP fixture plus `npm run check:acp-provider` to prove coalesced probing, negotiated capabilities, normalized completion/cancellation, terminal uniqueness, child cleanup, mismatch rejection, and missing-executable diagnostics independently of the SDK fixture.
+
+## Dynamic ACP provider profiles — 2026-08-13
+
+- Migrated the daemon-owned provider policy to version 2 with automatic v1 reads, stable built-in IDs, validated lowercase `acp.*` custom IDs, exact executable/argument arrays, deterministic revisions, atomic persistence, and registry-driven labels.
+- Added custom-profile create/update/default and runtime paths through the existing scoped, idempotent, provider-revision-fenced daemon APIs. Disabled custom executables are not probed or spawned.
+- Added a Providers flow that requires explicit local-executable trust, creates profiles disabled, edits arguments without lossy shell splitting, and exposes honest protocol/continuity/credential diagnostics after a real initialize probe.
+- Removed a built-in-only controller coercion that silently changed custom session creation to Freebuff. Desktop and compact browser QA now prove custom selection, persisted Browser Wave identity, a real completed ACP run, bounded layouts, initial form focus, Escape dismissal, and compact focus restoration.
+- Added `npm run check:acp-custom` to exercise invalid IDs, disabled fail-closed behavior, enablement, health, session/run completion, restart persistence and resume, profile updates, and disablement through a real daemon process.
