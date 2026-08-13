@@ -1,53 +1,60 @@
-/* CodeWave color system: low-glare ocean chrome with calm provider tints. */
+/* CodeWave color system: monochrome ink, Codex-style. No hue anywhere — depth
+   comes from luminance and border weight only, and the surface ramp sits on a
+   lifted neutral gray rather than true black. Provider identity is a brightness
+   step, not a tint. Flat by design: no accent glow, no gradient haze. */
 
 :root {
   color-scheme: dark;
 
-  --canvas: #050d15;
-  --surface-0: #07121c;
-  --surface-1: #0a1722;
-  --surface-2: #0f202e;
-  --surface-3: #152a3a;
-  --surface-raised: #1a3142;
-  --surface-overlay: rgba(8, 21, 32, 0.95);
-  --surface-glass: rgba(7, 19, 29, 0.84);
+  --canvas: #1a1a1a;
+  --surface-0: #1e1e1e;
+  --surface-1: #232323;
+  --surface-2: #2a2a2a;
+  --surface-3: #313131;
+  --surface-raised: #383838;
+  --surface-overlay: rgba(35, 35, 35, 0.96);
+  --surface-glass: rgba(30, 30, 30, 0.86);
 
-  --text-primary: #deebf0;
-  --text-secondary: #93aab5;
-  --text-tertiary: #66818e;
-  --text-disabled: #435f6b;
-  --text-on-accent: #06131b;
+  --text-primary: #ececec;
+  --text-secondary: #a6a6a6;
+  --text-tertiary: #8a8a8a;
+  --text-disabled: #5e5e5e;
+  --text-on-accent: #1a1a1a;
 
-  --accent-qwen: #75aec1;
-  --accent-gemini: #779bc2;
-  --accent-opencode: #6ca79e;
-  --accent-freebuff: #62a8bc;
+  --accent-qwen: #ededed;
+  --accent-gemini: #d6d6d6;
+  --accent-opencode: #bfbfbf;
+  --accent-freebuff: #a8a8a8;
   --accent-active: var(--accent-qwen);
   --accent-soft: color-mix(in srgb, var(--accent-active) 10%, transparent);
   --accent-muted: color-mix(in srgb, var(--accent-active) 19%, transparent);
   --accent-border: color-mix(in srgb, var(--accent-active) 32%, var(--border-muted));
-  --accent-glow: color-mix(in srgb, var(--accent-active) 13%, transparent);
+  /* Flat surface treatment: a white accent must not bloom. Kept as a token so
+     the `box-shadow: … var(--accent-glow)` call sites stay valid, but renders
+     nothing. */
+  --accent-glow: transparent;
 
-  --status-success: #69ad8d;
-  --status-error: #d77d88;
-  --status-warning: #c5a66c;
-  --status-info: #75a4c9;
-  --status-running: #8d9fc2;
+  /* Severity reads as brightness: the louder the state, the whiter the ink. */
+  --status-success: #d8d8d8;
+  --status-error: #ffffff;
+  --status-warning: #c4c4c4;
+  --status-info: #b0b0b0;
+  --status-running: #969696;
 
-  --diff-add-bg: rgba(105, 173, 141, 0.1);
-  --diff-add-text: #86c6a6;
-  --diff-del-bg: rgba(215, 125, 136, 0.1);
-  --diff-del-text: #df98a0;
-  --diff-hunk-bg: rgba(117, 164, 201, 0.09);
-  --diff-hunk-text: #8eb4d2;
+  --diff-add-bg: rgba(255, 255, 255, 0.075);
+  --diff-add-text: #ebebeb;
+  --diff-del-bg: rgba(255, 255, 255, 0.028);
+  --diff-del-text: #8c8c8c;
+  --diff-hunk-bg: rgba(255, 255, 255, 0.045);
+  --diff-hunk-text: #9e9e9e;
 
-  --border-subtle: rgba(176, 216, 230, 0.04);
-  --border-muted: #142938;
-  --border-default: #203b4c;
-  --border-strong: #31556a;
-  --overlay-scrim: rgba(2, 8, 13, 0.76);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-muted: #2e2e2e;
+  --border-default: #3a3a3a;
+  --border-strong: #565656;
+  --overlay-scrim: rgba(0, 0, 0, 0.62);
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent-active) 22%, transparent);
-  --selection: color-mix(in srgb, var(--accent-active) 30%, transparent);
+  --selection: color-mix(in srgb, var(--accent-active) 26%, transparent);
 }
 
 :root[data-accent='gemini'] {
@@ -69,33 +76,42 @@
 
 html[data-theme='light'] {
   color-scheme: light;
-  --canvas: #edf1f5;
-  --surface-0: #f7f9fb;
+  --canvas: #f4f4f4;
+  --surface-0: #fafafa;
   --surface-1: #ffffff;
-  --surface-2: #f4f6f8;
-  --surface-3: #edf1f5;
+  --surface-2: #f1f1f1;
+  --surface-3: #e8e8e8;
   --surface-raised: #ffffff;
   --surface-overlay: rgba(255, 255, 255, 0.96);
   --surface-glass: rgba(255, 255, 255, 0.86);
-  --text-primary: #171b21;
-  --text-secondary: #566170;
-  --text-tertiary: #808b99;
-  --text-disabled: #a4acb7;
-  --text-on-accent: #111317;
-  --status-success: #198754;
-  --status-error: #d83b4d;
-  --status-warning: #a66b00;
-  --status-info: #296fd4;
-  --status-running: #7857d6;
-  --diff-add-bg: rgba(25, 135, 84, 0.1);
-  --diff-add-text: #18794e;
-  --diff-del-bg: rgba(216, 59, 77, 0.1);
-  --diff-del-text: #c83243;
-  --diff-hunk-bg: rgba(41, 111, 212, 0.08);
-  --diff-hunk-text: #2867bd;
-  --border-subtle: rgba(23, 27, 33, 0.05);
-  --border-muted: #e3e7ec;
-  --border-default: #d3d9e1;
-  --border-strong: #b9c2ce;
-  --overlay-scrim: rgba(20, 25, 32, 0.46);
+  --text-primary: #111111;
+  --text-secondary: #575757;
+  --text-tertiary: #7a7a7a;
+  --text-disabled: #a6a6a6;
+  --text-on-accent: #ffffff;
+
+  /* Accents invert: dark ink on light ground. */
+  --accent-qwen: #1a1a1a;
+  --accent-gemini: #333333;
+  --accent-opencode: #4c4c4c;
+  --accent-freebuff: #666666;
+
+  --status-success: #2e2e2e;
+  --status-error: #000000;
+  --status-warning: #454545;
+  --status-info: #5a5a5a;
+  --status-running: #6e6e6e;
+
+  --diff-add-bg: rgba(0, 0, 0, 0.075);
+  --diff-add-text: #101010;
+  --diff-del-bg: rgba(0, 0, 0, 0.03);
+  --diff-del-text: #6f6f6f;
+  --diff-hunk-bg: rgba(0, 0, 0, 0.045);
+  --diff-hunk-text: #5c5c5c;
+
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-muted: #e6e6e6;
+  --border-default: #d4d4d4;
+  --border-strong: #b0b0b0;
+  --overlay-scrim: rgba(0, 0, 0, 0.42);
 }

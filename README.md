@@ -153,7 +153,7 @@ simple, composable, and built for experimentation.
 - **Context meter** — approximate context used per run in the composer
 - **@-mention picker** — fuzzy file/directory search from the workspace; `@` in the prompt opens the picker and inserts `@path`
 - **Compare mode** — run the same prompt on two providers side by side (⚖ Compare button)
-- **Ocean-dark theme** — a low-glare blue interface designed for long, focused coding sessions
+- **Monochrome theme** — a flat, hue-free grayscale interface on a lifted neutral dark ground, designed for long, focused coding sessions; light mode inverts the same ramp
 - **Events timeline** — normalized event log with tool call/activity evidence
 - **Session memory** — recent parent-linked turns appear above the current run, with older history kept bounded and available through cursor pagination
 - **Approvals** — inline decision cards in the transcript plus daemon-mediated lists; keyboard approve/deny (`Shift+Enter`/`Shift+A`/`Shift+D`)
@@ -270,7 +270,9 @@ See [the 2026 harness research note](docs/harness-research-2026.md) for provider
 
 ## Brand
 
-**CodeWave** is named for the flow of code, tools, and collaborating agents moving through one calm workspace. Its deep-ocean visual identity is deliberately low-glare: soft blue surfaces, muted sea-glass accents, and a wave mark that combines an open **C** with a flowing **W**.
+**CodeWave** is named for the flow of code, tools, and collaborating agents moving through one calm workspace. Its visual identity is deliberately monochrome and low-glare: a neutral grayscale surface ramp, no hue anywhere in the product chrome, flat surfaces with no accent glow or gradient wash, and a wave mark that combines an open **C** with a flowing **W**.
+
+Hierarchy is carried by luminance and border weight rather than color. Severity reads as brightness — the louder the state, the whiter the ink in dark mode, the darker in light mode — and diffs distinguish additions from deletions by ink weight plus their `+`/`-` signs. Provider identity is a brightness step, not a tint, so switching engines never repaints the product into a provider-owned skin.
 
 ---
 

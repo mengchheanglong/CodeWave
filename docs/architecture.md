@@ -54,7 +54,9 @@ The architecture must support:
 - future mobile or remote companion clients
 
 ### 2.7 Calm, durable interface
-The shell uses CodeWave's low-glare ocean-dark visual system as its canonical theme. Provider identity may appear as restrained sea-toned accents, but must not fragment the product into unrelated provider-owned skins. Dense agent activity should remain readable and calm during long coding sessions.
+The shell uses CodeWave's low-glare monochrome visual system as its canonical theme: a neutral grayscale surface ramp on a lifted dark ground, with no hue in the product chrome and flat surfaces free of accent glow or gradient wash. Depth comes from luminance and border weight only.
+
+Provider identity may appear as a restrained brightness step on the shared neutral accent, but must not introduce hue and must not fragment the product into unrelated provider-owned skins. Semantic state must never depend on hue alone — severity is encoded as brightness, and diffs stay legible through ink weight plus their `+`/`-` signs. Dense agent activity should remain readable and calm during long coding sessions.
 
 ### 2.8 Free-first, explicit paid access
 Provider economics and authentication are product state, not hidden setup trivia.

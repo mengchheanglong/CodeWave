@@ -1866,3 +1866,19 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Final guards passed: `npm run check`, `npm run check:transport`, `npm run check:registrations`, `npm run check:harness`, `npm run check:runtime`, `npm run check:providers`, `npm run check:shell`, `npm run build:web`, all 179 web tests, `npm audit --omit=dev --audit-level=high`, and `git diff --check`. The property suite also uses exact raw-title matching for whitespace-rich generated names and bounded long-running test timeouts.
 - Next bounded slice:
   - implement explicit transcript compaction checkpoints and pre-compaction memory hooks, then expand task-level trace evaluation beyond transport parity.
+
+## Monochrome visual system — 2026-08-13
+
+- Replaced the ocean-dark palette in `packages/ui-kit/src/tokens/colors.css` with a hue-free grayscale system. The dark ramp sits on a lifted neutral ground (`--canvas: #1a1a1a`, surfaces `#1e1e1e`/`#232323`/`#2a2a2a`/`#313131`, raised `#383838`) rather than true black, matching the reference Codex chrome.
+- Encoded hierarchy through luminance and border weight instead of color:
+  - severity reads as brightness (`--status-error` is the brightest ink in dark mode, the darkest in light mode)
+  - diff add/delete distinguish by ink weight over white-alpha backgrounds; the existing `+`/`-` signs in `DiffCard` carry the semantics that hue used to
+  - the four provider accents survive as brightness steps, so `[data-accent]` switching still reads without introducing a tint
+- Fixed light mode, which previously inherited the dark-mode accent: `html[data-theme='light']` now overrides the accent tokens to dark ink and defines its own neutral status/diff/border ramp.
+- Flattened the surface treatment to match the reference:
+  - `--accent-glow` is now `transparent`, which neutralizes every `box-shadow: … var(--accent-glow)` call site and the derived `--shadow-accent` without touching each rule; a white accent would otherwise have bloomed on the primary, send, and active-tab surfaces
+  - removed the two radial accent washes on the app shell and the one on the provider-settings modal; reduced the empty-workspace ambient blob from 10% to 3%
+- Removed the remaining hue outside the token file: blue-tinted light-mode shadows in `tokens/shadows.css`, the provider-settings revision pill, the `ApprovalCard` approve-button ink, `Spinner` fallbacks, `MarkdownRenderer` light-mode text, the `codewave-mark.svg` gradients, and the `theme-color` meta.
+- Repaired two dead references found during the pass: `.provider-settings-feedback.success`/`.error` pointed at `var(--success)`/`var(--danger)`, which are defined nowhere in the repo, so those elements rendered with inherited color. They now use `--status-success`/`--status-error`.
+- Updated the canonical visual direction in `README.md` (features + brand) and `docs/architecture.md` §2.7, which still described the superseded ocean-dark/sea-glass system.
+- Validated with `npm run build:web`. Left for the next pass: a live browser QA pass over the new ramp, and confirmation of whether diff stats should keep green/red as the reference app does, against the current fully-monochrome product decision.
