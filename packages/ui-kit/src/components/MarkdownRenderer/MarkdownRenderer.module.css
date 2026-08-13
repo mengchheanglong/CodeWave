@@ -14,5 +14,5 @@
 .codeBlockHeader { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 12px; border-bottom: 1px solid var(--border-muted); background: var(--surface-2); }
 .codeLanguage { font: 650 var(--text-2xs)/1 var(--font-mono); color: var(--text-tertiary); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
 .codeBlock { margin: 0; padding: 14px 16px; overflow-x: auto; font: 400 var(--text-md)/1.62 var(--font-mono); color: var(--text-primary); white-space: pre; tab-size: 2; }
-html[data-theme='light'] .markdownContainer { color: #303844; }
-html[data-theme='light'] .codeBlock { color: #29313c; }
+html[data-theme='light'] .markdownContainer { color: #1f1f1f; }
+html[data-theme='light'] .codeBlock { color: #1a1a1a; }

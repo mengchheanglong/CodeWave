@@ -376,10 +376,6 @@ async function runCommand(
   });
 }
 
-async function probeCommand(command: string): Promise<ProviderHealth> {
-  return probeCommandForMode(command, 'stream-json');
-}
-
 async function probeCommandForMode(
   command: string,
   mode: GeminiMode,

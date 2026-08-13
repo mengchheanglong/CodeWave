@@ -5,8 +5,20 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
+if (args.includes('--codewave-bridge-info')) {
+  process.stdout.write(
+    `${JSON.stringify({ name: 'codewave-freebuff-bridge', protocolVersion: 1 })}\n`,
+  );
+  process.exit(0);
+}
+
 const promptIndex = args.indexOf('--prompt');
 const prompt = promptIndex >= 0 ? args[promptIndex + 1] ?? '' : '';
+if (!prompt.includes('[missing-hello]')) {
+  process.stdout.write(
+    `${JSON.stringify({ type: 'bridge.hello', protocolVersion: 1 })}\n`,
+  );
+}
 const supportsSteering = prompt.includes('[native-steering]');
 const acceptedSteering = [];
 const delayMs = prompt.includes('[hold]')
@@ -68,6 +80,12 @@ const timer = setTimeout(() => {
   const completedText = acceptedSteering.length
     ? `completed: ${prompt} | steered: ${acceptedSteering.join(' | ')}`
     : `completed: ${prompt}`;
+  if (prompt.includes('[result-only]')) {
+    process.stdout.write(
+      `${JSON.stringify({ type: 'result', status: 'completed', result: completedText })}\n`,
+    );
+    process.exit(0);
+  }
   if (prompt.includes('[invalid-records]')) {
     process.stdout.write('not-json-at-all\n');
     process.stdout.write('["arrays-are-not-bridge-records"]\n');
@@ -89,9 +107,11 @@ const timer = setTimeout(() => {
   process.stdout.write(
     `${JSON.stringify({ type: 'message', role: 'assistant', content: completedText })}\n`,
   );
-  process.stdout.write(
-    `${JSON.stringify({ type: 'result', status: 'completed', result: completedText, usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
-  );
+  if (!prompt.includes('[missing-result]')) {
+    process.stdout.write(
+      `${JSON.stringify({ type: 'result', status: 'completed', result: completedText, usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+    );
+  }
   if (prompt.includes('[late-session]')) {
     process.stdout.write(
       `${JSON.stringify({ type: 'session', sessionId: 'late-session-overwrite' })}\n`,

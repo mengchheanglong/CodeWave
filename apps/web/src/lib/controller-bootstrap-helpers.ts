@@ -80,7 +80,7 @@ export function createControllerBootstrapHelpers(
     void refreshRecommendation();
   }
 
-  function setArchiveUnavailableState(message: string) {
+  function setArchiveUnavailableState(_message: string) {
     state.archiveSessions = [];
     state.orchestrationFlows = [];
     emitShellPanelsState();
@@ -150,7 +150,6 @@ export function createControllerBootstrapHelpers(
   return {
     clearRunSelectionView,
     clearSessionSelectionState,
-    resetRunInspector,
     setArchiveUnavailableState,
     setSessionsUnavailableState,
     setToolPlaneUnavailableState,

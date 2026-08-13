@@ -50,7 +50,6 @@ import {
   type OrchestrationBoardSnapshot,
   type OrchestrationFlowSummary,
   type OrchestrationFlowSessionSummary,
-  type OrchestrationRole,
   type ProviderAdapter,
   type ProviderApprovalDecision,
   type ProviderApprovalRequest,
@@ -475,7 +474,7 @@ async function gitResetToCommit(
   commit: string,
 ): Promise<{ ok: boolean; detail: string }> {
   try {
-    const { stdout } = await execFileAsync(
+    await execFileAsync(
       'git',
       ['reset', '--hard', commit],
       { cwd: workspacePath, timeout: 30000, windowsHide: true, maxBuffer: 1024 * 1024 },

@@ -2,8 +2,8 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--text-secondary, #93aab5) 25%, transparent);
-  border-top-color: var(--accent-active, #75aec1);
+  border: 2px solid color-mix(in srgb, var(--text-secondary, #a9a9a9) 25%, transparent);
+  border-top-color: var(--accent-active, #ededed);
   animation: uk-spin 0.7s linear infinite;
   flex: none;
 }

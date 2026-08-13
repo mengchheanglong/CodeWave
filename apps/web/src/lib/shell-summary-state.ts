@@ -1,4 +1,4 @@
-export type DaemonConnectionLabel = 'connected' | 'connecting' | 'disconnected';
+type DaemonConnectionLabel = 'connected' | 'connecting' | 'disconnected';
 
 export type ShellSummaryState = {
   providerHealth: string;

@@ -1,0 +1,17 @@
+{
+  "name": "@codewave/mcp-server",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codewave-mcp": "./src/bin.ts"
+  },
+  "scripts": {
+    "start": "tsx src/bin.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "@codewave/protocol": "file:../../packages/protocol",
+    "zod": "4.4.3"
+  }
+}

@@ -3,7 +3,6 @@ import type { ApprovalPolicy, ProviderId } from '@codewave/protocol';
 import { Badge } from '@codewave/ui-kit';
 import type { ShellControlsState } from '../../lib/shell-controls-state';
 import type { ShellPanelsState } from '../../lib/shell-panels-state';
-import type { RunViewState } from '../../lib/run-view-state';
 import { renderAccessLabel, renderProviderLabel, type UtilityView } from '../../lib/shell-format';
 import {
   requestApprovalResolution,
@@ -40,7 +39,6 @@ type InspectorProps = {
   contextUsagePercent: number;
   shellPanelsState: ShellPanelsState;
   shellControlsState: ShellControlsState;
-  runViewState: RunViewState;
 };
 
 export function Inspector({
@@ -56,7 +54,6 @@ export function Inspector({
   contextUsagePercent,
   shellPanelsState,
   shellControlsState,
-  runViewState,
 }: InspectorProps) {
   const workspacePath = shellControlsState.workspacePath;
 

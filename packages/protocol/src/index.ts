@@ -333,18 +333,6 @@ export interface SessionToolRegistration {
   metadata: Record<string, unknown>;
 }
 
-export interface CreateSessionInput {
-  workspacePath: string;
-  providerId: ProviderId;
-  approvalPolicy: ApprovalPolicy;
-}
-
-export interface CreateRunInput {
-  sessionId: string;
-  providerId: ProviderId;
-  prompt: string;
-}
-
 export interface ProviderCapabilities {
   daemonApprovalMediation: boolean;
   resumableSessions: boolean;

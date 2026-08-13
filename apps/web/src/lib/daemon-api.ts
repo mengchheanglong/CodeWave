@@ -47,7 +47,7 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: BodyInit | object | null;
 };
 
-export interface ToolPlaneQuery {
+interface ToolPlaneQuery {
   workspacePath?: string;
   sessionId?: string;
 }
@@ -114,7 +114,7 @@ export interface DaemonApi {
   ): Promise<RecoverSessionResponse>;
 }
 
-export class DaemonRequestError extends Error {
+class DaemonRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -171,7 +171,7 @@ export function resetDaemonConnection(): void {
   handshakePromise = null;
 }
 
-export async function ensureDaemonConnection(): Promise<ClientHandshakeResponse> {
+async function ensureDaemonConnection(): Promise<ClientHandshakeResponse> {
   if (hasUsableConnection(negotiatedConnection)) return negotiatedConnection;
   if (handshakePromise) return handshakePromise;
 

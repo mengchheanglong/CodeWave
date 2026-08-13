@@ -77,7 +77,7 @@ export function mountToastContainer(nextContainer) {
   render();
 }
 
-export function dismissToast(id) {
+function dismissToast(id) {
   if (!container) {
     removeToast(id);
     return;
@@ -98,7 +98,7 @@ export function dismissToast(id) {
   timeoutHandles.set(id, handle);
 }
 
-export function pushToast({
+function pushToast({
   message,
   variant = 'info',
   duration = DEFAULT_DURATIONS[variant] ?? DEFAULT_DURATIONS.info,

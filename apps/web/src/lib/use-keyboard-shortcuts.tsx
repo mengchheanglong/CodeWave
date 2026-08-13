@@ -5,7 +5,7 @@ import type { ShellPanelsState } from './shell-panels-state';
 import type { RailView, RunViewTab, UtilityView } from './shell-format';
 import { requestApprovalResolution } from '../app-controller';
 
-export function isEditableTarget(target: EventTarget | null): boolean {
+function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
   }

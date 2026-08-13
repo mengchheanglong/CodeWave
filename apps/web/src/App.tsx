@@ -6,13 +6,9 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import type {
-  ApprovalPolicy,
-  ProviderId,
-} from '@codewave/protocol';
+import type { ProviderId } from '@codewave/protocol';
 import {
   initializeShell,
-  requestApprovalResolution,
   requestApplySelectedSessionPolicy,
   requestCancelSelectedRun,
   requestCreateSession,
@@ -77,12 +73,7 @@ import { useAutoResizeTextarea } from './lib/use-auto-resize-textarea';
 import { useKeyboardShortcuts } from './lib/use-keyboard-shortcuts';
 import { useFocusContainment } from './lib/use-focus-containment';
 import { createDaemonApi } from './lib/daemon-api';
-import {
-  applyTheme,
-  cycleTheme,
-  readInitialTheme,
-  type AppTheme,
-} from './lib/theme';
+import { applyTheme, readInitialTheme, type AppTheme } from './lib/theme';
 import {
   attentionNotificationsEnabled,
   requestAttentionPermission,
@@ -100,29 +91,6 @@ import {
 
 const UTILITY_COLLAPSED_KEY = 'codewave:utility-collapsed';
 
-const RAIL_VIEW_ORDER: RailView[] = ['recent', 'history', 'archive', 'flows'];
-const RUN_VIEW_ORDER: RunViewTab[] = ['chat', 'timeline'];
-const UTILITY_VIEW_ORDER: UtilityView[] = [
-  'approvals',
-  'tools',
-  'files',
-  'artifacts',
-  'checkpoints',
-];
-
-function cycleValue<T extends string>(
-  values: readonly T[],
-  current: T,
-  direction: 1 | -1,
-) {
-  const currentIndex = values.indexOf(current);
-  if (currentIndex === -1) {
-    return values[0];
-  }
-  const nextIndex = (currentIndex + direction + values.length) % values.length;
-  return values[nextIndex];
-}
-
 function readInitialUtilityCollapsed() {
   if (typeof window === 'undefined') {
     return false;
@@ -132,20 +100,6 @@ function readInitialUtilityCollapsed() {
   } catch {
     return false;
   }
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  const tagName = target.tagName.toLowerCase();
-  return (
-    tagName === 'input' ||
-    tagName === 'textarea' ||
-    tagName === 'select' ||
-    target.isContentEditable
-  );
 }
 
 function includesSearch(value: string, needle: string): boolean {
@@ -189,7 +143,7 @@ export default function App() {
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
-  const [appTheme, setAppTheme] = useState<AppTheme>(() => readInitialTheme());
+  const [appTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
   const compareApiRef = useRef(
@@ -917,7 +871,6 @@ export default function App() {
               runViewState={runViewState}
               shellControlsState={shellControlsState}
               shellPanelsState={shellPanelsState}
-              shellSummaryState={shellSummaryState}
               runViewTab={runViewTab}
               onRunViewTabChange={setRunViewTab}
               showThinking={showThinking}
@@ -983,7 +936,6 @@ export default function App() {
             contextUsagePercent={contextUsagePercent}
             shellPanelsState={shellPanelsState}
             shellControlsState={shellControlsState}
-            runViewState={runViewState}
           />
         </div>
       </section>
