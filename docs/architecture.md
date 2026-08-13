@@ -298,7 +298,7 @@ Adapters use `packages/providers/runtime` for quote-aware command overrides and 
 #### Freebuff adapter
 Freebuff is the product primary and first registry priority because it offers a genuinely free coding-agent experience. It is cloud-backed and ad-supported, so the UI must never describe it as local or private.
 
-The public upstream CLI currently documents an interactive TUI rather than a stable non-interactive protocol. CodeWave therefore distinguishes installation from automation readiness: the raw CLI may be installed but is not marked ready for daemon runs. A user-configured Freebuff automation bridge may implement the CodeWave JSONL command contract until upstream exposes a machine API.
+The public upstream CLI currently documents an interactive TUI rather than a stable non-interactive protocol. CodeWave therefore distinguishes installation from automation readiness: the raw CLI may be installed but is not marked ready for daemon runs. A user-configured Freebuff automation bridge may implement the CodeWave JSONL command contract until upstream exposes a machine API. Readiness requires a bounded protocol-v1 descriptor probe, and every run requires a protocol-v1 hello followed by an explicit terminal result. A zero-exit command, unqualified stream, or clean EOF without a result fails closed and can never synthesize success.
 
 Bridge protocol v1 can prove in-flight steering at runtime. The bridge announces `inFlightSteering: true`, receives ID-addressed `steer` records on stdin, and must acknowledge each ID as accepted or rejected. The daemon always persists and emits the queued input before attempting delivery. Only an accepted acknowledgement atomically applies it to the current run; missing negotiation, rejection, timeout, close, or a terminal race retains the durable input for ordered follow-up dispatch.
 
@@ -504,6 +504,14 @@ Recommended policies:
 - network fetch: ask by default
 - git commit/push: explicit ask
 - external services: explicit ask
+
+### 10.5 Outbound MCP observer
+
+`apps/mcp-server` is an optional local stdio adapter for MCP hosts that need bounded context from CodeWave. It is an HTTP client of the daemon and never reads SQLite, launches providers, accepts arbitrary daemon routes, or replaces `packages/mcp-hub`. The hub remains the inbound workspace tool registry; the observer is a removable outward projection.
+
+The v0 surface is read-only: recent sessions, one session, one run, and bounded transcript pages. It negotiates only `sessions:read` and `runs:read`, accepts only a credential-free loopback daemon origin, keeps the connection lease in memory, propagates cancellation, and retries once after daemon restart. Projections omit absolute workspace paths, provider commands and revisions, raw events, tool input/output, approval payloads, artifact contents, and transcript metadata. No prompt, root, file, subscription, run-launch, steering, approval, provider-policy, or workspace-mutation capability is exposed.
+
+MCP tool annotations remain display hints rather than authorization. The daemon's exact scopes, validation, response ceilings, and read-only route allowlist are the enforcement boundary. See [the MCP observer guide](mcp-observer.md).
 
 ---
 
@@ -807,6 +815,7 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 13. Session transcripts are append-only, parent-linked daemon state. Run prompts and normalized messages must commit atomically with their owning run/event, and snapshot hydration must remain bounded.
 14. ACP notifications must be serialized before normalization, and each tool invocation may emit at most one terminal tool outcome even when a provider repeats terminal updates.
 15. Steering is persist-first and acknowledgement-based. A writable provider stdin is not capability proof; unacknowledged inputs must remain queued and restart-recoverable.
+16. Outbound MCP adapters must remain narrow daemon clients, never raw daemon proxies or alternate state/provider control planes. Mutations require a separately reviewed scope, confirmation, idempotency, cancellation, and audit design.
 
 ---
 

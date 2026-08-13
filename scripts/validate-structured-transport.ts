@@ -292,6 +292,35 @@ assert.match(
   /steered: focus on the transport boundary/,
 );
 
+async function runFreebuffIntegrityScenario(prompt: string): Promise<WorkbenchEvent[]> {
+  const events: WorkbenchEvent[] = [];
+  const terminal = waitForTerminal('freebuff');
+  await freebuff.startRun(
+    createContext(events, {
+      providerId: 'freebuff',
+      onEvent: terminal.observe,
+      prompt,
+    }),
+  );
+  await terminal.promise;
+  return events;
+}
+
+const missingHelloEvents = await runFreebuffIntegrityScenario('[missing-hello]');
+assert.equal(missingHelloEvents.at(-1)?.type, 'run.failed');
+assert.match(String(missingHelloEvents.at(-1)?.payload.message), /qualification failed/i);
+
+const missingResultEvents = await runFreebuffIntegrityScenario('[missing-result]');
+assert.equal(missingResultEvents.at(-1)?.type, 'run.failed');
+assert.match(String(missingResultEvents.at(-1)?.payload.message), /without an explicit terminal result/i);
+
+const resultOnlyEvents = await runFreebuffIntegrityScenario('[result-only]');
+assert.deepEqual(
+  resultOnlyEvents.map((event) => event.type),
+  ['message.created', 'run.completed'],
+);
+assert.match(String(resultOnlyEvents[0]?.payload.content), /result-only/);
+
 const geminiFixture = path.join(
   root,
   'scripts',

@@ -141,6 +141,7 @@ simple, composable, and built for experimentation.
 - **Provider catalogs** — adapters declare available tools (workspace-read, write, shell, network, MCP)
 - **Session registrations** — live tracking of tools observed and reported in active sessions
 - **MCP hub** — normalizes tool readiness from provider availability, registry config, and observed history
+- **Optional MCP observer** — a loopback-only stdio adapter exposes four bounded, redacted, read-only session/run tools without becoming a second control plane; see [the MCP observer guide](docs/mcp-observer.md)
 
 ### Shell
 - **Three-column layout** — left session rail, center thread/canvas, right inspector/utility panel with resizable columns
@@ -241,7 +242,7 @@ CODEWAVE_GEMINI_ENABLED=true
 CODEWAVE_GEMINI_COMMAND=/path/to/gemini
 ```
 
-Setting a provider command also enables that provider unless its `CODEWAVE_<PROVIDER>_ENABLED` override explicitly disables it. For Freebuff, `CODEWAVE_FREEBUFF_COMMAND` is treated as an automation bridge—not the raw interactive TUI—and receives `--cwd`, `--prompt`, `--output-format jsonl`, and optional `--resume` arguments. Each stdout line may be a JSON object with `type` set to `session`, `output`, `message`, `tool`, `checkpoint`, or `result`; CodeWave converts those records into shared events, session metadata, checkpoints, artifacts, and terminal state.
+Setting a provider command also enables that provider unless its `CODEWAVE_<PROVIDER>_ENABLED` override explicitly disables it. For Freebuff, `CODEWAVE_FREEBUFF_COMMAND` must identify a protocol-qualified automation bridge—not the raw interactive TUI. The bridge must answer `--codewave-bridge-info` with `{"name":"codewave-freebuff-bridge","protocolVersion":1}`, then begin every run with `{"type":"bridge.hello","protocolVersion":1}`. It receives `--cwd`, `--prompt`, `--output-format jsonl`, and optional `--resume` arguments. Each later stdout line may be a JSON object with `type` set to `session`, `output`, `message`, `tool`, `checkpoint`, or `result`; CodeWave converts those records into shared events, session metadata, checkpoints, artifacts, and terminal state. A run succeeds only after an explicit valid `result` record—clean process exit alone fails closed. See [the Freebuff bridge contract](docs/freebuff-bridge.md).
 
 A bridge can opt into live updates by first emitting `{"type":"capabilities","protocolVersion":1,"inFlightSteering":true}`. CodeWave then sends newline-delimited `steer` commands on stdin with `steeringId`, `prompt`, and `createdAt`. The bridge must answer with a matching `{"type":"steering","steeringId":"…","status":"accepted"}` before CodeWave marks the input applied to the active run. Rejection, timeout, process close, or missing negotiation leaves the already-persisted input queued for the next run.
 
