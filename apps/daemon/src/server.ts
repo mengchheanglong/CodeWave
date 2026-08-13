@@ -1,7 +1,16 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, readdir, rename as renamePath, rm, stat } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rename as renamePath,
+  rm,
+  stat,
+  unlink,
+} from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -240,8 +249,59 @@ function canonicalizeRequestBody(body: string): string {
   }
 }
 
+function canonicalizeMutationTarget(url: URL): string {
+  const entries = [...url.searchParams.entries()]
+    .filter(([key]) => key !== 'connectionId')
+    // Sorting by key makes independently ordered parameters canonical while
+    // retaining the original order of repeated values. URLSearchParams#get
+    // consumes the first repeated value, so sorting those values would make
+    // semantically different requests share an idempotency receipt.
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  if (entries.length === 0) return url.pathname;
+  return `${url.pathname}?${new URLSearchParams(entries).toString()}`;
+}
+
 function notFound(response: ServerResponse): void {
   sendJson(response, 404, { error: 'Not found' });
+}
+
+function authorizeLocalHost(
+  request: IncomingMessage,
+  response: ServerResponse,
+): boolean {
+  const rawHost = request.headers.host;
+  const host = Array.isArray(rawHost) ? rawHost[0] : rawHost;
+  if (!host) {
+    sendJson(response, 403, {
+      error: 'A local Host header is required for daemon access.',
+      code: 'local_host_required',
+    });
+    return false;
+  }
+
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${host}`).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    sendJson(response, 403, {
+      error: 'The daemon received an invalid Host header.',
+      code: 'invalid_host',
+    });
+    return false;
+  }
+  if (
+    hostname !== '127.0.0.1' &&
+    hostname !== 'localhost' &&
+    hostname !== '[::1]' &&
+    hostname !== '::1'
+  ) {
+    sendJson(response, 403, {
+      error: 'CodeWave daemon requests must use a local loopback Host.',
+      code: 'invalid_host',
+    });
+    return false;
+  }
+  return true;
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {
@@ -250,6 +310,18 @@ function isTerminalRunStatus(status: RunStatus): boolean {
 
 function isApprovalPolicy(value: string): value is ApprovalPolicy {
   return value === 'manual' || value === 'allow' || value === 'deny';
+}
+
+function isApprovalDecision(
+  value: unknown,
+): value is ResolveApprovalRequest['decision'] {
+  return value === 'approved' || value === 'denied';
+}
+
+function isSafeIntegerString(value: string, minimum: number): boolean {
+  if (!/^\d+$/.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= minimum;
 }
 
 function isFollowUpKind(
@@ -429,6 +501,15 @@ function isValidEntryName(value: string): boolean {
   }
 
   return true;
+}
+
+function pathEscapesRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  );
 }
 
 export class CodeWaveDaemon {
@@ -672,6 +753,7 @@ export class CodeWaveDaemon {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    if (!authorizeLocalHost(request, response)) return;
     const method = request.method?.toUpperCase() ?? 'GET';
     const url = new URL(request.url ?? '/', this.getBaseUrl());
     if (!this.authorizeClient(request, url, response)) return;
@@ -695,7 +777,7 @@ export class CodeWaveDaemon {
       return;
     }
 
-    const operation = `${method} ${url.pathname}`;
+    const operation = `${method} ${canonicalizeMutationTarget(url)}`;
     const body = await readRequestBody(request);
     const requestHash = createHash('sha256')
       .update(operation)
@@ -1023,13 +1105,13 @@ export class CodeWaveDaemon {
       }
       const rawBefore = url.searchParams.get('before');
       const rawLimit = url.searchParams.get('limit');
-      if (rawBefore !== null && !/^[1-9]\d*$/.test(rawBefore)) {
+      if (rawBefore !== null && !isSafeIntegerString(rawBefore, 1)) {
         sendJson(response, 400, {
           error: 'The transcript cursor must be a positive message sequence.',
         });
         return;
       }
-      if (rawLimit !== null && !/^[1-9]\d*$/.test(rawLimit)) {
+      if (rawLimit !== null && !isSafeIntegerString(rawLimit, 1)) {
         sendJson(response, 400, {
           error: 'The transcript limit must be a positive integer.',
         });
@@ -1081,7 +1163,29 @@ export class CodeWaveDaemon {
     }
 
     if (request.method === 'DELETE' && sessionMatch) {
-      const deleted = this.stateStore.deleteSession(sessionMatch[1]!);
+      const sessionId = sessionMatch[1]!;
+      const session = this.stateStore.getSession(sessionId);
+      if (!session) {
+        notFound(response);
+        return;
+      }
+      const activeRun = this.stateStore
+        .listRuns(sessionId)
+        .find(
+          (run) =>
+            !isTerminalRunStatus(run.status) || this.runHandles.has(run.id),
+        );
+      if (activeRun || this.sessionRunReservations.has(sessionId)) {
+        sendJson(response, 409, {
+          error: activeRun
+            ? `Run ${activeRun.id} is still active. Cancel or wait for it before deleting this session.`
+            : 'A run launch is still being prepared. Wait for it to settle before deleting this session.',
+          code: 'session_has_active_run',
+        });
+        return;
+      }
+
+      const deleted = this.stateStore.deleteSession(sessionId);
       if (!deleted) {
         notFound(response);
         return;
@@ -1090,7 +1194,7 @@ export class CodeWaveDaemon {
       sendJson(
         response,
         200,
-        { deletedSessionId: sessionMatch[1]! } satisfies DeleteSessionResponse,
+        { deletedSessionId: sessionId } satisfies DeleteSessionResponse,
       );
       return;
     }
@@ -1286,9 +1390,13 @@ export class CodeWaveDaemon {
 
       const headerCursor = request.headers['last-event-id'];
       const rawCursor =
-        url.searchParams.get('after') ??
-        (Array.isArray(headerCursor) ? headerCursor[0] : headerCursor);
-      if (rawCursor !== null && rawCursor !== undefined && !/^\d+$/.test(rawCursor)) {
+        (Array.isArray(headerCursor) ? headerCursor[0] : headerCursor) ??
+        url.searchParams.get('after');
+      if (
+        rawCursor !== null &&
+        rawCursor !== undefined &&
+        !isSafeIntegerString(rawCursor, 0)
+      ) {
         sendJson(response, 400, {
           error: 'The event replay cursor must be a non-negative integer.',
         });
@@ -1308,6 +1416,16 @@ export class CodeWaveDaemon {
     const approvalMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/resolve$/);
     if (request.method === 'POST' && approvalMatch) {
       const body = await readJsonBody<ResolveApprovalRequest>(request);
+      if (!body || !isApprovalDecision(body.decision)) {
+        sendJson(response, 400, {
+          error: 'Approval decision must be either approved or denied.',
+        });
+        return;
+      }
+      if (body.reason !== undefined && typeof body.reason !== 'string') {
+        sendJson(response, 400, { error: 'Approval reason must be text.' });
+        return;
+      }
       const approval = await this.resolveApproval(approvalMatch[1]!, body);
       if (!approval) {
         notFound(response);
@@ -1338,6 +1456,11 @@ export class CodeWaveDaemon {
       }
 
       sendJson(response, 201, { session: recovered } satisfies RecoverSessionResponse);
+      return;
+    }
+
+    if (pathname.startsWith('/api/')) {
+      notFound(response);
       return;
     }
 
@@ -1426,12 +1549,7 @@ export class CodeWaveDaemon {
       workspaceRoot,
       normalizedRelativePath || '.',
     );
-    const relativeFromRoot = path.relative(workspaceRoot, absolutePath);
-
-    if (
-      relativeFromRoot.startsWith('..') ||
-      path.isAbsolute(relativeFromRoot)
-    ) {
+    if (pathEscapesRoot(workspaceRoot, absolutePath)) {
       return new Error('Path escapes the selected workspace.');
     }
 
@@ -1439,6 +1557,27 @@ export class CodeWaveDaemon {
       workspaceRoot,
       absolutePath,
     };
+  }
+
+  private async validateRealWorkspaceContainment(
+    workspaceRoot: string,
+    absolutePath: string,
+  ): Promise<Error | null> {
+    try {
+      const [realWorkspaceRoot, realTargetPath] = await Promise.all([
+        realpath(workspaceRoot),
+        realpath(absolutePath),
+      ]);
+      if (pathEscapesRoot(realWorkspaceRoot, realTargetPath)) {
+        return new Error(
+          'Path resolves outside the selected workspace through a symbolic link or junction.',
+        );
+      }
+      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Error(`Unable to resolve workspace path safely: ${message}`);
+    }
   }
 
   private toWorkspaceRelativePath(workspaceRoot: string, absolutePath: string): string {
@@ -1461,6 +1600,11 @@ export class CodeWaveDaemon {
 
     const { workspaceRoot, absolutePath } = resolved;
     try {
+      const containmentError = await this.validateRealWorkspaceContainment(
+        workspaceRoot,
+        absolutePath,
+      );
+      if (containmentError) return containmentError;
       const targetStats = await stat(absolutePath);
       if (!targetStats.isDirectory()) {
         return new Error('The selected path is not a folder.');
@@ -1517,6 +1661,11 @@ export class CodeWaveDaemon {
     }
 
     try {
+      const containmentError = await this.validateRealWorkspaceContainment(
+        resolvedParent.workspaceRoot,
+        resolvedParent.absolutePath,
+      );
+      if (containmentError) return containmentError;
       const parentStats = await stat(resolvedParent.absolutePath);
       if (!parentStats.isDirectory()) {
         return new Error('The parent path is not a folder.');
@@ -1547,19 +1696,22 @@ export class CodeWaveDaemon {
     }
 
     try {
+      const targetContainmentError = await this.validateRealWorkspaceContainment(
+        resolvedTarget.workspaceRoot,
+        resolvedTarget.absolutePath,
+      );
+      if (targetContainmentError) return targetContainmentError;
       await stat(resolvedTarget.absolutePath);
       const parentPath = path.dirname(resolvedTarget.absolutePath);
       const nextAbsolutePath = path.resolve(parentPath, nextName);
-      const relativeFromRoot = path.relative(
-        resolvedTarget.workspaceRoot,
-        nextAbsolutePath,
-      );
-      if (
-        relativeFromRoot.startsWith('..') ||
-        path.isAbsolute(relativeFromRoot)
-      ) {
+      if (pathEscapesRoot(resolvedTarget.workspaceRoot, nextAbsolutePath)) {
         return new Error('Renamed path escapes the selected workspace.');
       }
+      const parentContainmentError = await this.validateRealWorkspaceContainment(
+        resolvedTarget.workspaceRoot,
+        parentPath,
+      );
+      if (parentContainmentError) return parentContainmentError;
 
       await renamePath(resolvedTarget.absolutePath, nextAbsolutePath);
       return true;
@@ -1587,6 +1739,18 @@ export class CodeWaveDaemon {
     }
 
     try {
+      const targetLinkStats = await lstat(resolvedTarget.absolutePath);
+      if (targetLinkStats.isSymbolicLink()) {
+        // Removing the link itself is safe and must not resolve or recurse into
+        // its target. Descendant operations remain protected by realpath.
+        await unlink(resolvedTarget.absolutePath);
+        return true;
+      }
+      const containmentError = await this.validateRealWorkspaceContainment(
+        resolvedTarget.workspaceRoot,
+        resolvedTarget.absolutePath,
+      );
+      if (containmentError) return containmentError;
       const targetStats = await stat(resolvedTarget.absolutePath);
       if (targetStats.isDirectory()) {
         await rm(resolvedTarget.absolutePath, { recursive: true, force: false });
@@ -1619,6 +1783,11 @@ export class CodeWaveDaemon {
     }
 
     try {
+      const containmentError = await this.validateRealWorkspaceContainment(
+        resolvedTarget.workspaceRoot,
+        resolvedTarget.absolutePath,
+      );
+      if (containmentError) return containmentError;
       const targetStats = await stat(resolvedTarget.absolutePath);
       if (!targetStats.isDirectory()) {
         return new Error('Only folders can be deleted from this action.');
@@ -2290,6 +2459,21 @@ export class CodeWaveDaemon {
   ): Promise<WorkbenchSession | Error> {
     const registry = this.requireProviderRevision(input.expectedProviderRevision);
     if (registry instanceof Error) return registry;
+    const workspacePath =
+      typeof input.workspacePath === 'string' ? input.workspacePath.trim() : '';
+    if (!workspacePath) {
+      return new Error('A non-empty workspace path is required.');
+    }
+    const resolvedWorkspacePath = path.resolve(workspacePath);
+    let workspaceStats;
+    try {
+      workspaceStats = await stat(resolvedWorkspacePath);
+    } catch {
+      return new Error('The selected workspace path does not exist or cannot be accessed.');
+    }
+    if (!workspaceStats.isDirectory()) {
+      return new Error('The selected workspace path is not a directory.');
+    }
     const configuration = registry.providers.find(
       (provider) => provider.providerId === input.providerId,
     );
@@ -2315,7 +2499,7 @@ export class CodeWaveDaemon {
 
     const session: WorkbenchSession = {
       id: randomUUID(),
-      workspacePath: path.resolve(input.workspacePath),
+      workspacePath: resolvedWorkspacePath,
       providerId: input.providerId,
       providerConfigurationRevision: confirmedRegistry.revision,
       createdAt: new Date().toISOString(),
@@ -2343,6 +2527,33 @@ export class CodeWaveDaemon {
 
     const approvalPolicy = input.approvalPolicy ?? this.getDefaultApprovalPolicy();
     const lanes: CompareRunLane[] = [];
+
+    // Validate every lane before persisting the first one. This prevents a
+    // disabled or incompatible later provider from leaking a partial compare.
+    for (const providerId of providers) {
+      const configuration = this.requireProviderRevision(
+        input.expectedProviderRevision,
+      );
+      if (configuration instanceof Error) return configuration;
+      if (
+        !configuration.providers.some(
+          (provider) => provider.providerId === providerId && provider.enabled,
+        )
+      ) {
+        return new Error(`Provider ${providerId} is disabled by provider policy.`);
+      }
+      const validationError = await this.validateApprovalPolicyForProvider(
+        providerId,
+        approvalPolicy,
+      );
+      if (validationError) return validationError;
+      const health = await this.getProviderHealth(providerId);
+      if (!health?.available) {
+        return new Error(
+          `${providerId} is not ready for comparison: ${health?.detail ?? 'provider health is unavailable'}`,
+        );
+      }
+    }
 
     for (const providerId of providers) {
       const session = await this.createSession({
@@ -2386,6 +2597,17 @@ export class CodeWaveDaemon {
     const session = this.stateStore.getSession(sessionId);
     if (!session) {
       return null;
+    }
+
+    if (
+      body.providerId !== undefined &&
+      body.providerId !== session.providerId &&
+      (this.sessionRunReservations.has(sessionId) ||
+        this.stateStore.listNonTerminalRuns(sessionId).length > 0)
+    ) {
+      return new Error(
+        'The session provider cannot be changed while a run is active or launching.',
+      );
     }
 
     let nextApprovalPolicy = body.approvalPolicy ?? session.approvalPolicy;
@@ -2710,10 +2932,12 @@ export class CodeWaveDaemon {
     response: ServerResponse,
     afterSequence?: number,
   ): void {
-    const history = this.stateStore.listEvents(runId, {
+    const replayWindow = this.stateStore.listEvents(runId, {
       afterSequence,
-      limit: CODEWAVE_MAX_SSE_REPLAY_EVENTS,
+      limit: CODEWAVE_MAX_SSE_REPLAY_EVENTS + 1,
     });
+    const hasMoreReplay = replayWindow.length > CODEWAVE_MAX_SSE_REPLAY_EVENTS;
+    const history = replayWindow.slice(0, CODEWAVE_MAX_SSE_REPLAY_EVENTS);
 
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -2721,6 +2945,7 @@ export class CodeWaveDaemon {
       Connection: 'keep-alive',
       'X-CodeWave-Protocol-Version': String(CODEWAVE_PROTOCOL_VERSION),
       'X-CodeWave-Replay-Limit': String(CODEWAVE_MAX_SSE_REPLAY_EVENTS),
+      'X-CodeWave-Replay-Has-More': String(hasMoreReplay),
     });
 
     response.write(': connected\n\n');
@@ -2728,6 +2953,11 @@ export class CodeWaveDaemon {
       response.write(
         `id: ${event.sequence ?? event.id}\ndata: ${JSON.stringify(event)}\n\n`,
       );
+    }
+
+    if (hasMoreReplay) {
+      response.end();
+      return;
     }
 
     this.eventBroker.subscribe(runId, response);
@@ -3107,6 +3337,9 @@ export class CodeWaveDaemon {
     if (!session) {
       return null;
     }
+    if (typeof body.prompt !== 'string' || !body.prompt.trim()) {
+      return new Error('A non-empty run prompt is required.');
+    }
 
     const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
     if (activeRun) {
@@ -3209,7 +3442,8 @@ export class CodeWaveDaemon {
         emitEvent: async (event) => {
           await this.acceptEvent(event);
         },
-        updateSession: async (updates) => this.updateSession(session.id, updates),
+        updateSession: async (updates) =>
+          this.updateSession(session.id, run.id, updates),
         requestApproval: async (approval) => this.requestApproval(run, approval),
       });
     } catch (launchError) {
@@ -3395,8 +3629,13 @@ export class CodeWaveDaemon {
 
   private async updateSession(
     sessionId: string,
+    runId: string,
     updates: ProviderSessionUpdate,
   ): Promise<void> {
+    const run = this.stateStore.getRun(runId);
+    if (!run || run.sessionId !== sessionId || isTerminalRunStatus(run.status)) {
+      return;
+    }
     this.stateStore.updateSession(sessionId, {
       providerSessionId: updates.providerSessionId,
     });

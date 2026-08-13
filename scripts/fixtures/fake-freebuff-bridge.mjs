@@ -68,6 +68,12 @@ const timer = setTimeout(() => {
   const completedText = acceptedSteering.length
     ? `completed: ${prompt} | steered: ${acceptedSteering.join(' | ')}`
     : `completed: ${prompt}`;
+  if (prompt.includes('[invalid-records]')) {
+    process.stdout.write('not-json-at-all\n');
+    process.stdout.write('["arrays-are-not-bridge-records"]\n');
+    process.stdout.write(`${JSON.stringify({ type: 'unknown-record', nested: { safe: true } })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'message', role: 42, content: 17 })}\n`);
+  }
   process.stdout.write(
     `${JSON.stringify({ type: 'session', sessionId: 'fake-freebuff-session' })}\n`,
   );
@@ -86,6 +92,11 @@ const timer = setTimeout(() => {
   process.stdout.write(
     `${JSON.stringify({ type: 'result', status: 'completed', result: completedText, usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
   );
+  if (prompt.includes('[late-session]')) {
+    process.stdout.write(
+      `${JSON.stringify({ type: 'session', sessionId: 'late-session-overwrite' })}\n`,
+    );
+  }
   process.exit(0);
 }, delayMs);
 
