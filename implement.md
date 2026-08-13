@@ -1903,3 +1903,10 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Added a 5-second bounded initialize path, a 1 MiB stdout-record fence, absolute existing-workspace validation, bounded provider session IDs, message-ID-aware assembly, wrong-session rejection, and deterministic child/stream cleanup.
 - Corrected permission semantics: one-time allow/reject choices win over persistent choices, a missing semantically matching option returns ACP cancellation, and run cancellation resolves pending provider permissions before sending `session/cancel`.
 - Added `npm run check:acp` with an SDK-app fixture covering exact dependency integrity, initialize metadata, new/resume/load/no-continuity paths, replay suppression, interleaved messages, mismatch/timeout/malformed/oversized/EOF failures, stop reasons, permissions, cancellation races, daemon approval ordering, terminal uniqueness, and child cleanup.
+
+## Generic ACP provider adapter — 2026-08-13
+
+- Added `@codewave/provider-acp`, driven only by a validated launch/profile descriptor. It performs a real ACP initialize probe, coalesces concurrent health/capability checks, derives resumability from negotiated capabilities, labels credential state as unverified, and never runs provider-specific discovery commands.
+- Moved OpenCode ACP launch, stderr handling, cancellation, and terminal ownership into the generic adapter while retaining OpenCode's built-in command resolution, tool hints, and optional legacy JSON-run mode.
+- Bounded stderr lines to 64 KiB and aggregate emitted stderr to 256 KiB, escalated ACP cleanup after a graceful close window, and retained the 1 MiB strict stdout JSON record fence.
+- Added a second, hand-written ACP fixture plus `npm run check:acp-provider` to prove coalesced probing, negotiated capabilities, normalized completion/cancellation, terminal uniqueness, child cleanup, mismatch rejection, and missing-executable diagnostics independently of the SDK fixture.

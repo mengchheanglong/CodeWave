@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -80,9 +80,48 @@ export type AcpRunHandle = {
   settled: Promise<void>;
 };
 
+export type AcpProbeResult = {
+  protocolVersion: 1;
+  agentName: string | null;
+  agentVersion: string | null;
+  authenticationMethodCount: number;
+  continuity: 'resume' | 'load' | 'none';
+  closeSession: boolean;
+};
+
 const CODEWAVE_ACP_CLIENT_VERSION = '0.1.0-dev';
 const ACP_STDOUT_LINE_LIMIT = 1024 * 1024;
 const ACP_SESSION_ID_LIMIT = 1024;
+
+function waitForProcessClose(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return Promise.race([
+    new Promise<void>((resolve) => child.once('close', () => resolve())),
+    new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, timeoutMs);
+      timeout.unref?.();
+    }),
+  ]);
+}
+
+async function terminateAcpProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
+  await waitForProcessClose(child, 250);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
+  if (process.platform === 'win32' && child.pid) {
+    const killer = spawn(
+      'taskkill.exe',
+      ['/pid', String(child.pid), '/t', '/f'],
+      { stdio: 'ignore', windowsHide: true, shell: false },
+    );
+    await waitForProcessClose(killer, 1_000);
+  } else {
+    child.kill('SIGKILL');
+  }
+  await waitForProcessClose(child, 1_000);
+}
 
 type ToolTerminalState = 'completed' | 'failed' | 'denied';
 
@@ -601,6 +640,96 @@ async function withTimeout<T>(
   }
 }
 
+export async function probeAcpV1Process(options: {
+  child: ChildProcess;
+  displayName: string;
+  timeoutMs?: number;
+}): Promise<AcpProbeResult> {
+  const { child, displayName } = options;
+  if (!child.stdin || !child.stdout) {
+    throw new Error(`${displayName} ACP process does not expose stdio.`);
+  }
+
+  const input = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
+  const output = boundNdJsonInput(
+    Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+  );
+  const connection = createAcpClient({ name: 'codewave-health-probe' }).connect(
+    ndJsonStream(input, output),
+  );
+  const timeoutMs = Math.min(30_000, Math.max(100, options.timeoutMs ?? 5_000));
+  let probeFinished = false;
+  const processFailure = new Promise<never>((_, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (!probeFinished) {
+        reject(
+          new Error(
+            `${displayName} ACP process exited before initialize completed (code=${code ?? 'null'}, signal=${signal ?? 'none'}).`,
+          ),
+        );
+      }
+    });
+  });
+  try {
+    const initialized = await withTimeout(
+      Promise.race([
+        connection.agent.request(methods.agent.initialize, {
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: {},
+          clientInfo: {
+            name: 'codewave',
+            title: 'CodeWave',
+            version: CODEWAVE_ACP_CLIENT_VERSION,
+          },
+        }),
+        processFailure,
+      ]),
+      timeoutMs,
+      `${displayName} ACP initialize timed out.`,
+      () => connection.close(new Error('ACP health probe timed out')),
+    );
+    if (initialized.protocolVersion !== PROTOCOL_VERSION) {
+      throw new Error(
+        `${displayName} ACP selected incompatible protocol v${initialized.protocolVersion}; CodeWave requires v${PROTOCOL_VERSION}.`,
+      );
+    }
+    probeFinished = true;
+    const capabilities = initialized.agentCapabilities;
+    return {
+      protocolVersion: PROTOCOL_VERSION,
+      agentName:
+        typeof initialized.agentInfo?.name === 'string'
+          ? initialized.agentInfo.name.slice(0, 128)
+          : null,
+      agentVersion:
+        typeof initialized.agentInfo?.version === 'string'
+          ? initialized.agentInfo.version.slice(0, 64)
+          : null,
+      authenticationMethodCount: Array.isArray(initialized.authMethods)
+        ? Math.min(initialized.authMethods.length, 32)
+        : 0,
+      continuity: capabilities?.sessionCapabilities?.resume
+        ? 'resume'
+        : capabilities?.loadSession === true
+          ? 'load'
+          : 'none',
+      closeSession: Boolean(capabilities?.sessionCapabilities?.close),
+    };
+  } finally {
+    probeFinished = true;
+    connection.close();
+    await terminateAcpProcess(child);
+    await Promise.race([
+      connection.closed.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, 250);
+        timeout.unref?.();
+      }),
+    ]);
+  }
+}
+
 export async function startAcpRun({
   child,
   context,
@@ -658,7 +787,7 @@ export async function startAcpRun({
     if (cleanedUp) return;
     cleanedUp = true;
     connection.close(error);
-    if (child.exitCode === null && !child.killed) child.kill();
+    await terminateAcpProcess(child);
     await Promise.race([
       connection.closed.catch(() => undefined),
       new Promise<void>((resolve) => {

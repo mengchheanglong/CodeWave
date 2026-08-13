@@ -17,12 +17,11 @@ import type {
   WorkbenchEvent,
 } from '@codewave/protocol';
 import { inferRoutingToolRequirement } from '@codewave/protocol';
+import { AcpV1ProviderAdapter } from '@codewave/provider-acp';
 import {
   parseProviderCommand,
   spawnProviderCommand,
 } from '@codewave/provider-runtime';
-import { createRunEventPublisher } from '@codewave/provider-transport';
-import { startOpenCodeAcpRun, type OpenCodeAcpRunHandle } from './acp.js';
 
 type CommandResult = {
   code: number | null;
@@ -45,13 +44,6 @@ type OpenCodeCliProviderOptions = {
 };
 
 const DEFAULT_CONNECTED_TOOL_PROBE_TIMEOUT_MS = 2500;
-
-const OPENCODE_ACP_CAPABILITIES: ProviderCapabilities = {
-  daemonApprovalMediation: true,
-  resumableSessions: true,
-  checkpointEvents: false,
-  inFlightSteering: 'unsupported',
-};
 
 const OPENCODE_RUN_CAPABILITIES: ProviderCapabilities = {
   daemonApprovalMediation: false,
@@ -464,12 +456,10 @@ function describeRuntime(spec: OpenCodeLaunchSpec, versionLabel: string): string
   return `OpenCode CLI ${versionLabel} ready (${spec.description}).`;
 }
 
-async function probeCommandForMode(
+async function probeRunModeCommand(
   spec: OpenCodeLaunchSpec,
-  mode: OpenCodeMode,
 ): Promise<ProviderHealth> {
-  const capabilities =
-    mode === 'acp' ? OPENCODE_ACP_CAPABILITIES : OPENCODE_RUN_CAPABILITIES;
+  const capabilities = OPENCODE_RUN_CAPABILITIES;
   const version = await runCommand(spec, ['--version']);
   if (version.code !== 0) {
     return {
@@ -484,12 +474,10 @@ async function probeCommandForMode(
   }
 
   const versionLabel = version.output.split(/\r?\n/, 1)[0]?.trim() || 'unknown';
-  const modeLabel = mode === 'acp' ? 'ACP mode' : 'run JSON mode';
-
   return {
     providerId: 'opencode',
     available: true,
-    detail: `${describeRuntime(spec, versionLabel)} (${modeLabel}). Model providers must be configured through 'opencode auth login' or provider API keys.`,
+    detail: `${describeRuntime(spec, versionLabel)} (run JSON mode). Model providers must be configured through 'opencode auth login' or provider API keys.`,
     capabilities,
   };
 }
@@ -500,21 +488,27 @@ export class OpenCodeCliProvider implements ProviderAdapter {
 
   private readonly commandOverride: string | null;
   private readonly mode: OpenCodeMode;
+  private readonly rootPath: string;
+  private readonly acpAdapter: AcpV1ProviderAdapter;
 
   constructor(options: OpenCodeCliProviderOptions = {}) {
     const commandOverride = options.command ?? process.env.CODEWAVE_OPENCODE_COMMAND;
     this.commandOverride = commandOverride?.trim() || null;
     this.mode = resolveMode();
+    this.rootPath = path.resolve(options.rootPath ?? process.cwd());
+    this.acpAdapter = this.createAcpAdapter();
   }
 
   async capabilities(): Promise<ProviderCapabilities> {
     return this.mode === 'acp'
-      ? OPENCODE_ACP_CAPABILITIES
+      ? this.acpAdapter.capabilities()
       : OPENCODE_RUN_CAPABILITIES;
   }
 
   async healthCheck(): Promise<ProviderHealth> {
-    return probeCommandForMode(this.resolveLaunchSpec(), this.mode);
+    return this.mode === 'acp'
+      ? this.acpAdapter.healthCheck()
+      : probeRunModeCommand(this.resolveLaunchSpec());
   }
 
   async toolCatalog(): Promise<ProviderToolCapability[]> {
@@ -599,106 +593,25 @@ export class OpenCodeCliProvider implements ProviderAdapter {
   private async startAcpRun(
     context: ProviderRunContext,
   ): Promise<ProviderRunHandle> {
-    const launchSpec = this.resolveLaunchSpec();
-    const spawnSpec = buildSpawnSpec(launchSpec);
+    return this.acpAdapter.startRun(context);
+  }
 
-    const publisher = createRunEventPublisher(context, 'opencode');
-
-    const workspacePath = context.session.workspacePath.trim();
-    if (!workspacePath || !existsSync(workspacePath)) {
-      await publisher.publish('run.failed', {
-        message: 'Workspace path does not exist',
-        detail:
-          workspacePath || 'The session workspace path is empty, so OpenCode cannot start.',
-      });
-      return { cancel: async () => {} };
-    }
-
-    const child = spawnProviderCommand(
-      { command: spawnSpec.command, baseArgs: spawnSpec.argsPrefix },
-      ['acp'],
-      {
-        cwd: workspacePath,
-        env: process.env,
+  private createAcpAdapter(): AcpV1ProviderAdapter {
+    const spawnSpec = buildSpawnSpec(this.resolveLaunchSpec());
+    return new AcpV1ProviderAdapter({
+      profile: {
+        providerId: 'opencode',
+        displayName: this.displayName,
+        command: spawnSpec.command,
+        args: [...spawnSpec.argsPrefix, 'acp'],
+        probeCwd: this.rootPath,
+        surface: 'opencode.acp',
+        toolCatalog: OPENCODE_TOOL_CATALOG,
+        inferToolRequirement: (toolName, input) =>
+          TOOL_REQUIREMENT_MAP[toolName.trim().toLowerCase()] ??
+          inferRoutingToolRequirement({ toolName, input }),
       },
-    );
-    const publish = async (
-      type: WorkbenchEvent['type'],
-      payload: Record<string, unknown>,
-    ): Promise<void> => {
-      const published = await publisher.publish(type, payload);
-      if (
-        published &&
-        (type === 'run.completed' ||
-          type === 'run.failed' ||
-          type === 'run.cancelled') &&
-        child.exitCode === null &&
-        !child.killed
-      ) {
-        child.kill();
-      }
-    };
-
-    child.on('error', async (error) => {
-      if (publisher.terminalEventType || publisher.cancellationRequested) {
-        return;
-      }
-
-      await publish('run.failed', {
-        message: 'Failed to launch OpenCode ACP runtime',
-        detail: `${spawnSpec.description}: ${error.message}`,
-      });
     });
-
-    child.on('close', async (code) => {
-      if (publisher.terminalEventType || publisher.cancellationRequested) {
-        return;
-      }
-
-      await publish('run.failed', {
-        message: 'OpenCode ACP runtime exited unexpectedly',
-        detail: spawnSpec.description,
-        exitCode: code,
-      });
-    });
-
-    if (child.stderr) {
-      readline
-        .createInterface({ input: child.stderr })
-        .on('line', (line) => {
-          void publish('run.output.delta', {
-            stream: 'stderr',
-            text: line,
-          });
-        });
-    }
-
-    let acpHandle: OpenCodeAcpRunHandle | null = null;
-    try {
-      acpHandle = await startOpenCodeAcpRun({ child, context, publish });
-    } catch (error) {
-      if (publisher.terminalEventType) {
-        return { cancel: async () => {} };
-      }
-
-      child.kill();
-      await publish('run.failed', {
-        message: 'Failed to bootstrap OpenCode ACP session',
-        detail: error instanceof Error ? error.message : String(error),
-      });
-      return { cancel: async () => {} };
-    }
-
-    return {
-      cancel: async () => {
-        publisher.requestCancellation();
-        if (acpHandle) {
-          await acpHandle.cancel();
-        } else if (child.exitCode === null && !child.killed) {
-          child.kill();
-        }
-      },
-    };
   }
 
   private async startRunModeRun(

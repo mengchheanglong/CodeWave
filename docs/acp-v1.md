@@ -44,8 +44,8 @@ Run cancellation fences new approvals, resolves pending provider permission prom
 - prompt success, cancellation, connection failure, and process close race through one terminal publisher;
 - success, failure, setup rejection, timeout, and cancellation all close the ACP connection and terminate the child.
 
-The built-in OpenCode and Gemini ACP paths use this runtime today. A profile-driven generic adapter and dynamic `acp.*` registry are a subsequent layer; this document does not claim that arbitrary ACP profiles are configurable yet.
+The built-in OpenCode ACP path now uses `@codewave/provider-acp`, a profile-driven adapter that owns compatibility probing, launch, stderr bounds, and process cleanup while delegating wire semantics to this runtime. Gemini retains its thin built-in wrapper for parity. Dynamic `acp.*` policy records are a subsequent layer; this document does not claim that arbitrary profiles are configurable in settings yet.
 
 ## Executable evidence
 
-`npm run check:acp` exercises the stable runtime with a deterministic app-style ACP fixture and a real daemon cancellation path. `npm run check:transport` retains Gemini/OpenCode normalization parity. Both must pass before changing ACP lifecycle behavior.
+`npm run check:acp` exercises the stable runtime with a deterministic app-style ACP fixture and a real daemon cancellation path. `npm run check:acp-provider` uses a second, hand-written agent to prove profile-only launch, probe coalescing, capability mapping, run/cancel behavior, stderr ceilings, and child cleanup. `npm run check:transport` retains Gemini/OpenCode normalization parity. All three must pass before changing ACP lifecycle behavior.
