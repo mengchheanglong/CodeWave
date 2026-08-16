@@ -1,0 +1,13 @@
+{
+  "name": "@codewave/provider-acp",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@codewave/protocol": "file:../../protocol",
+    "@codewave/provider-runtime": "file:../runtime",
+    "@codewave/provider-transport": "file:../transport"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

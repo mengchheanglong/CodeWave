@@ -4,7 +4,7 @@ import type { ProviderHealth, ProviderRegistrySnapshot } from '@codewave/protoco
 import { ProviderSettings } from './ProviderSettings';
 
 const registry: ProviderRegistrySnapshot = {
-  version: 1,
+  version: 2,
   revision: 'sha256:test-policy',
   defaultProviderId: 'freebuff',
   configPath: 'C:\\workspace\\.codewave\\providers.json',
@@ -12,12 +12,15 @@ const registry: ProviderRegistrySnapshot = {
     {
       providerId: 'freebuff',
       displayName: 'Freebuff',
+      profileKind: 'builtin',
+      adapterKind: 'native',
       enabled: true,
       priority: 10,
       accessMode: 'free-cloud',
       dataBoundary: 'cloud-ad-supported',
       requiresExplicitEnable: false,
       command: null,
+      args: [],
       setupHint: 'Configure Freebuff.',
       documentationUrl: 'https://example.com/freebuff',
       configurationSource: 'file',
@@ -58,5 +61,21 @@ describe('ProviderSettings modal lifecycle', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(firstClose).not.toHaveBeenCalled();
     expect(latestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a registry-driven custom ACP form with explicit local-code consent', () => {
+    render(
+      <ProviderSettings open registry={registry} health={health} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add agent' }));
+    expect(screen.getByRole('textbox', { name: 'Profile ID' })).toHaveValue('acp.');
+    expect(
+      screen.getByRole('checkbox', {
+        name: /trust this command to run locally/i,
+      }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole('button', { name: 'Add disabled profile' }),
+    ).toBeDisabled();
   });
 });

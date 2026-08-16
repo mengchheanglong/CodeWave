@@ -53,6 +53,7 @@ export {
   requestSessionDraftChange,
   requestSessionSelection,
   requestStartRun,
+  requestTranscriptCompaction,
   requestUndoRun,
   requestWorkspaceDraftCommit,
   subscribeRunViewState,
@@ -308,6 +309,7 @@ refreshRuntimeAfterProviderConflict = loadRuntime;
 
 const {
   cancelSelectedRun,
+  compactTranscript,
   createFollowUpRun,
   createSession,
   delegatePrompt,
@@ -369,6 +371,7 @@ setControllerRequesters(createControllerRequesters({
   createFollowUpRun,
   executePlanRun,
   undoSelectedRun,
+  compactTranscript,
   updateRunMode,
   refreshRuntime: loadRuntime,
 }));

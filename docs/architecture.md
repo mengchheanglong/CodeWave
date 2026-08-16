@@ -307,6 +307,9 @@ Bridge protocol v1 can prove in-flight steering at runtime. The bridge announces
 #### OpenCode adapter
 OpenCode is enabled by default as the automation-ready fallback. ACP is preferred; its local Ollama and custom OpenAI-compatible provider support make it the best current no-subscription path.
 
+#### Custom ACP profiles
+Provider policy v2 admits runtime-validated lowercase `acp.*` IDs without widening built-in-provider assumptions inside adapters. Each profile is a product-owned display/access descriptor plus an exact executable and argument array for the shared ACP v1 adapter. Creation requires explicit local-command trust and always starts disabled; disabled profiles must never be probed or spawned. Enablement, launch changes, defaults, and run lineage remain protected by the same content-addressed provider revision as built-ins. Credentials are never stored in the policy file.
+
 #### Qwen adapter
 Keep the mature stream-JSON/control adapter, approval mediation, resumability, and checkpoints. Qwen OAuth's free tier has ended, so the registry disables Qwen by default. Users may enable it after configuring a Coding Plan, API key, third-party provider, or compatible local/custom endpoint.
 
@@ -390,13 +393,27 @@ Core entities:
 - artifacts
 - checkpoints
 - providers
+- projects
+- worktree_tasks
 - plugins
 - routes
 - archived_runs
 
 Provider credentials are intentionally not stored in the CodeWave database or `.codewave/providers.json`. The registry stores only enablement, priority, and command overrides; provider CLIs and environment variables own secrets.
 
-### 8.3 Checkpoints
+### 8.3 Projects and isolated task worktrees
+
+Projects are exact, canonical Git repository roots registered with the daemon. A task begins only from a clean source worktree and receives a readable `codewave/task-*` branch plus a dedicated worktree below the daemon-owned `.codewave/worktrees/` root. The source checkout is never repurposed as an agent sandbox, and CodeWave does not merge the task branch into the project's default branch.
+
+The daemon is the only authority for project/task registration, change snapshots, acceptance, and revert. Change snapshots combine Git porcelain state with a bounded patch and a version derived from the current `HEAD` plus the complete changed-file bytes. Acceptance requires the exact reviewed version, refuses a clean, binary, unexpanded, or truncated review, stages and commits only inside the task worktree, and suppresses repository Git hooks. Revert requires the same freshness check and removes tracked plus non-ignored untracked task changes. A shared task-worktree reservation prevents provider launch and accept/revert preparation from crossing; only one provider run may prepare against a task workspace at a time. Accepted and reverted task workspaces are inspectable but closed to later provider runs, so a completed review cannot silently acquire new agent edits.
+
+Filesystem APIs hide and reject Git control paths and daemon metadata paths rather than relying on the UI to avoid them. Task paths are canonicalized below the managed root and rebound on every review to the persisted branch, top level, and registered repository common-Git directory. Junction/symlink replacement and identity swaps fail closed, Git subprocesses have bounded output and disabled prompting/signing/hooks, and failed task creation removes only the exact managed worktree/branch it attempted to create.
+
+This baseline intentionally excludes automatic merge/rebase, remote push, pull-request creation, conflict resolution, worktree garbage collection policy, and multi-user authorization. Those are later workflow layers, not implicit side effects of **Accept changes**.
+
+Git remains an external effect outside SQLite's transaction. Durable idempotency prevents an interrupted request from blindly repeating a worktree or commit operation, but this baseline does not claim exactly-once Git effects across an operating-system process kill. An outcome-unknown response requires inspection of the named task branch/worktree before further mutation; durable Git-intent reconciliation is a desktop-alpha hardening item.
+
+### 8.4 Checkpoints
 
 A checkpoint should capture:
 
@@ -409,7 +426,7 @@ A checkpoint should capture:
 - tool execution state
 - orchestration context
 
-### 8.4 Why separate archive storage later
+### 8.5 Why separate archive storage later
 
 As runs grow, analytics and exploration become different workloads from operational storage.  
 That is where DuckDB becomes useful.
@@ -531,6 +548,7 @@ The shell should make the product feel like an environment, not a transcript win
 - tool activity pane
 - orchestration board
 - provider inspector
+- project/task registry and bounded Changes review
 
 ### 11.2 Essential views for v1
 
@@ -736,30 +754,28 @@ See [the 2026 harness research note](harness-research-2026.md) for primary sourc
 
 ### Slice goal
 
-Keep the single-machine workspace usable after the free-tier changes while strengthening the daemon/provider boundary.
+Package the validated local workspace as a secure desktop alpha without creating a second source of runtime truth or exposing the private daemon address and bootstrap secret to renderer code.
 
 ### Slice contents
 
-1. persist provider enablement, priority, and command configuration
-2. default product policy to Freebuff and keep OpenCode/local ready as fallback
-3. require explicit configuration for Qwen and Gemini
-4. expose access/data boundaries and setup state to the shell
-5. cache capability-aware health probes
-6. route from live tool evidence plus explicit provider priority
-7. validate policy persistence, environment precedence, and routing deterministically
+1. supervise the daemon in an Electron utility process on an ephemeral IPv4 loopback port
+2. serve the web shell and proxy its relative daemon API through a privileged `codewave://app/` origin
+3. keep a per-launch bootstrap secret, daemon address, filesystem, and process control in the main process
+4. expose only typed daemon status and native workspace selection through the sandboxed preload
+5. separate selected workspace data from the Electron-owned SQLite/log directory
+6. bound graceful shutdown, SSE/socket closure, provider cancellation, WAL checkpointing, log rotation, and crash recovery
+7. package hardened Electron fuses and validate permissions, CSP, origin/path containment, body/header ceilings, deterministic demo setup, and real packaged behavior
 
 ### Slice success criteria
 
-- user can open a workspace
-- user can see, enable, disable, prioritize, and configure provider commands
-- paid providers cannot be selected until explicitly enabled
-- a missing or interactive-only Freebuff runtime falls back to an enabled automation-ready provider before session creation
-- prompt launches a run
-- output streams live
-- tool activity is visible
-- approval requests are actionable
-- run can be resumed after restart
-- artifacts are stored and inspectable
+- the packaged renderer can use every daemon flow without learning the random port or bootstrap secret
+- direct daemon requests missing the exact main-owned secret fail closed, including health and handshake
+- closing the last window drains the daemon and SQLite within a bounded lifecycle
+- unexpected daemon exit recovers within a rolling three-restart budget, then fails visibly
+- first launch creates an isolated, clean, non-destructive demo repository
+- native folder selection uses canonical directories while browser development retains the product-owned path dialog
+- packaged desktop, 390px compact, and 320px stress layouts remain usable without horizontal page overflow
+- restart preserves sessions, projects, tasks, and accepted task-branch commits
 
 ---
 
@@ -795,15 +811,42 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 - queued steering with expected-run fencing plus runtime-negotiated Freebuff bridge steering and safe rejection/timeout/terminal/restart fallback (implemented)
 - mandatory durable idempotency keys, strict canonical mutation schemas, and configuration revision hashes (implemented)
 - monotonic event sequences and cursor-bounded SSE replay (implemented)
-- append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
+- append-only parent-linked transcripts and bounded hydration (implemented); explicit derived compaction checkpoints with pre-compaction memory hooks are covered by the Phase 6b contract below
+- exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in and custom ACP paths)
+- profile-driven ACP v1 adapter with coalesced initialize probes, capability-derived resumability, bounded diagnostics/process cleanup, OpenCode as the reference descriptor, and durable provider-policy-v2 `acp.*` profiles (implemented)
 
-### Phase 5 — Research plugins
+### Phase 5 — Isolated project tasks (implemented baseline)
+
+- daemon-owned project and task registry
+- clean-base, managed Git worktrees and readable task branches
+- bounded, versioned Changes review with stale-review fencing
+- explicit task-branch commit or destructive revert; no implicit merge
+- protected Git/daemon control paths, disabled hooks, active-run fences, and junction containment
+
+### Phase 6 — Desktop alpha (implemented baseline)
+
+- signed Electron shell supervising the local daemon on an ephemeral loopback port
+- secure product protocol, minimal typed IPC, lifecycle recovery, crash diagnostics, and native workspace selection
+- offline/install/upgrade/provider-PATH acceptance matrix before public binaries
+
+The local package/lifecycle/security baseline is implemented. Signed/notarized CI artifacts, installer upgrade/downgrade evidence, and an authenticated update channel remain release gates; see [the desktop alpha contract](desktop-alpha.md).
+
+### Phase 6b — Long-run harness controls (implemented baseline)
+
+- per-run execution budgets with honest enforcement levels: wall time is hard-cancel, tool invocations are observed-cancel after the daemon observes a started tool, and provider-reported tokens are terminal-observed only; every limit is persisted with the run and surfaced on snapshots
+- `run.budget.exceeded` is a normalized, monotonic event recorded exactly once per run before cancellation is requested
+- transcript compaction creates immutable, derived-non-authoritative checkpoints chained by coverage digests; the append-only transcript is never rewritten or deleted, and provider-native session context is explicitly unchanged
+- pre-compaction memory hooks are local-deterministic, timeout-bounded, citation-checked, and all-or-nothing; derived memories are labeled non-authoritative evidence, not truth
+- compaction requests are fenced by expected transcript head, expected previous checkpoint, and an exact policy revision; the daemon refuses them at non-terminal run boundaries
+- task-level trace evaluation projects persisted metadata only (sessions, runs, events, routing, approvals, tools, usage, outcome) into a deterministic, digest-addressed report with pass/fail/unknown assertions for integrity, completeness, and keep/discard outcome; it never re-reads prompt or tool content
+
+### Phase 7 — Research plugins
 
 - NotebookLM plugin
 - source bundles
 - briefing artifacts
 
-### Phase 6 — Advanced routing and evals
+### Phase 8 — Advanced routing and evals
 
 - dynamic engine selection
 - cost/speed preference routing
@@ -830,6 +873,9 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 14. ACP notifications must be serialized before normalization, and each tool invocation may emit at most one terminal tool outcome even when a provider repeats terminal updates.
 15. Steering is persist-first and acknowledgement-based. A writable provider stdin is not capability proof; unacknowledged inputs must remain queued and restart-recoverable.
 16. Outbound MCP adapters must remain narrow daemon clients, never raw daemon proxies or alternate state/provider control planes. Mutations require a separately reviewed scope, confirmation, idempotency, cancellation, and audit design.
+17. Project tasks begin from an exact clean Git root, live only in daemon-managed worktrees, and require a complete version-matched review before task-branch acceptance. CodeWave never exposes Git control paths or merges the project branch implicitly.
+18. Desktop renderer code receives neither the daemon port nor bootstrap secret. It uses only the product protocol proxy and a minimal, origin-checked preload; Electron main owns process lifecycle, native dialogs, and local release security policy.
+19. Run budgets state their enforcement level honestly (hard-cancel, observed-cancel, or terminal-observed) and never present provider-reported token totals as a guaranteed spend cap. Compaction checkpoints are derived, immutable, and fenced; task trace evaluation is metadata-only and deterministic.
 
 ---
 
@@ -837,4 +883,4 @@ Keep the single-machine workspace usable after the free-tier changes while stren
 
 Keep CodeWave product-owned: daemon + normalized protocol + state + adapters + orchestration. Integrate providers through stable machine boundaries, prefer ACP/API/structured streams, and reject terminal scraping as a production architecture.
 
-The current provider order is Freebuff first, OpenCode/local second, and explicitly enabled paid/BYOK providers after that. With shared structured transport and capability-proven Freebuff bridge steering in place, the next major backend investments are explicit transcript compaction/memory hooks, task-level trace evaluation, and additional native steering adapters only where their machine protocols can acknowledge delivery, as described in [the 2026 harness research note](harness-research-2026.md).
+The current provider order is Freebuff first, OpenCode/local second, and explicitly enabled paid/BYOK providers after that. With shared structured transport, capability-proven Freebuff bridge steering, fenced execution budgets, derived compaction checkpoints, and deterministic task trace evaluation in place, the next major backend investments are additional native steering adapters only where their machine protocols can acknowledge delivery, plus crash-boundary hardening found by the continuity conformance vectors, as described in [the 2026 harness research note](harness-research-2026.md).

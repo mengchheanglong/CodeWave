@@ -1,0 +1,25 @@
+{
+  "name": "@codewave/desktop",
+  "productName": "CodeWave",
+  "version": "0.1.0-alpha.1",
+  "description": "The visual workspace for AI coding agents",
+  "author": "CodeWave contributors",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": ".vite/build/main.cjs",
+  "config": {
+    "forge": "./forge.config.mjs"
+  },
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "1.0.1"
+  },
+  "devDependencies": {
+    "electron": "43.4.0"
+  }
+}

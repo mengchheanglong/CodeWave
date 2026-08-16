@@ -1,5 +1,6 @@
 import type { RunStatus } from '@codewave/protocol';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
+import { renderProviderLabel } from '../lib/shell-format';
 
 type OrchestrationSwimlanesProps = {
   orchestrationFlows: ShellPanelsState['orchestrationFlows'];
@@ -123,7 +124,7 @@ export function OrchestrationSwimlanes({
                       {kindLabel(summary.session.orchestration?.kind)}
                     </span>
                     <span className="swimlane-node-provider">
-                      {summary.session.providerId}
+                      {renderProviderLabel(summary.session.providerId)}
                     </span>
                     {summary.latestRun ? (
                       <span className={`swimlane-node-status status-${summary.latestRun.status}`}>

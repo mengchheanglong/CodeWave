@@ -110,7 +110,8 @@ simple, composable, and built for experimentation.
 - **Local daemon** — HTTP server on `127.0.0.1:4120` serving both REST APIs and the web shell
 - **SQLite state** — persistent sessions, runs, events, append-only transcript messages, approvals, checkpoints, tool invocations, and session registry with WAL journaling
 - **Shared protocol** — normalized `WorkbenchEvent` stream across providers (run.started, tool.requested, approval.resolved, etc.)
-- **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share one serialized ACP session/tool/permission state machine
+- **Shared structured transport** — Freebuff JSONL, Gemini stream-JSON, and Qwen control records use one ordered, line-bounded transport with plain-text fallback, isolated handler failures, lifecycle traces, bounded cancellation, and exactly-once terminal events; Gemini and OpenCode share an exact-pinned stable ACP v1 runtime with capability-gated continuity and cancellation-aware permissions
+- **Generic ACP providers** — profile-only command/argument descriptors receive an initialize compatibility probe, negotiated continuity, bounded stderr, and the same daemon-owned lifecycle; OpenCode ACP is the built-in reference and user-defined `acp.*` profiles use the same path
 - **Scoped client handshake** — web and automation clients negotiate protocol v1, daemon capabilities, granular scopes, connection lifetime, and transport limits before protected API access
 - **Cursor-bounded event replay** — monotonic per-run event sequences, SSE resume cursors, and a 500-event replay ceiling keep reconnects ordered without rehydrating unbounded history
 - **Durable session memory** — prompts and normalized final messages are atomically recorded in a parent-linked, monotonic transcript chain; snapshots hydrate the latest 100 messages and the transcript API paginates backward up to 200 at a time
@@ -119,8 +120,11 @@ simple, composable, and built for experimentation.
 - **Deterministic run lifecycle** — one active run per session, stale-run fencing for updates, restart reconciliation, capability-proven in-flight steering, and a durable follow-up queue whenever native delivery is unavailable or unacknowledged
 - **Reviewed provider policy** — every provider-dependent mutation carries the exact content-addressed provider revision the user reviewed; stale launches fail closed with the current revision and the shell refreshes before retry
 
+- **Isolated project tasks** — register an exact, clean Git root and create named task branches in daemon-managed worktrees; source checkout and main branch remain untouched
+- **Review-fenced Git mutations** — the daemon hashes the reviewed file state, bounds retained diff output to 512 KiB, rejects stale or incomplete acceptance, suppresses repository hooks, and fences accept/revert while a provider run is active in the task workspace
+
 ### Providers
-- **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, atomic updates, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
+- **Daemon-owned provider registry** — versioned `.codewave/providers.json`, deterministic SHA-256 revisions, v1-to-v2 migration, atomic updates, built-in and custom `acp.*` profiles, access/privacy metadata, explicit enablement, priority routing, environment overrides, and cached health probes
 - **Freebuff primary** — first policy priority and clearly labeled free cloud/ad-supported access; because the public Freebuff CLI is interactive-only, CodeWave requires a configured automation bridge before marking daemon runs ready
 - **Structured Freebuff bridge** — configured bridges emit JSONL session, output, message, tool, checkpoint, and terminal records; protocol-v1 bridges may also negotiate acknowledged in-flight steering over stdin without weakening the durable queue
 - **OpenCode fallback** — enabled by default with ACP, daemon-mediated permissions, session resume, and local models through Ollama or other OpenAI-compatible endpoints
@@ -163,6 +167,8 @@ simple, composable, and built for experimentation.
 - **Quick open** — grouped command palette with keyboard shortcuts (`Ctrl/Cmd+K`)
 - **Checkpoints** — persisted recovery points visible in the inspector
 
+- **Changes** — register the current Git project, create an isolated task workspace, inspect its changed-file list and bounded patch, then explicitly commit to the task branch or destructively discard non-ignored task changes; CodeWave never merges the project branch automatically
+
 ### Validation
 - `npm run check` — TypeScript type checking
 - `npm test -w @codewave/web` — React interaction and property suite
@@ -185,6 +191,7 @@ CodeWave is structured as an npm monorepo with workspaces:
 |---|---|---|
 | **Daemon** | `apps/daemon` | HTTP server, provider lifecycle, API routing, static file hosting |
 | **Web shell** | `apps/web` | React + TypeScript + Vite frontend |
+| **Desktop shell** | `apps/desktop` | Electron main/preload, private protocol proxy, daemon supervision, native workspace picker |
 | **Protocol** | `packages/protocol` | Shared types: events, adapters, sessions, tools, orchestration |
 | **State** | `packages/state` | SQLite-backed persistence |
 | **Orchestrator** | `packages/orchestrator` | Routing, follow-up, delegate, handoff logic |
@@ -219,23 +226,41 @@ Frontend-only iteration:
 npm run dev:web
 ```
 
+Desktop iteration and a current-platform unpacked alpha package:
+
+```bash
+npm run dev:desktop
+npm run build:desktop
+```
+
+The desktop shell supervises the daemon on a random loopback port, keeps the bootstrap secret and port out of the renderer, stores SQLite separately from the selected workspace, and uses a native directory picker when available. See [the desktop alpha contract](docs/desktop-alpha.md) before changing its lifecycle or security boundary.
+
 Validation:
 
 ```bash
 npm run check                           # TypeScript
+npm run check:acp                       # Stable ACP v1 protocol/lifecycle/permission E2E
+npm run check:acp-provider              # Generic profile/probe/OpenCode reference E2E
+npm run check:acp-custom                # Dynamic policy/UI/daemon/restart custom-profile E2E
 npm test -w @codewave/web                # React interaction/property suite
 npm run check:shell                      # Shell usability tests
 npm run check:providers                  # Provider policy and routing tests
 npm run check:harness                    # Daemon lifecycle/idempotency/steering E2E
 npm run check:adversarial                # Daemon boundary and hostile-input regression suite
 npm run check:continuity                 # Crash/replay/reconstruction conformance suite
+npm run check:worktrees                  # Real Git project/worktree/review safety E2E
+npm run check:desktop-daemon             # Random-port/auth/shutdown/restart persistence E2E
+npm run check:desktop-security           # Protocol, CSP, permission, and fuse policy checks
+npm run check:desktop-demo               # Non-destructive isolated demo workspace checks
 npm run check:registrations              # Tool registration E2E tests
 npm run check:registrations:json         # CI-friendly JSON summary
 ```
 
 ### Provider configuration
 
-Open **Providers** in the left rail or edit `.codewave/providers.json`. CodeWave stores enablement, priority, and optional command overrides there—never API keys. Provider credentials remain in the provider CLI or environment.
+Open **Providers** in the left rail or edit `.codewave/providers.json`. CodeWave stores enablement, priority, optional command overrides, and custom ACP launch profiles there—never API keys. Provider credentials remain in the provider CLI or environment.
+
+To connect another ACP v1 agent, choose **Add agent**, assign a lowercase `acp.*` ID, display name, executable, and one argument per line, then explicitly confirm that you trust the local command. New profiles are always created disabled. CodeWave will not spawn a disabled custom executable; after you enable it, readiness is based on a real bounded ACP `initialize` exchange rather than a version-string guess. Custom profiles run with your user permissions, so use only commands you installed and trust, and keep tokens in the agent's own credential store or environment rather than profile arguments.
 
 Environment overrides take precedence:
 
@@ -268,6 +293,9 @@ Except for `/api/health` and `/api/handshake`, daemon APIs require a negotiated 
 - Qwen's current headless stream-JSON input processes additional messages as ordered turns rather than proving same-turn steering. CodeWave therefore keeps Qwen steering on the durable follow-up path until its machine protocol exposes an acknowledged in-flight boundary
 - Gemini defaults to ACP; use `CODEWAVE_GEMINI_MODE=stream-json` as fallback if ACP regresses on another machine
 - OpenCode defaults to ACP; use `CODEWAVE_OPENCODE_MODE=run` as fallback, but note `opencode run` can hang on some Windows environments, and ACP mode requires the workspace path to exist and be a git repository
+- Project-task acceptance creates a commit only on the isolated `codewave/task-*` branch. Merge, rebase, conflict resolution, remote push, and pull-request creation remain explicit external Git operations in this baseline
+- Git is outside SQLite's transaction. If the daemon process is killed during worktree creation or task acceptance, the idempotency receipt fails closed as outcome-unknown; inspect the named task branch/worktree rather than retrying the same external effect blindly
+- The desktop package is an unsigned alpha. Forge makers exist, but signed/notarized platform-native CI, installer upgrade/downgrade evidence, and an authenticated auto-update channel are still required before publishing binaries
 
 See [the 2026 harness research note](docs/harness-research-2026.md) for provider evidence, donor analysis, and the next backend milestones.
 

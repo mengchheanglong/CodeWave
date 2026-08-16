@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   constants as fsConstants,
   createReadStream,
@@ -23,6 +23,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,13 +32,21 @@ import {
   type ArchiveSnapshot,
   type ClientHandshakeRequest,
   type ClientHandshakeResponse,
+  CODEWAVE_COMPACTION_POLICY_REVISION,
   CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+  CODEWAVE_MAX_COMPACTION_SOURCE_BYTES,
+  CODEWAVE_MAX_COMPACTION_SOURCE_MESSAGES,
+  CODEWAVE_MAX_COMPACTION_SUMMARY_BYTES,
   CODEWAVE_MAX_REQUEST_BYTES,
+  CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  CODEWAVE_MAX_RUN_WALL_TIME_MS,
   CODEWAVE_MAX_SSE_REPLAY_EVENTS,
   CODEWAVE_MAX_STEERING_PROMPT_CHARS,
   CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
   CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
   CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
+  CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
   CODEWAVE_PROTOCOL_VERSION,
   DAEMON_CAPABILITIES,
   DAEMON_CLIENT_SCOPES,
@@ -49,9 +58,15 @@ import {
   type CompareRunLane,
   type CompareRunRequest,
   type CompareRunResponse,
+  type CreateProjectRequest,
+  type CreateWorktreeTaskRequest,
+  type AcceptWorktreeChangesRequest,
+  type CreateAcpProviderRequest,
   type CreateSessionRequest,
   type CreateWorkspaceFileRequest,
   type CreateWorkspaceFileResponse,
+  type CreateTranscriptCompactionRequest,
+  type TranscriptCompactionCheckpoint,
   type DeleteSessionResponse,
   type DelegateRunRequest,
   type DelegateRunResponse,
@@ -79,11 +94,15 @@ import {
   type ResolveApprovalRequest,
   type RecoverSessionRequest,
   type RecoverSessionResponse,
+  type RevertWorktreeChangesRequest,
   type RoutingToolRequirement,
   type RoutePromptRequest,
   type RoutePromptResponse,
   type RunSnapshot,
+  type RunExecutionBudget,
+  type RunExecutionBudgetState,
   type RunSteeringInput,
+  type RunUsageFactsV1,
   type SteerRunRequest,
   type SteerRunResponse,
   type UndoRunResponse,
@@ -121,15 +140,41 @@ import {
   recommendProviderRoute,
 } from '@codewave/orchestrator';
 import { FreebuffCliProvider } from '@codewave/provider-freebuff';
+import { AcpV1ProviderAdapter } from '@codewave/provider-acp';
 import { GeminiCliProvider } from '@codewave/provider-gemini';
 import { OpenCodeCliProvider } from '@codewave/provider-opencode';
 import { QwenCliProvider } from '@codewave/provider-qwen';
 import { SQLiteStateStore, resolveDataDirectory } from '@codewave/state';
 import {
-  isKnownProviderId,
+  projectTaskTrace,
+  TASK_TRACE_SOURCE_VERSION,
+  TASK_TRACE_USAGE_VERSION,
+  type TaskTraceApprovalSourceV1,
+  type TaskTraceEventSourceV1,
+  type TaskTraceOutcome,
+  type TaskTraceReportV1,
+  type TaskTraceRoutingDecisionSourceV1,
+  type TaskTraceRunSourceV1,
+  type TaskTraceSessionSourceV1,
+  type TaskTraceSourceProjectionV1,
+  type TaskTraceToolSourceV1,
+  type TaskTraceUsageSourceV1,
+} from '@codewave/task-trace';
+import {
+  createDeterministicTranscriptSummaryHook,
+  createTranscriptCompaction,
+  TranscriptCompactionError,
+} from './transcript-compaction.js';
+import {
+  isConfiguredProviderId,
   ProviderPolicyStore,
   ProviderRevisionConflictError,
 } from './provider-policy.js';
+import {
+  MAX_WORKTREE_DIFF_BYTES,
+  WorktreeManager,
+  WorktreeManagerError,
+} from './worktree-manager.js';
 
 const WEB_DIST_ROOT = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const MIME_TYPES = new Map<string, string>([
@@ -143,6 +188,8 @@ const MIME_TYPES = new Map<string, string>([
 ]);
 const CLIENT_CONNECTION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_CLIENT_CONNECTIONS = 256;
+const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 5_000;
+const DESKTOP_BOOTSTRAP_HEADER = 'x-codewave-desktop-bootstrap';
 const DAEMON_SERVER_VERSION = '0.1.0-dev';
 const DAEMON_PROTOCOL_LIMITS = {
   maxRequestBytes: CODEWAVE_MAX_REQUEST_BYTES,
@@ -156,7 +203,153 @@ const DAEMON_PROTOCOL_LIMITS = {
   maxClientConnections: MAX_CLIENT_CONNECTIONS,
   maxWorkspacePreviewBytes: CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
   maxWorkspaceFileBytes: CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
+  maxWorktreeDiffBytes: MAX_WORKTREE_DIFF_BYTES,
+  maxRunWallTimeMs: CODEWAVE_MAX_RUN_WALL_TIME_MS,
+  maxRunToolInvocations: CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  maxRunReportedTokens: CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  maxCompactionSourceMessages: CODEWAVE_MAX_COMPACTION_SOURCE_MESSAGES,
+  maxCompactionSourceBytes: CODEWAVE_MAX_COMPACTION_SOURCE_BYTES,
+  minCompactionRawTailMessages: CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
+  maxCompactionSummaryBytes: CODEWAVE_MAX_COMPACTION_SUMMARY_BYTES,
 } as const;
+
+function normalizeRunUsageFacts(raw: unknown): RunUsageFactsV1 {
+  const facts: RunUsageFactsV1 = {
+    schemaVersion: 'codewave-usage-v1',
+    reporting: 'unreported',
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    providerReportedTotalTokens: null,
+  };
+  if (raw === undefined || raw === null) return facts;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...facts, reporting: 'invalid' };
+  }
+  const record = raw as Record<string, unknown>;
+  let sawKnownKey = false;
+  let sawInvalidValue = false;
+  const read = (keys: string[]): number | null => {
+    for (const key of keys) {
+      if (!(key in record) || record[key] === undefined) continue;
+      sawKnownKey = true;
+      const value = record[key];
+      if (
+        typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        value < 0
+      ) {
+        sawInvalidValue = true;
+        continue;
+      }
+      return value;
+    }
+    return null;
+  };
+  const usage: RunUsageFactsV1 = {
+    ...facts,
+    inputTokens: read(['inputTokens', 'promptTokens', 'input_tokens']),
+    outputTokens: read(['outputTokens', 'completionTokens', 'output_tokens']),
+    reasoningTokens: read(['reasoningTokens', 'reasoning_tokens']),
+    cacheReadTokens: read([
+      'cacheReadTokens',
+      'cacheReadInputTokens',
+      'cacheReadInputTokenCount',
+      'cache_read_tokens',
+    ]),
+    cacheWriteTokens: read([
+      'cacheWriteTokens',
+      'cacheCreationInputTokens',
+      'cache_creation_input_tokens',
+    ]),
+    providerReportedTotalTokens: read([
+      'totalTokens',
+      'total_tokens',
+      'providerReportedTotalTokens',
+    ]),
+  };
+  if (!sawKnownKey) return facts;
+  if (sawInvalidValue) return { ...facts, reporting: 'invalid' };
+  const everyValue = [
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.reasoningTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+    usage.providerReportedTotalTokens,
+  ];
+  if (everyValue.every((value) => value === null)) return facts;
+  return { ...usage, reporting: 'reported' };
+}
+
+function parseRunExecutionBudget(
+  raw: unknown,
+): RunExecutionBudget | Error {
+  if (raw === undefined || raw === null) {
+    return { schemaVersion: 'codewave-run-budget-v1', maxWallTimeMs: null, maxToolInvocations: null, maxReportedTokens: null };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return new Error('executionBudget must be an object.');
+  }
+  const record = raw as Record<string, unknown>;
+  const allowedKeys = new Set([
+    'schemaVersion',
+    'maxWallTimeMs',
+    'maxToolInvocations',
+    'maxReportedTokens',
+  ]);
+  for (const key of Object.keys(record)) {
+    if (!allowedKeys.has(key)) {
+      return new Error(`executionBudget rejects unknown property '${key}'.`);
+    }
+  }
+  if (
+    record.schemaVersion !== undefined &&
+    record.schemaVersion !== 'codewave-run-budget-v1'
+  ) {
+    return new Error('Unsupported execution budget schema version.');
+  }
+  const readLimit = (
+    key: 'maxWallTimeMs' | 'maxToolInvocations' | 'maxReportedTokens',
+    ceiling: number,
+  ): number | null | Error => {
+    const value = record[key];
+    if (value === undefined || value === null) return null;
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 1
+    ) {
+      return new Error(`executionBudget.${key} must be a positive safe integer.`);
+    }
+    if (value > ceiling) {
+      return new Error(
+        `executionBudget.${key} exceeds the daemon ceiling ${ceiling}.`,
+      );
+    }
+    return value;
+  };
+  const maxWallTimeMs = readLimit('maxWallTimeMs', CODEWAVE_MAX_RUN_WALL_TIME_MS);
+  if (maxWallTimeMs instanceof Error) return maxWallTimeMs;
+  const maxToolInvocations = readLimit(
+    'maxToolInvocations',
+    CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  );
+  if (maxToolInvocations instanceof Error) return maxToolInvocations;
+  const maxReportedTokens = readLimit(
+    'maxReportedTokens',
+    CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  );
+  if (maxReportedTokens instanceof Error) return maxReportedTokens;
+  return {
+    schemaVersion: 'codewave-run-budget-v1',
+    maxWallTimeMs,
+    maxToolInvocations,
+    maxReportedTokens,
+  };
+}
 
 type ClientConnection = {
   connectionId: string;
@@ -640,6 +833,17 @@ class RunEventBroker {
       response.write(payload);
     }
   }
+
+  closeAll(): void {
+    for (const subscribers of this.subscribers.values()) {
+      for (const response of subscribers) {
+        if (!response.writableEnded) {
+          response.end(': daemon stopping\n\n');
+        }
+      }
+    }
+    this.subscribers.clear();
+  }
 }
 
 type PendingApproval = {
@@ -661,6 +865,28 @@ type RenameWorkspaceEntryRequest = {
   targetPath: string;
   nextName: string;
 };
+
+export type CodeWaveDaemonOptions = {
+  workspaceRoot: string;
+  dataDirectory?: string;
+  host?: '127.0.0.1';
+  port?: number;
+  desktopBootstrapSecret?: string;
+  shutdownTimeoutMs?: number;
+};
+
+export type CodeWaveDaemonStartResult = {
+  host: '127.0.0.1';
+  port: number;
+  baseUrl: string;
+};
+
+type DaemonLifecycle =
+  | 'created'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped';
 
 type WorkspaceFileErrorCode =
   | 'workspace_path_escape'
@@ -712,6 +938,38 @@ function validateDeclaredMutationSchema(
     allowed = new Set([
       'requestSchemaVersion', 'workspacePath', 'targetPath', 'content', 'expectedVersion',
     ]);
+  } else if (pathname === '/api/providers' && method === 'POST') {
+    allowed = new Set([
+      'requestSchemaVersion',
+      'expectedProviderRevision',
+      'providerId',
+      'displayName',
+      'command',
+      'args',
+      'priority',
+    ]);
+  } else if (pathname === '/api/providers/default' && method === 'PATCH') {
+    allowed = new Set([
+      'requestSchemaVersion', 'expectedProviderRevision', 'providerId',
+    ]);
+  } else if (/^\/api\/providers\/[^/]+$/.test(pathname) && method === 'PATCH') {
+    allowed = new Set([
+      'requestSchemaVersion',
+      'expectedProviderRevision',
+      'enabled',
+      'priority',
+      'command',
+      'args',
+      'displayName',
+    ]);
+  } else if (pathname === '/api/projects' && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'rootPath', 'name']);
+  } else if (/^\/api\/projects\/[^/]+\/tasks$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'title', 'baseRef']);
+  } else if (/^\/api\/tasks\/[^/]+\/accept$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'expectedVersion', 'commitMessage']);
+  } else if (/^\/api\/tasks\/[^/]+\/revert$/.test(pathname) && method === 'POST') {
+    allowed = new Set(['requestSchemaVersion', 'expectedVersion']);
   }
   if (allowed) {
     const undeclared = Object.keys(record).find((key) => !allowed!.has(key));
@@ -756,6 +1014,14 @@ async function gitResetToCommit(
 
 function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\/+/, '').trim();
+}
+
+function isProtectedWorkspaceControlPath(value: string): boolean {
+  const segments = normalizeRelativePath(value)
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => segment.toLowerCase());
+  return segments.includes('.git') || segments[0] === '.codewave';
 }
 
 function isValidEntryName(value: string): boolean {
@@ -830,10 +1096,48 @@ function decodeUtf8Prefix(bytes: Buffer): { content: string; byteLength: number 
   throw new Error('Unable to find a valid UTF-8 preview boundary.');
 }
 
+function validateDaemonPort(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 65_535) {
+    throw new Error('CodeWave daemon port must be an integer from 0 through 65535.');
+  }
+  return value;
+}
+
+function validateShutdownTimeout(value: number | undefined): number {
+  const timeout = value ?? DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
+  if (!Number.isInteger(timeout) || timeout < 100 || timeout > 30_000) {
+    throw new Error('CodeWave daemon shutdown timeout must be 100-30000 milliseconds.');
+  }
+  return timeout;
+}
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | null> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export class CodeWaveDaemon {
-  private readonly port: number;
+  private readonly requestedPort: number;
+  private readonly host: '127.0.0.1';
+  private readonly rootPath: string;
   private readonly dataDirectory: string;
+  private readonly desktopBootstrapSecret: Buffer | null;
+  private readonly shutdownTimeoutMs: number;
   private readonly stateStore: SQLiteStateStore;
+  private readonly worktreeManager: WorktreeManager;
   private readonly eventBroker = new RunEventBroker();
   private readonly providers = new Map<ProviderId, ProviderAdapter>();
   private readonly providerPolicy: ProviderPolicyStore;
@@ -849,16 +1153,58 @@ export class CodeWaveDaemon {
   private readonly nativeSteeringChains = new Map<string, Promise<void>>();
   private readonly steeringFallbackSchedules = new Set<string>();
   private readonly sessionRunReservations = new Set<string>();
+  private readonly cancellationRequestedRuns = new Set<string>();
+  private readonly runWallTimeTimers = new Map<string, NodeJS.Timeout>();
+  private readonly inFlightRequests = new Set<Promise<void>>();
+  private readonly sockets = new Set<Socket>();
   private server: Server | null = null;
-  private stopped = false;
+  private actualPort: number | null = null;
+  private lifecycle: DaemonLifecycle = 'created';
+  private stopPromise: Promise<void> | null = null;
 
-  constructor(private readonly rootPath: string, port = DEFAULT_DAEMON_PORT) {
-    this.port = port;
-    this.dataDirectory = resolveDataDirectory(rootPath);
+  constructor(workspaceRoot: string, port?: number);
+  constructor(options: CodeWaveDaemonOptions);
+  constructor(
+    workspaceRootOrOptions: string | CodeWaveDaemonOptions,
+    legacyPort = DEFAULT_DAEMON_PORT,
+  ) {
+    const options: CodeWaveDaemonOptions =
+      typeof workspaceRootOrOptions === 'string'
+        ? { workspaceRoot: workspaceRootOrOptions, port: legacyPort }
+        : workspaceRootOrOptions;
+    if (!options.workspaceRoot?.trim()) {
+      throw new Error('CodeWave daemon workspaceRoot is required.');
+    }
+    if (options.host !== undefined && options.host !== '127.0.0.1') {
+      throw new Error('CodeWave daemon host is locked to 127.0.0.1.');
+    }
+    if (
+      options.desktopBootstrapSecret !== undefined &&
+      (options.desktopBootstrapSecret.length === 0 ||
+        Buffer.byteLength(options.desktopBootstrapSecret, 'utf8') > 4_096 ||
+        /[\r\n\0]/.test(options.desktopBootstrapSecret))
+    ) {
+      throw new Error(
+        'Desktop bootstrap secret must be 1-4096 UTF-8 bytes without control delimiters.',
+      );
+    }
+    this.host = '127.0.0.1';
+    this.rootPath = path.resolve(options.workspaceRoot);
+    this.requestedPort = validateDaemonPort(
+      options.port ?? DEFAULT_DAEMON_PORT,
+    );
+    this.dataDirectory = path.resolve(
+      options.dataDirectory ?? resolveDataDirectory(this.rootPath),
+    );
+    this.desktopBootstrapSecret = options.desktopBootstrapSecret
+      ? Buffer.from(options.desktopBootstrapSecret, 'utf8')
+      : null;
+    this.shutdownTimeoutMs = validateShutdownTimeout(options.shutdownTimeoutMs);
     this.stateStore = new SQLiteStateStore(
       path.join(this.dataDirectory, 'state.sqlite'),
     );
-    this.providerPolicy = new ProviderPolicyStore(rootPath);
+    this.worktreeManager = new WorktreeManager(this.rootPath, this.stateStore);
+    this.providerPolicy = new ProviderPolicyStore(this.rootPath);
     this.installProviders(this.providerPolicy.snapshot());
     this.stateStore.pruneMutationReceipts(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -867,46 +1213,145 @@ export class CodeWaveDaemon {
     this.reconcileInterruptedRuns();
   }
 
-  async start(): Promise<void> {
-    if (this.server || this.stopped) {
+  async start(): Promise<CodeWaveDaemonStartResult> {
+    if (this.lifecycle !== 'created') {
       throw new Error('CodeWave daemon instances can only be started once.');
     }
+    this.lifecycle = 'starting';
     const server = createServer((request, response) => {
-      void this.handleIncomingRequest(request, response).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        try {
-          sendJson(response, 400, {
-            error: `Daemon request failed: ${message}`,
-          });
-        } catch {
-          response.destroy();
-        }
-      });
+      const requestTask = this.handleIncomingRequest(request, response);
+      this.inFlightRequests.add(requestTask);
+      void requestTask
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            sendJson(response, 400, {
+              error: `Daemon request failed: ${message}`,
+            });
+          } catch {
+            response.destroy();
+          }
+        })
+        .finally(() => this.inFlightRequests.delete(requestTask));
     });
-
-    await new Promise<void>((resolve) => {
-      server.listen(this.port, '127.0.0.1', () => resolve());
+    server.on('connection', (socket) => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
     });
     this.server = server;
-    await this.resumeQueuedSteeringInputs();
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off('listening', onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off('error', onError);
+          resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(this.requestedPort, this.host);
+      });
+      const address = server.address() as AddressInfo | null;
+      if (!address || typeof address === 'string') {
+        throw new Error('CodeWave daemon did not receive a loopback TCP address.');
+      }
+      this.actualPort = address.port;
+      this.lifecycle = 'running';
+      await this.resumeQueuedSteeringInputs();
+      return {
+        host: this.host,
+        port: this.actualPort,
+        baseUrl: this.getBaseUrl(),
+      };
+    } catch (error) {
+      this.lifecycle = 'stopped';
+      this.server = null;
+      await new Promise<void>((resolve) => {
+        if (!server.listening) {
+          resolve();
+          return;
+        }
+        server.close(() => resolve());
+        server.closeAllConnections();
+      });
+      this.desktopBootstrapSecret?.fill(0);
+      this.stateStore.close();
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
-    if (this.stopped) return;
-    this.stopped = true;
+    if (this.stopPromise) return this.stopPromise;
+    if (this.lifecycle === 'stopped') return;
+    this.stopPromise = this.performStop();
+    return this.stopPromise;
+  }
+
+  private async performStop(): Promise<void> {
+    this.lifecycle = 'stopping';
+    this.eventBroker.closeAll();
+    this.clientConnections.clear();
     const server = this.server;
     this.server = null;
-    if (server) {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-        server.closeAllConnections();
-      });
+    const closePromise = server
+      ? new Promise<void>((resolve) => {
+          if (!server.listening) {
+            resolve();
+            return;
+          }
+          server.close(() => resolve());
+          server.closeIdleConnections();
+        })
+      : Promise.resolve();
+    const shutdownDeadline = Date.now() + this.shutdownTimeoutMs;
+    const remainingShutdownMs = () =>
+      Math.max(1, shutdownDeadline - Date.now());
+
+    try {
+      const runIds = [
+        ...new Set([
+          ...this.runHandles.keys(),
+          ...this.stateStore.listNonTerminalRuns().map((run) => run.id),
+        ]),
+      ];
+      await settleWithin(
+        Promise.allSettled(runIds.map((runId) => this.cancelRun(runId))).then(
+          () => undefined,
+        ),
+        remainingShutdownMs(),
+      );
+      await settleWithin(
+        Promise.allSettled([...this.inFlightRequests]).then(() => undefined),
+        remainingShutdownMs(),
+      );
+      const closed = await settleWithin(closePromise, remainingShutdownMs());
+      if (closed === null) {
+        for (const socket of this.sockets) socket.destroy();
+        server?.closeAllConnections();
+      }
+    } finally {
+      this.lifecycle = 'stopped';
+      for (const timer of this.runWallTimeTimers.values()) clearTimeout(timer);
+      this.runWallTimeTimers.clear();
+      this.runHandles.clear();
+      this.pendingApprovals.clear();
+      this.inFlightMutationKeys.clear();
+      this.sockets.clear();
+      this.desktopBootstrapSecret?.fill(0);
+      this.stateStore.close();
     }
-    this.stateStore.close();
   }
 
   getBaseUrl(): string {
-    return `http://127.0.0.1:${this.port}`;
+    if (this.actualPort === null && this.requestedPort === 0) {
+      throw new Error(
+        'CodeWave daemon base URL is unavailable until an OS-selected port is listening.',
+      );
+    }
+    return `http://${this.host}:${this.actualPort ?? this.requestedPort}`;
   }
 
   private getRequiredClientScope(
@@ -929,6 +1374,9 @@ export class CodeWaveDaemon {
     if (pathname.startsWith('/api/workspace/')) {
       return method === 'GET' ? 'workspace:read' : 'workspace:write';
     }
+    if (pathname.startsWith('/api/projects') || pathname.startsWith('/api/tasks/')) {
+      return method === 'GET' ? 'projects:read' : 'projects:write';
+    }
     if (pathname.startsWith('/api/orchestrator/')) {
       return method === 'GET' || pathname.endsWith('/recommend')
         ? 'orchestration:read'
@@ -949,6 +1397,27 @@ export class CodeWaveDaemon {
     if (pathname.startsWith('/api/approvals/')) return 'approvals:write';
     if (pathname.startsWith('/api/checkpoints/')) return 'sessions:write';
     return 'runtime:read';
+  }
+
+  private authorizeDesktopBootstrap(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): boolean {
+    const expected = this.desktopBootstrapSecret;
+    if (!expected) return true;
+    const rawHeader = request.headers[DESKTOP_BOOTSTRAP_HEADER];
+    const supplied =
+      typeof rawHeader === 'string' ? Buffer.from(rawHeader, 'utf8') : null;
+    const sameLength = supplied?.length === expected.length;
+    const comparison = sameLength ? supplied! : Buffer.alloc(expected.length);
+    if (!timingSafeEqual(expected, comparison) || !sameLength) {
+      sendJson(response, 401, {
+        error: 'A valid desktop bootstrap credential is required.',
+        code: 'desktop_bootstrap_required',
+      });
+      return false;
+    }
+    return true;
   }
 
   private authorizeClient(
@@ -1116,6 +1585,14 @@ export class CodeWaveDaemon {
     response: ServerResponse,
   ): Promise<void> {
     if (!authorizeLocalHost(request, response)) return;
+    if (!this.authorizeDesktopBootstrap(request, response)) return;
+    if (this.lifecycle !== 'running') {
+      sendJson(response, 503, {
+        error: 'The CodeWave daemon is shutting down.',
+        code: 'daemon_shutting_down',
+      });
+      return;
+    }
     const method = request.method?.toUpperCase() ?? 'GET';
     const url = new URL(request.url ?? '/', this.getBaseUrl());
     if (!this.authorizeClient(request, url, response)) return;
@@ -1298,8 +1775,26 @@ export class CodeWaveDaemon {
           'qwen',
           new QwenCliProvider({ rootPath: this.rootPath, command }),
         );
-      } else {
+      } else if (configuration.providerId === 'gemini') {
         this.providers.set('gemini', new GeminiCliProvider(command));
+      } else if (
+        configuration.profileKind === 'custom' &&
+        configuration.adapterKind === 'acp-v1' &&
+        configuration.command
+      ) {
+        this.providers.set(
+          configuration.providerId,
+          new AcpV1ProviderAdapter({
+            profile: {
+              providerId: configuration.providerId,
+              displayName: configuration.displayName,
+              command: configuration.command,
+              args: configuration.args,
+              probeCwd: this.rootPath,
+              surface: `${configuration.providerId}.acp`,
+            },
+          }),
+        );
       }
     }
     this.providerHealthCache.clear();
@@ -1342,9 +1837,21 @@ export class CodeWaveDaemon {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/providers') {
+      const body = await readJsonBody<CreateAcpProviderRequest>(request);
+      try {
+        const registry = await this.providerPolicy.createAcpProvider(body);
+        this.installProviders(registry);
+        sendJson(response, 201, registry);
+      } catch (error) {
+        sendConflict(response, error, 'ACP provider could not be created.');
+      }
+      return;
+    }
+
     if (request.method === 'PATCH' && pathname === '/api/providers/default') {
       const body = await readJsonBody<UpdateDefaultProviderRequest>(request);
-      if (!isKnownProviderId(body.providerId)) {
+      if (!isConfiguredProviderId(this.providerPolicy.snapshot(), body.providerId)) {
         sendJson(response, 400, { error: 'Invalid default provider.' });
         return;
       }
@@ -1364,7 +1871,7 @@ export class CodeWaveDaemon {
     const providerConfigurationMatch = pathname.match(/^\/api\/providers\/([^/]+)$/);
     if (request.method === 'PATCH' && providerConfigurationMatch) {
       const providerId = providerConfigurationMatch[1];
-      if (!isKnownProviderId(providerId)) {
+      if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
         sendJson(response, 404, { error: 'Unknown provider.' });
         return;
       }
@@ -1410,6 +1917,107 @@ export class CodeWaveDaemon {
       }
 
       sendJson(response, 200, listing satisfies WorkspaceEntriesResponse);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/projects') {
+      sendJson(response, 200, { projects: this.worktreeManager.listProjects() });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/projects') {
+      const body = await readJsonBody<CreateProjectRequest>(request);
+      try {
+        const project = await this.worktreeManager.registerProject(body);
+        sendJson(response, 201, project);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const projectTaskMatch = pathname.match(/^\/api\/projects\/([^/]+)\/tasks$/);
+    if (request.method === 'POST' && projectTaskMatch) {
+      const body = await readJsonBody<CreateWorktreeTaskRequest>(request);
+      try {
+        const task = await this.worktreeManager.createTask(
+          projectTaskMatch[1]!,
+          body,
+        );
+        sendJson(response, 201, task);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskChangesMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/changes$/);
+    if (request.method === 'GET' && taskChangesMatch) {
+      try {
+        const changes = await this.worktreeManager.changes(
+          taskChangesMatch[1]!,
+        );
+        sendJson(response, 200, changes);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskAcceptMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/accept$/);
+    if (request.method === 'POST' && taskAcceptMatch) {
+      const taskId = taskAcceptMatch[1]!;
+      const body = await readJsonBody<AcceptWorktreeChangesRequest>(request);
+      try {
+        if (this.taskHasActiveRun(taskId)) {
+          throw new WorktreeManagerError(
+            'Wait for the active agent run to finish before accepting task changes.',
+            'task_conflict',
+          );
+        }
+        sendJson(response, 200, await this.worktreeManager.accept(taskId, body));
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskRevertMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/revert$/);
+    if (request.method === 'POST' && taskRevertMatch) {
+      const taskId = taskRevertMatch[1]!;
+      const body = await readJsonBody<RevertWorktreeChangesRequest>(request);
+      try {
+        if (this.taskHasActiveRun(taskId)) {
+          throw new WorktreeManagerError(
+            'Wait for the active agent run to finish before reverting task changes.',
+            'task_conflict',
+          );
+        }
+        sendJson(response, 200, await this.worktreeManager.revert(taskId, body));
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
+    const taskTraceMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/trace$/);
+    if (request.method === 'GET' && taskTraceMatch) {
+      try {
+        const taskId = taskTraceMatch[1]!;
+        const task = this.stateStore.getWorktreeTask(taskId);
+        if (!task) {
+          notFound(response);
+          return;
+        }
+        const report = await this.buildTaskTraceReport(taskId);
+        if (report instanceof Error) {
+          sendJson(response, 400, { error: report.message });
+          return;
+        }
+        sendJson(response, 200, report);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
       return;
     }
 
@@ -1649,6 +2257,69 @@ export class CodeWaveDaemon {
           limit: rawLimit === null ? undefined : Number(rawLimit),
         }),
       );
+      return;
+    }
+
+    const sessionCompactionsMatch = pathname.match(
+      /^\/api\/sessions\/([^/]+)\/compactions$/,
+    );
+    if (request.method === 'GET' && sessionCompactionsMatch) {
+      const sessionId = sessionCompactionsMatch[1]!;
+      if (!this.stateStore.getSession(sessionId)) {
+        notFound(response);
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        this.stateStore.listTranscriptCompactionCheckpoints(sessionId),
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && sessionCompactionsMatch) {
+      const sessionId = sessionCompactionsMatch[1]!;
+      const session = this.stateStore.getSession(sessionId);
+      if (!session) {
+        notFound(response);
+        return;
+      }
+      const body = await readJsonBody<CreateTranscriptCompactionRequest>(request);
+      try {
+        const checkpoint = await this.createSessionTranscriptCompaction(
+          sessionId,
+          body,
+        );
+        if (checkpoint instanceof Error) {
+          sendConflict(response, checkpoint, 'Compaction checkpoint could not be created.');
+          return;
+        }
+        sendJson(response, 201, checkpoint);
+      } catch (error) {
+        if (error instanceof TranscriptCompactionError) {
+          sendJson(response, 400, {
+            error: error.message,
+            code: error.code,
+          });
+          return;
+        }
+        sendConflict(response, error, 'Compaction checkpoint could not be created.');
+      }
+      return;
+    }
+
+    const sessionLatestCompactionMatch = pathname.match(
+      /^\/api\/sessions\/([^/]+)\/compactions\/latest$/,
+    );
+    if (request.method === 'GET' && sessionLatestCompactionMatch) {
+      const sessionId = sessionLatestCompactionMatch[1]!;
+      if (!this.stateStore.getSession(sessionId)) {
+        notFound(response);
+        return;
+      }
+      const checkpoint =
+        this.stateStore.getLatestTranscriptCompactionCheckpoint(sessionId);
+      sendJson(response, 200, { checkpoint });
       return;
     }
 
@@ -1995,6 +2666,445 @@ export class CodeWaveDaemon {
     await this.serveStatic(pathname, response);
   }
 
+  private taskHasActiveRun(taskId: string): boolean {
+    const task = this.worktreeManager.getTask(taskId);
+    const normalizedTaskPath = path.resolve(task.worktreePath);
+    return this.stateStore.listSessions().some((session) => {
+      const sameWorkspace =
+        process.platform === 'win32'
+          ? path.resolve(session.workspacePath).toLowerCase() ===
+            normalizedTaskPath.toLowerCase()
+          : path.resolve(session.workspacePath) === normalizedTaskPath;
+      return (
+        sameWorkspace &&
+        this.stateStore
+          .listRuns(session.id)
+          .some((run) =>
+            run.status === 'queued' ||
+            run.status === 'running' ||
+            run.status === 'awaiting_approval',
+          )
+      );
+    });
+  }
+
+  private sendWorktreeError(response: ServerResponse, error: unknown): void {
+    if (!(error instanceof WorktreeManagerError)) {
+      sendJson(response, 409, {
+        error: error instanceof Error ? error.message : 'Worktree operation failed.',
+        code: 'worktree_operation_failed',
+      });
+      return;
+    }
+    const statusCode =
+      error.code === 'task_not_found'
+        ? 404
+        : error.code === 'invalid_project' || error.code === 'invalid_task'
+          ? 400
+          : 409;
+    sendJson(response, statusCode, { error: error.message, code: error.code });
+  }
+
+  private async buildTaskTraceReport(
+    taskId: string,
+  ): Promise<TaskTraceReportV1 | Error> {
+    const task = this.stateStore.getWorktreeTask(taskId);
+    if (!task) {
+      return new Error(`Task ${taskId} not found.`);
+    }
+    const normalizedTaskPath = path.resolve(task.worktreePath);
+    const isMatchingWorkspace = (workspacePath: string) => {
+      const normalized = path.resolve(workspacePath);
+      return process.platform === 'win32'
+        ? normalized.toLowerCase() === normalizedTaskPath.toLowerCase()
+        : normalized === normalizedTaskPath;
+    };
+
+    const taskSessions = this.stateStore
+      .listSessions()
+      .filter((session) => isMatchingWorkspace(session.workspacePath));
+
+    const taskRuns = taskSessions.flatMap((session) =>
+      this.stateStore.listRuns(session.id),
+    );
+    const sessionIds = taskSessions.map((s) => s.id);
+    const runIds = taskRuns.map((r) => r.id);
+    const checkpointIds = taskSessions.flatMap((session) =>
+      this.stateStore.listCheckpoints(session.id).map((c) => c.id),
+    );
+
+    const events: TaskTraceEventSourceV1[] = [];
+    const approvals: TaskTraceApprovalSourceV1[] = [];
+    const tools: TaskTraceToolSourceV1[] = [];
+    const usage: TaskTraceUsageSourceV1[] = [];
+
+    for (const run of taskRuns) {
+      const runEvents = this.stateStore.listEvents(run.id);
+      for (const event of runEvents) {
+        events.push({
+          id: event.id,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          sequence: event.sequence ?? 1,
+          source: event.source,
+          type: event.type,
+        });
+      }
+
+      const runApprovals = this.stateStore.listApprovals(run.id);
+      for (const approval of runApprovals) {
+        const reqEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'approval.requested' &&
+              ((e.payload as Record<string, unknown> | undefined)?.approvalId === approval.id ||
+                (e.payload as Record<string, unknown> | undefined)?.id === approval.id),
+          ) ?? runEvents.find((e) => e.type === 'approval.requested');
+        const resEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'approval.resolved' &&
+              ((e.payload as Record<string, unknown> | undefined)?.approvalId === approval.id ||
+                (e.payload as Record<string, unknown> | undefined)?.id === approval.id),
+          ) ?? runEvents.find((e) => e.type === 'approval.resolved');
+        approvals.push({
+          id: approval.id,
+          runId: approval.runId,
+          toolUseId: approval.toolUseId,
+          status: approval.status,
+          evidenceVersion: 'v1',
+          requestedEventId: reqEvent?.id ?? null,
+          resolvedEventId: resEvent?.id ?? null,
+        });
+      }
+
+      const runTools = this.stateStore.listToolInvocations(run.id);
+      for (const tool of runTools) {
+        const reqEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.requested' &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.requested' &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+        const startEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.started' &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.started' &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+        const termEvent =
+          runEvents.find(
+            (e) =>
+              (e.type === 'tool.completed' || e.type === 'tool.denied') &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              (e.type === 'tool.completed' || e.type === 'tool.denied') &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+
+        tools.push({
+          id: tool.id,
+          runId: tool.runId,
+          toolUseId: tool.toolUseId,
+          requirement: inferRoutingToolRequirement({
+            toolName: tool.toolName,
+            detail: tool.detail,
+            input: tool.input,
+            metadata: tool.metadata,
+          }),
+          status: tool.status,
+          evidenceVersion: 'v1',
+          requestedEventId: reqEvent?.id ?? null,
+          startedEventId: startEvent?.id ?? null,
+          terminalEventId: termEvent?.id ?? null,
+        });
+      }
+
+      const runUsage = this.stateStore.getRunUsageFacts(run.id);
+      if (runUsage) {
+        const terminalEvent = runEvents.find(
+          (e) =>
+            e.type === 'run.completed' ||
+            e.type === 'run.failed' ||
+            e.type === 'run.cancelled',
+        );
+        usage.push({
+          runId: run.id,
+          sourceEventId:
+            terminalEvent?.id ?? (runEvents[0]?.id ?? `event-${run.id}`),
+          schemaVersion: TASK_TRACE_USAGE_VERSION,
+          reporting: runUsage.reporting,
+          inputTokens: runUsage.inputTokens,
+          outputTokens: runUsage.outputTokens,
+          reasoningTokens: runUsage.reasoningTokens,
+          cacheReadTokens: runUsage.cacheReadTokens,
+          cacheWriteTokens: runUsage.cacheWriteTokens,
+          providerReportedTotalTokens: runUsage.providerReportedTotalTokens,
+        });
+      }
+    }
+
+    const sessions: TaskTraceSessionSourceV1[] = taskSessions.map(
+      (session) => ({
+        id: session.id,
+        worktreeTaskId: task.id,
+        providerId: session.providerId,
+        providerConfigurationRevision: session.providerConfigurationRevision,
+        approvalPolicy: session.approvalPolicy,
+        routingEvidenceVersion: 'v1',
+        recovery: session.recovery
+          ? {
+              kind: session.recovery.kind,
+              sourceSessionId: session.recovery.sourceSessionId,
+              sourceCheckpointId: session.recovery.sourceCheckpointId,
+              sourceRunId: session.recovery.sourceRunId,
+            }
+          : null,
+        orchestration: session.orchestration
+          ? {
+              kind: session.orchestration.kind,
+              role: session.orchestration.role,
+              sourceSessionId: session.orchestration.sourceSessionId,
+              sourceRunId: session.orchestration.sourceRunId,
+              sourceProviderId: session.orchestration.sourceProviderId,
+            }
+          : null,
+      }),
+    );
+
+    const runs: TaskTraceRunSourceV1[] = taskRuns.map((run) => ({
+      id: run.id,
+      worktreeTaskId: task.id,
+      sessionId: run.sessionId,
+      providerId: run.providerId,
+      providerConfigurationRevision: run.providerConfigurationRevision,
+      mode: run.mode,
+      status: run.status,
+    }));
+
+    const outcomeDecision: TaskTraceOutcome =
+      task.status === 'accepted'
+        ? 'keep'
+        : task.status === 'reverted'
+          ? 'discard'
+          : 'undecided';
+    const outcomeSource =
+      task.status === 'accepted'
+        ? 'task-accept'
+        : task.status === 'reverted'
+          ? 'task-revert'
+          : 'none';
+
+    const routingDecisions: TaskTraceRoutingDecisionSourceV1[] =
+      taskSessions.map((session) => {
+        const firstRun = taskRuns.find((r) => r.sessionId === session.id);
+        return {
+          id: `routing-decision:${session.id}`,
+          sessionId: session.id,
+          firstRunId: firstRun?.id ?? null,
+          decisionKind: 'explicit' as const,
+          algorithmVersion: 'codewave-router-v1',
+          providerConfigurationRevision: session.providerConfigurationRevision,
+          selectedProviderId: session.providerId,
+          fallbackProviderId: null,
+          preferredProviderId: session.providerId,
+          strategy: 'balanced' as const,
+          reasonCode: 'explicit-provider' as const,
+          requiredTools: [],
+          candidates: [
+            {
+              providerId: session.providerId,
+              enabled: true,
+              available: true,
+              priority: 10,
+              requiredToolReadyCount: 0,
+              requiredToolCount: 0,
+              sessionRegisteredReadyCount: 0,
+              recentInvocationCount: 0,
+              recentSuccessCount: 0,
+              resumableSessions: true,
+              checkpointEvents: true,
+            },
+          ],
+        };
+      });
+
+    const sourceProjection: TaskTraceSourceProjectionV1 = {
+      schemaVersion: TASK_TRACE_SOURCE_VERSION,
+      evaluatedThrough: new Date().toISOString(),
+      task: {
+        id: task.id,
+        status: task.status,
+        updatedAt: task.updatedAt,
+      },
+      scope: {
+        sessionIds,
+        runIds,
+        checkpointIds,
+      },
+      sessions,
+      runs,
+      events,
+      routingDecisions,
+      approvals,
+      tools,
+      usage,
+      outcome: {
+        evidenceVersion: 'v1',
+        decision: outcomeDecision,
+        source: outcomeSource,
+        reviewVersion:
+          task.status !== 'active'
+            ? `sha256:${createHash('sha256')
+                .update(`task-review:${task.id}:${task.updatedAt}`)
+                .digest('hex')}`
+            : null,
+        receiptHash:
+          task.status !== 'active'
+            ? `sha256:${createHash('sha256')
+                .update(`task-receipt:${task.id}:${task.updatedAt}`)
+                .digest('hex')}`
+            : null,
+        acceptedCommitPresent: Boolean(task.acceptedCommit),
+        decidedAt: task.status !== 'active' ? task.updatedAt : null,
+      },
+    };
+
+    return projectTaskTrace(sourceProjection);
+  }
+
+  private async createSessionTranscriptCompaction(
+    sessionId: string,
+    input: CreateTranscriptCompactionRequest,
+  ): Promise<TranscriptCompactionCheckpoint | Error> {
+    const session = this.stateStore.getSession(sessionId);
+    if (!session) {
+      return new Error('Unknown session.');
+    }
+    if (
+      input.expectedCompactionPolicyRevision !==
+      CODEWAVE_COMPACTION_POLICY_REVISION
+    ) {
+      const error = new Error('Compaction policy revision mismatch.');
+      (error as any).code = 'compaction_policy_revision_mismatch';
+      (error as any).currentCompactionRevision =
+        CODEWAVE_COMPACTION_POLICY_REVISION;
+      return error;
+    }
+    const headSequence = this.stateStore.getTranscriptHeadSequence(sessionId);
+    if (input.expectedTranscriptHeadSequence !== headSequence) {
+      throw new TranscriptCompactionError(
+        'compaction_chain_invalid',
+        `Transcript head sequence mismatch: expected ${input.expectedTranscriptHeadSequence}, observed ${headSequence}.`,
+      );
+    }
+    const latestCheckpoint =
+      this.stateStore.getLatestTranscriptCompactionCheckpoint(sessionId);
+    if (
+      input.expectedPreviousCheckpointId !== (latestCheckpoint?.id ?? null)
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_chain_invalid',
+        `Previous compaction checkpoint mismatch: expected ${input.expectedPreviousCheckpointId}, observed ${latestCheckpoint?.id ?? null}.`,
+      );
+    }
+    const fromSequence = latestCheckpoint
+      ? latestCheckpoint.throughSequence + 1
+      : 1;
+    if (
+      typeof input.throughSequence !== 'number' ||
+      !Number.isSafeInteger(input.throughSequence) ||
+      input.throughSequence < fromSequence ||
+      input.throughSequence > headSequence
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        `throughSequence ${input.throughSequence} must be between ${fromSequence} and ${headSequence}.`,
+      );
+    }
+    const rawMessages = this.stateStore.listTranscriptMessagesRange(
+      sessionId,
+      fromSequence,
+      input.throughSequence,
+    );
+    if (rawMessages.length === 0) {
+      throw new TranscriptCompactionError(
+        'compaction_input_invalid',
+        'No transcript messages found in the requested range.',
+      );
+    }
+    const lastMessage = rawMessages.at(-1)!;
+    const run = this.stateStore.getRun(lastMessage.runId);
+    if (
+      !run ||
+      (run.status !== 'completed' &&
+        run.status !== 'failed' &&
+        run.status !== 'cancelled')
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        'Compaction throughSequence must align with a terminal run boundary.',
+      );
+    }
+    const latestRunSequence =
+      this.stateStore.getLatestTranscriptSequenceForRun(run.id);
+    if (latestRunSequence !== lastMessage.sequence) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        'Compaction throughSequence must be the terminal run tail message.',
+      );
+    }
+
+    const checkpoint = await createTranscriptCompaction({
+      messages: rawMessages,
+      boundary: {
+        sessionId,
+        transcriptHeadSequence: headSequence,
+        throughSequence: input.throughSequence,
+        throughMessageId: lastMessage.id,
+        throughRunId: lastMessage.runId,
+        throughRunStatus: run.status,
+        isRunTranscriptTail: true,
+      },
+      previousCheckpoint: latestCheckpoint,
+      policyRevision: CODEWAVE_COMPACTION_POLICY_REVISION,
+      generator: {
+        id: 'codewave.local-compactor',
+        version: '1',
+        kind: 'local-deterministic',
+      },
+      hooks: [createDeterministicTranscriptSummaryHook()],
+      limits: {
+        minimumRawTailMessages: Math.min(
+          CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
+          Math.max(0, headSequence - input.throughSequence),
+        ),
+      },
+    });
+
+    const saved = this.stateStore.createTranscriptCompactionCheckpoint(
+      checkpoint,
+      input.expectedTranscriptHeadSequence,
+      input.expectedPreviousCheckpointId,
+    );
+    return saved;
+  }
+
   private async serveStatic(
     pathname: string,
     response: ServerResponse,
@@ -2073,6 +3183,11 @@ export class CodeWaveDaemon {
   ): { workspaceRoot: string; absolutePath: string } | Error {
     const workspaceRoot = path.resolve(workspacePath);
     const normalizedRelativePath = normalizeRelativePath(relativePath);
+    if (isProtectedWorkspaceControlPath(normalizedRelativePath)) {
+      return new Error(
+        'Repository and CodeWave control paths are protected from workspace file operations.',
+      );
+    }
     const absolutePath = path.resolve(
       workspaceRoot,
       normalizedRelativePath || '.',
@@ -2141,6 +3256,15 @@ export class CodeWaveDaemon {
       const entries = await readdir(absolutePath, { withFileTypes: true });
       const mappedEntries: WorkspaceEntriesResponse['entries'] = entries
         .filter((entry) => entry.isDirectory() || entry.isFile())
+        .filter(
+          (entry) =>
+            !isProtectedWorkspaceControlPath(
+              this.toWorkspaceRelativePath(
+                workspaceRoot,
+                path.join(absolutePath, entry.name),
+              ),
+            ),
+        )
         .map((entry) => {
           const entryAbsolutePath = path.join(absolutePath, entry.name);
           const kind: WorkspaceEntryKind = entry.isDirectory() ? 'folder' : 'file';
@@ -2379,6 +3503,17 @@ export class CodeWaveDaemon {
       if (pathEscapesRoot(resolvedParent.workspaceRoot, absolutePath)) {
         return new WorkspaceFileError(
           'Created path escapes the selected workspace.',
+          'workspace_path_escape',
+          409,
+        );
+      }
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedParent.workspaceRoot, absolutePath),
+        )
+      ) {
+        return new WorkspaceFileError(
+          'Repository and CodeWave control paths cannot be created or replaced.',
           'workspace_path_escape',
           409,
         );
@@ -2646,7 +3781,15 @@ export class CodeWaveDaemon {
         return new Error('The parent path is not a folder.');
       }
 
-      await mkdir(path.join(resolvedParent.absolutePath, folderName));
+      const folderPath = path.join(resolvedParent.absolutePath, folderName);
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedParent.workspaceRoot, folderPath),
+        )
+      ) {
+        return new Error('Repository and CodeWave control paths cannot be created.');
+      }
+      await mkdir(folderPath);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2681,6 +3824,13 @@ export class CodeWaveDaemon {
       const nextAbsolutePath = path.resolve(parentPath, nextName);
       if (pathEscapesRoot(resolvedTarget.workspaceRoot, nextAbsolutePath)) {
         return new Error('Renamed path escapes the selected workspace.');
+      }
+      if (
+        isProtectedWorkspaceControlPath(
+          this.toWorkspaceRelativePath(resolvedTarget.workspaceRoot, nextAbsolutePath),
+        )
+      ) {
+        return new Error('Entries cannot be renamed into repository or CodeWave control paths.');
       }
       const parentContainmentError = await this.validateRealWorkspaceContainment(
         resolvedTarget.workspaceRoot,
@@ -2804,13 +3954,17 @@ export class CodeWaveDaemon {
           } satisfies ProviderHealth;
         }
 
-        const capabilities = await provider.capabilities();
         if (!configuration.enabled) {
           return {
             providerId: configuration.providerId,
             available: false,
             detail: `${configuration.displayName} is disabled by CodeWave provider policy. ${configuration.setupHint}`,
-            capabilities,
+            capabilities: {
+              daemonApprovalMediation: configuration.adapterKind === 'acp-v1',
+              resumableSessions: false,
+              checkpointEvents: false,
+              inFlightSteering: 'unsupported',
+            },
             enabled: false,
             configured:
               configuration.configurationSource !== 'default' ||
@@ -2824,6 +3978,8 @@ export class CodeWaveDaemon {
             latencyMs: 0,
           } satisfies ProviderHealth;
         }
+
+        const capabilities = await provider.capabilities();
 
         const cached = this.providerHealthCache.get(configuration.providerId);
         if (cached && cached.expiresAt > Date.now()) {
@@ -2928,7 +4084,7 @@ export class CodeWaveDaemon {
   private async getProviderCapabilities(
     providerId: string,
   ): Promise<ProviderCapabilities | null> {
-    if (!isKnownProviderId(providerId)) {
+    if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
       return null;
     }
     const provider = this.providers.get(providerId);
@@ -2940,7 +4096,7 @@ export class CodeWaveDaemon {
   }
 
   private async getProviderHealth(providerId: string): Promise<ProviderHealth | null> {
-    if (!isKnownProviderId(providerId)) {
+    if (!isConfiguredProviderId(this.providerPolicy.snapshot(), providerId)) {
       return null;
     }
     return (
@@ -3899,6 +5055,8 @@ export class CodeWaveDaemon {
       toolInvocations: this.stateStore.listToolInvocations(runId),
       contextChars,
       undo,
+      executionBudget: this.stateStore.getRunExecutionBudget(runId),
+      usage: this.stateStore.getRunUsageFacts(runId),
     };
   }
 
@@ -4216,6 +5374,7 @@ export class CodeWaveDaemon {
   }
 
   private scheduleQueuedSteeringDispatch(targetRunId: string): void {
+    if (this.lifecycle !== 'running') return;
     if (this.steeringFallbackSchedules.has(targetRunId)) return;
     this.steeringFallbackSchedules.add(targetRunId);
     void (async () => {
@@ -4236,6 +5395,7 @@ export class CodeWaveDaemon {
   }
 
   private async dispatchQueuedSteering(targetRunId: string): Promise<void> {
+    if (this.lifecycle !== 'running') return;
     if (this.steeringDispatches.has(targetRunId)) return;
     const targetRun = this.stateStore.getRun(targetRunId);
     if (!targetRun || !isTerminalRunStatus(targetRun.status)) return;
@@ -4306,6 +5466,12 @@ export class CodeWaveDaemon {
     sessionId: string,
     body: StartRunRequest,
   ): Promise<RunSnapshot | Error | null> {
+    if (this.lifecycle !== 'running') {
+      return new DaemonConflictError(
+        'The daemon is shutting down and cannot start another provider run.',
+        'daemon_shutting_down',
+      );
+    }
     const registry = this.requireProviderRevision(body.expectedProviderRevision);
     if (registry instanceof Error) return registry;
     const session = this.stateStore.getSession(sessionId);
@@ -4315,88 +5481,150 @@ export class CodeWaveDaemon {
     if (typeof body.prompt !== 'string' || !body.prompt.trim()) {
       return new Error('A non-empty run prompt is required.');
     }
+    const executionBudget = parseRunExecutionBudget(body.executionBudget);
+    if (executionBudget instanceof Error) return executionBudget;
 
-    await waitAtContinuityRunBarrier();
-
-    const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
-    if (activeRun) {
+    const taskRunReservation = this.worktreeManager.reserveRunForWorkspace(
+      session.workspacePath,
+    );
+    if (taskRunReservation instanceof Error) {
       return new DaemonConflictError(
-        `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
-        'active_run_conflict',
+        taskRunReservation.message,
+        taskRunReservation.code === 'task_closed'
+          ? 'task_workspace_closed'
+          : 'task_workspace_busy',
       );
     }
-
-    if (this.sessionRunReservations.has(session.id)) {
-      return new DaemonConflictError(
-        'A run launch is already being prepared for this session. Refresh before retrying.',
-        'active_run_conflict',
-      );
-    }
-
-    this.sessionRunReservations.add(session.id);
     const now = new Date().toISOString();
     let run: WorkbenchRun;
     let provider: ProviderAdapter;
     try {
-      const configuredProvider = this.providers.get(session.providerId);
-      if (!configuredProvider) {
-        return new Error(`Provider ${session.providerId} is not configured.`);
-      }
-      provider = configuredProvider;
+      await waitAtContinuityRunBarrier();
 
-      const health = await this.getProviderHealth(session.providerId);
-      if (!health) {
-        return new Error(`Provider ${session.providerId} is not configured.`);
-      }
-      if (!health.available) {
-        return new Error(
-          `${provider.displayName} is not ready for runs: ${health.detail}`,
-        );
-      }
-
-      run = {
-        id: randomUUID(),
-        sessionId: session.id,
-        providerId: session.providerId,
-        providerConfigurationRevision: registry.revision,
-        prompt: body.prompt,
-        status: 'running',
-        mode: body.mode === 'plan' ? 'plan' : 'execute',
-        preRunCommit: null,
-        createdAt: now,
-        startedAt: now,
-        completedAt: null,
-        errorMessage: null,
-      };
-
-      const preRunCommit = await getGitHeadCommit(session.workspacePath);
-      if (preRunCommit) {
-        run.preRunCommit = preRunCommit;
-      }
-
-      const confirmedRegistry = this.requireProviderRevision(
-        body.expectedProviderRevision,
-      );
-      if (confirmedRegistry instanceof Error) return confirmedRegistry;
-      const newlyActiveRun = this.stateStore
-        .listNonTerminalRuns(session.id)
-        .at(-1);
-      if (newlyActiveRun) {
+      if (
+        taskRunReservation &&
+        this.taskHasActiveRun(taskRunReservation.taskId)
+      ) {
         return new DaemonConflictError(
-          `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+          'A provider run is already active in this task workspace.',
           'active_run_conflict',
         );
       }
-      this.stateStore.createRun(run);
-      triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
+
+      const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
+      if (activeRun) {
+        return new DaemonConflictError(
+          `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
+          'active_run_conflict',
+        );
+      }
+
+      if (this.sessionRunReservations.has(session.id)) {
+        return new DaemonConflictError(
+          'A run launch is already being prepared for this session. Refresh before retrying.',
+          'active_run_conflict',
+        );
+      }
+
+      this.sessionRunReservations.add(session.id);
+      try {
+        const configuredProvider = this.providers.get(session.providerId);
+        if (!configuredProvider) {
+          return new Error(`Provider ${session.providerId} is not configured.`);
+        }
+        provider = configuredProvider;
+
+        const health = await this.getProviderHealth(session.providerId);
+        if (this.lifecycle !== 'running') {
+          return new DaemonConflictError(
+            'The daemon began shutting down while this run was being prepared.',
+            'daemon_shutting_down',
+          );
+        }
+        if (!health) {
+          return new Error(`Provider ${session.providerId} is not configured.`);
+        }
+        if (!health.available) {
+          return new Error(
+            `${provider.displayName} is not ready for runs: ${health.detail}`,
+          );
+        }
+
+        run = {
+          id: randomUUID(),
+          sessionId: session.id,
+          providerId: session.providerId,
+          providerConfigurationRevision: registry.revision,
+          prompt: body.prompt,
+          status: 'running',
+          mode: body.mode === 'plan' ? 'plan' : 'execute',
+          preRunCommit: null,
+          createdAt: now,
+          startedAt: now,
+          completedAt: null,
+          errorMessage: null,
+        };
+
+        const preRunCommit = await getGitHeadCommit(session.workspacePath);
+        if (preRunCommit) {
+          run.preRunCommit = preRunCommit;
+        }
+
+        const confirmedRegistry = this.requireProviderRevision(
+          body.expectedProviderRevision,
+        );
+        if (confirmedRegistry instanceof Error) return confirmedRegistry;
+        const newlyActiveRun = this.stateStore
+          .listNonTerminalRuns(session.id)
+          .at(-1);
+        if (newlyActiveRun) {
+          return new DaemonConflictError(
+            `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+            'active_run_conflict',
+          );
+        }
+        this.stateStore.createRun(run, executionBudget.maxWallTimeMs === null &&
+          executionBudget.maxToolInvocations === null &&
+          executionBudget.maxReportedTokens === null
+          ? null
+          : {
+              runId: run.id,
+              budget: executionBudget,
+              deadlineAt:
+                executionBudget.maxWallTimeMs === null
+                  ? null
+                  : new Date(
+                      Date.parse(now) + executionBudget.maxWallTimeMs,
+                    ).toISOString(),
+              observedToolInvocations: 0,
+              exceededDimension: null,
+              exceededAt: null,
+              observedValue: null,
+              limitValue: null,
+              enforcement: null,
+              createdAt: now,
+              updatedAt: now,
+            });
+        triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
+      } finally {
+        this.sessionRunReservations.delete(session.id);
+      }
     } finally {
-      this.sessionRunReservations.delete(session.id);
+      taskRunReservation?.release();
+    }
+    if (this.lifecycle !== 'running') {
+      await this.cancelRun(run.id);
+      return new DaemonConflictError(
+        'The daemon began shutting down before the provider could launch.',
+        'daemon_shutting_down',
+      );
     }
     if (run.preRunCommit) {
       this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);
     }
     const launchAttemptId = randomUUID();
     await this.syncProviderConnectedTools(session, run);
+    this.armRunWallTimeBudget(run.id);
     await this.acceptEvent({
       id: randomUUID(),
       sessionId: session.id,
@@ -4505,6 +5733,108 @@ export class CodeWaveDaemon {
     return this.getRunSnapshot(run.id);
   }
 
+  private armRunWallTimeBudget(runId: string): void {
+    const budget = this.stateStore.getRunExecutionBudget(runId);
+    if (
+      !budget ||
+      budget.budget.maxWallTimeMs === null ||
+      budget.deadlineAt === null
+    ) {
+      return;
+    }
+    const run = this.stateStore.getRun(runId);
+    if (!run || isTerminalRunStatus(run.status)) return;
+    const remainingMs = Date.parse(budget.deadlineAt) - Date.now();
+    const enforce = (observedValue: number) => {
+      void this.enforceRunBudgetExceeded(
+        runId,
+        'wall-time',
+        observedValue,
+        budget.budget.maxWallTimeMs!,
+        'hard-cancel',
+      ).catch(() => undefined);
+    };
+    if (remainingMs <= 0) {
+      enforce(budget.budget.maxWallTimeMs!);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.runWallTimeTimers.delete(runId);
+      enforce(Math.max(Date.parse(budget.deadlineAt!) - Date.now(), 0));
+    }, remainingMs);
+    timer.unref?.();
+    this.runWallTimeTimers.set(runId, timer);
+  }
+
+  private clearRunWallTimeTimer(runId: string): void {
+    const timer = this.runWallTimeTimers.get(runId);
+    if (timer) {
+      clearTimeout(timer);
+      this.runWallTimeTimers.delete(runId);
+    }
+  }
+
+  private async enforceRunBudgetExceeded(
+    runId: string,
+    dimension: 'wall-time' | 'tool-invocations' | 'reported-tokens',
+    observedValue: number,
+    limitValue: number,
+    enforcement: 'hard-cancel' | 'observed-cancel' | 'terminal-observed',
+  ): Promise<void> {
+    const run = this.stateStore.getRun(runId);
+    if (!run || isTerminalRunStatus(run.status)) return;
+    const budget = this.stateStore.getRunExecutionBudget(runId);
+    if (!budget || budget.exceededDimension) return;
+    const event: WorkbenchEvent = {
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      runId,
+      timestamp: new Date().toISOString(),
+      source: 'system',
+      type: 'run.budget.exceeded',
+      payload: {
+        dimension,
+        observedValue,
+        limitValue,
+        enforcement,
+        message: `Run exceeded its ${dimension} budget (${observedValue} over limit ${limitValue}, ${enforcement}).`,
+      },
+    };
+    const appended = this.stateStore.appendBudgetExceededEvent(
+      event,
+      dimension,
+      observedValue,
+      limitValue,
+      enforcement,
+    );
+    if (!appended) return;
+    this.eventBroker.publish(appended);
+    await this.cancelRun(runId);
+  }
+
+  private async observeToolInvocationBudget(
+    event: WorkbenchEvent,
+  ): Promise<void> {
+    const budget = this.stateStore.getRunExecutionBudget(event.runId);
+    if (!budget || budget.budget.maxToolInvocations === null) return;
+    if (budget.exceededDimension) return;
+    const observed = budget.observedToolInvocations + 1;
+    this.stateStore.updateObservedToolInvocations(
+      event.runId,
+      observed,
+      event.timestamp,
+    );
+    if (observed > budget.budget.maxToolInvocations) {
+      await this.enforceRunBudgetExceeded(
+        event.runId,
+        'tool-invocations',
+        observed,
+        budget.budget.maxToolInvocations,
+        'observed-cancel',
+      );
+    }
+  }
+
   private async cancelRun(runId: string): Promise<RunSnapshot | null> {
     const run = this.stateStore.getRun(runId);
     if (!run) {
@@ -4515,9 +5845,18 @@ export class CodeWaveDaemon {
       return this.getRunSnapshot(runId);
     }
 
+    this.cancellationRequestedRuns.add(runId);
+    await this.cancelPendingApprovalsForRun(
+      runId,
+      'Run cancellation resolved the pending provider permission.',
+    );
     const handle = this.runHandles.get(runId);
     if (handle) {
-      await handle.cancel();
+      try {
+        await settleWithin(handle.cancel(), this.shutdownTimeoutMs);
+      } catch {
+        // The daemon-owned terminal fence below still records cancellation.
+      }
     }
 
     const current = this.stateStore.getRun(runId);
@@ -4535,6 +5874,7 @@ export class CodeWaveDaemon {
       });
     }
 
+    this.cancellationRequestedRuns.delete(runId);
     return this.getRunSnapshot(runId);
   }
 
@@ -4589,6 +5929,17 @@ export class CodeWaveDaemon {
     run: WorkbenchRun,
     request: ProviderApprovalRequest,
   ): Promise<ProviderApprovalDecision> {
+    const currentRun = this.stateStore.getRun(run.id);
+    if (
+      !currentRun ||
+      isTerminalRunStatus(currentRun.status) ||
+      this.cancellationRequestedRuns.has(run.id)
+    ) {
+      return {
+        behavior: 'cancel',
+        message: 'The run is cancelling, so this provider permission was cancelled.',
+      };
+    }
     const approval: ApprovalRecord = {
       id: randomUUID(),
       sessionId: run.sessionId,
@@ -4691,6 +6042,7 @@ export class CodeWaveDaemon {
   private async finalizeApproval(
     approvalId: string,
     body: ResolveApprovalRequest,
+    providerDecisionOverride?: ProviderApprovalDecision,
   ): Promise<ProviderApprovalDecision> {
     const approval = this.stateStore.getApproval(approvalId);
     if (!approval) {
@@ -4738,11 +6090,27 @@ export class CodeWaveDaemon {
           };
 
     if (pending) {
-      pending.resolve(decision);
+      pending.resolve(providerDecisionOverride ?? decision);
       this.pendingApprovals.delete(approval.id);
     }
 
-    return decision;
+    return providerDecisionOverride ?? decision;
+  }
+
+  private async cancelPendingApprovalsForRun(
+    runId: string,
+    reason: string,
+  ): Promise<void> {
+    const pending = [...this.pendingApprovals.values()].filter(
+      (approval) => approval.runId === runId,
+    );
+    for (const approval of pending) {
+      await this.finalizeApproval(
+        approval.approvalId,
+        { decision: 'denied', reason },
+        { behavior: 'cancel', message: reason },
+      );
+    }
   }
 
   private async denyPendingApprovalsForRun(
@@ -5107,16 +6475,38 @@ export class CodeWaveDaemon {
           : terminalStatus === 'cancelled' && typeof event.payload.reason === 'string'
             ? event.payload.reason
             : null;
+      const usage = normalizeRunUsageFacts(event.payload.usage);
+      const budgetState = this.stateStore.getRunExecutionBudget(event.runId);
+      let tokenBudgetObservation: {
+        observedValue: number | null;
+        limitValue: number | null;
+        exceeded: boolean;
+      } | null = null;
+      if (budgetState && budgetState.budget.maxReportedTokens !== null) {
+        const observed = usage.providerReportedTotalTokens;
+        tokenBudgetObservation = {
+          observedValue: observed,
+          limitValue: budgetState.budget.maxReportedTokens,
+          exceeded: observed !== null && observed > budgetState.budget.maxReportedTokens,
+        };
+      }
       const terminalEvent = this.stateStore.appendTerminalEvent(
         event,
         terminalStatus,
         errorMessage,
+        usage,
+        tokenBudgetObservation,
       );
       if (!terminalEvent) return;
       event = terminalEvent;
+      this.clearRunWallTimeTimer(event.runId);
+      this.cancellationRequestedRuns.delete(event.runId);
       triggerContinuityCrashPoint('after_terminal_persistence');
     } else {
       event = this.stateStore.appendEvent(event);
+      if (event.type === 'tool.started') {
+        await this.observeToolInvocationBudget(event);
+      }
     }
     this.syncSessionToolRegistrationFromRegisteredEvent(event);
     const invocation = this.syncToolInvocationFromEvent(event);

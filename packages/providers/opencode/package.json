@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@codewave/provider-acp": "file:../acp",
     "@codewave/protocol": "file:../../protocol",
     "@codewave/provider-runtime": "file:../runtime",
     "@codewave/provider-transport": "file:../transport"

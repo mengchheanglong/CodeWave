@@ -1023,7 +1023,7 @@ export class QwenCliProvider implements ProviderAdapter {
 
     return {
       subtype: 'can_use_tool',
-      behavior: decision.behavior,
+      behavior: decision.behavior === 'cancel' ? 'deny' : decision.behavior,
       ...(decision.message ? { message: decision.message } : {}),
       ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}),
     };

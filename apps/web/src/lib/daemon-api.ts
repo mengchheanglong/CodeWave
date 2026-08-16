@@ -6,6 +6,10 @@ import type {
   ApprovalRecord,
   ArchiveSnapshot,
   ClientHandshakeResponse,
+  CreateProjectRequest,
+  CreateWorktreeTaskRequest,
+  AcceptWorktreeChangesRequest,
+  CreateAcpProviderRequest,
   CompareRunRequest,
   CompareRunResponse,
   CreateSessionRequest,
@@ -32,6 +36,9 @@ import type {
   RuntimeInfo,
   ProviderId,
   ProviderRegistrySnapshot,
+  ProjectListResponse,
+  ProjectRecord,
+  RevertWorktreeChangesRequest,
   SessionSnapshot,
   StartRunRequest,
   ToolPlaneResponse,
@@ -40,7 +47,12 @@ import type {
   UpdateSessionRequest,
   UpdateDefaultProviderRequest,
   UpdateProviderConfigurationRequest,
+  TaskTraceReportV1,
+  TranscriptCompactionCheckpoint,
+  CreateTranscriptCompactionRequest,
   WorkbenchSession,
+  WorktreeChangesSnapshot,
+  WorktreeTaskRecord,
 } from '@codewave/protocol';
 
 type RequestOptions = Omit<RequestInit, 'body'> & {
@@ -55,6 +67,9 @@ interface ToolPlaneQuery {
 export interface DaemonApi {
   getRuntime(): Promise<RuntimeInfo>;
   getProviders(): Promise<ProviderRegistrySnapshot>;
+  createAcpProvider(
+    input: CreateAcpProviderRequest,
+  ): Promise<ProviderRegistrySnapshot>;
   updateProvider(
     providerId: ProviderId,
     input: UpdateProviderConfigurationRequest,
@@ -63,6 +78,32 @@ export interface DaemonApi {
     input: UpdateDefaultProviderRequest,
   ): Promise<ProviderRegistrySnapshot>;
   getToolPlane(query?: ToolPlaneQuery): Promise<ToolPlaneResponse>;
+  getProjects(): Promise<ProjectListResponse>;
+  createProject(input: CreateProjectRequest): Promise<ProjectRecord>;
+  createWorktreeTask(
+    projectId: string,
+    input: CreateWorktreeTaskRequest,
+  ): Promise<WorktreeTaskRecord>;
+  getWorktreeChanges(taskId: string): Promise<WorktreeChangesSnapshot>;
+  acceptWorktreeChanges(
+    taskId: string,
+    input: AcceptWorktreeChangesRequest,
+  ): Promise<WorktreeChangesSnapshot>;
+  revertWorktreeChanges(
+    taskId: string,
+    input: RevertWorktreeChangesRequest,
+  ): Promise<WorktreeChangesSnapshot>;
+  getTaskTrace(taskId: string): Promise<TaskTraceReportV1>;
+  getSessionCompactions(
+    sessionId: string,
+  ): Promise<TranscriptCompactionCheckpoint[]>;
+  createSessionCompaction(
+    sessionId: string,
+    input: CreateTranscriptCompactionRequest,
+  ): Promise<TranscriptCompactionCheckpoint>;
+  getLatestSessionCompaction(
+    sessionId: string,
+  ): Promise<{ checkpoint: TranscriptCompactionCheckpoint | null }>;
   getSessions(): Promise<WorkbenchSession[]>;
   createSession(input: CreateSessionRequest): Promise<WorkbenchSession>;
   deleteSession(sessionId: string): Promise<DeleteSessionResponse>;
@@ -326,6 +367,12 @@ export function createDaemonApi({
     getProviders() {
       return requestJson<ProviderRegistrySnapshot>('/api/providers');
     },
+    createAcpProvider(input) {
+      return requestJson<ProviderRegistrySnapshot>('/api/providers', {
+        method: 'POST',
+        body: input,
+      });
+    },
     updateProvider(providerId, input) {
       return requestJson<ProviderRegistrySnapshot>(`/api/providers/${providerId}`, {
         method: 'PATCH',
@@ -348,6 +395,59 @@ export function createDaemonApi({
       }
       const suffix = params.toString() ? `?${params.toString()}` : '';
       return requestJson<ToolPlaneResponse>(`/api/tool-plane${suffix}`);
+    },
+    getProjects() {
+      return requestJson<ProjectListResponse>('/api/projects');
+    },
+    createProject(input) {
+      return requestJson<ProjectRecord>('/api/projects', {
+        method: 'POST',
+        body: input,
+      });
+    },
+    createWorktreeTask(projectId, input) {
+      return requestJson<WorktreeTaskRecord>(
+        `/api/projects/${encodeURIComponent(projectId)}/tasks`,
+        { method: 'POST', body: input },
+      );
+    },
+    getWorktreeChanges(taskId) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/changes`,
+      );
+    },
+    acceptWorktreeChanges(taskId, input) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/accept`,
+        { method: 'POST', body: input },
+      );
+    },
+    revertWorktreeChanges(taskId, input) {
+      return requestJson<WorktreeChangesSnapshot>(
+        `/api/tasks/${encodeURIComponent(taskId)}/revert`,
+        { method: 'POST', body: input },
+      );
+    },
+    getTaskTrace(taskId) {
+      return requestJson<TaskTraceReportV1>(
+        `/api/tasks/${encodeURIComponent(taskId)}/trace`,
+      );
+    },
+    getSessionCompactions(sessionId) {
+      return requestJson<TranscriptCompactionCheckpoint[]>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions`,
+      );
+    },
+    createSessionCompaction(sessionId, input) {
+      return requestJson<TranscriptCompactionCheckpoint>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions`,
+        { method: 'POST', body: input },
+      );
+    },
+    getLatestSessionCompaction(sessionId) {
+      return requestJson<{ checkpoint: TranscriptCompactionCheckpoint | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions/latest`,
+      );
     },
     getSessions() {
       return requestJson<WorkbenchSession[]>('/api/sessions');

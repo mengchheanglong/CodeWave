@@ -5,6 +5,7 @@ import type { RunViewTab } from '../../lib/shell-format';
 import {
   requestApprovalResolution,
   requestExecutePlan,
+  requestTranscriptCompaction,
 } from '../../app-controller';
 import { formatTimestamp } from '../../shell-status-summary';
 import { RunTimelinePanel } from '../RunTimelinePanel';
@@ -103,6 +104,9 @@ export function RunSurface({
                   }}
                   onExecutePlan={(planText) => {
                     void requestExecutePlan(planText);
+                  }}
+                  onCompactTranscript={() => {
+                    void requestTranscriptCompaction();
                   }}
                   showThinking={showThinking}
                   formatTimestamp={formatTimestamp}

@@ -8,7 +8,6 @@ import type {
 } from '@codewave/protocol';
 import { requestRuntimeRefresh } from '../app-controller';
 import { createDaemonApi } from '../lib/daemon-api';
-import { renderProviderLabel } from '../lib/shell-format';
 
 type ProviderSettingsProps = {
   open: boolean;
@@ -56,6 +55,8 @@ export function ProviderSettings({
   );
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const customToggleRef = useRef<HTMLButtonElement>(null);
+  const customIdRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   const [busyProviderId, setBusyProviderId] = useState<ProviderId | null>(null);
   const [defaultBusy, setDefaultBusy] = useState(false);
@@ -66,6 +67,15 @@ export function ProviderSettings({
   const [commandDrafts, setCommandDrafts] = useState<
     Partial<Record<ProviderId, string>>
   >({});
+  const [argsDrafts, setArgsDrafts] = useState<Partial<Record<ProviderId, string>>>({});
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customDraft, setCustomDraft] = useState({
+    providerId: 'acp.',
+    displayName: '',
+    command: '',
+    args: '',
+    confirmed: false,
+  });
 
   onCloseRef.current = onClose;
 
@@ -74,6 +84,11 @@ export function ProviderSettings({
     setCommandDrafts(
       Object.fromEntries(
         registry.providers.map((provider) => [provider.providerId, provider.command ?? '']),
+      ) as Partial<Record<ProviderId, string>>,
+    );
+    setArgsDrafts(
+      Object.fromEntries(
+        registry.providers.map((provider) => [provider.providerId, provider.args.join('\n')]),
       ) as Partial<Record<ProviderId, string>>,
     );
   }, [registry]);
@@ -124,6 +139,12 @@ export function ProviderSettings({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !showCustomForm) return;
+    const frame = window.requestAnimationFrame(() => customIdRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, showCustomForm]);
+
   const healthByProvider = useMemo(
     () => new Map(health.map((entry) => [entry.providerId, entry] as const)),
     [health],
@@ -146,7 +167,7 @@ export function ProviderSettings({
       await requestRuntimeRefresh();
       setActionMessage({
         kind: 'success',
-        text: `${renderProviderLabel(providerId)} settings saved.`,
+        text: `${registry.providers.find((provider) => provider.providerId === providerId)?.displayName ?? providerId} settings saved.`,
       });
     } catch (error) {
       setActionMessage({
@@ -170,7 +191,7 @@ export function ProviderSettings({
       await requestRuntimeRefresh();
       setActionMessage({
         kind: 'success',
-        text: `${renderProviderLabel(providerId)} is now the default provider.`,
+        text: `${registry.providers.find((provider) => provider.providerId === providerId)?.displayName ?? providerId} is now the default provider.`,
       });
     } catch (error) {
       setActionMessage({
@@ -179,6 +200,45 @@ export function ProviderSettings({
       });
     } finally {
       setDefaultBusy(false);
+    }
+  }
+
+  async function createCustomProvider() {
+    if (!registry || !customDraft.confirmed) return;
+    setBusyProviderId(customDraft.providerId as ProviderId);
+    setActionMessage(null);
+    try {
+      await apiRef.current.createAcpProvider({
+        expectedProviderRevision: registry.revision,
+        providerId: customDraft.providerId.trim() as `acp.${string}`,
+        displayName: customDraft.displayName.trim(),
+        command: customDraft.command.trim(),
+        args: customDraft.args
+          .split(/\r?\n/)
+          .map((argument) => argument.trim())
+          .filter(Boolean),
+      });
+      await requestRuntimeRefresh();
+      setCustomDraft({
+        providerId: 'acp.',
+        displayName: '',
+        command: '',
+        args: '',
+        confirmed: false,
+      });
+      setShowCustomForm(false);
+      window.requestAnimationFrame(() => customToggleRef.current?.focus());
+      setActionMessage({
+        kind: 'success',
+        text: 'Custom ACP profile added disabled. Enable it when you are ready to run its compatibility probe.',
+      });
+    } catch (error) {
+      setActionMessage({
+        kind: 'error',
+        text: error instanceof Error ? error.message : 'Custom ACP profile could not be added.',
+      });
+    } finally {
+      setBusyProviderId(null);
     }
   }
 
@@ -224,6 +284,110 @@ export function ProviderSettings({
           {actionMessage?.text ?? 'Changes are applied to new sessions after the runtime refreshes.'}
         </div>
 
+        <section className="provider-custom-section" aria-labelledby="provider-custom-title">
+          <div className="provider-custom-heading">
+            <div>
+              <span className="provider-settings-kicker">Local agent profile</span>
+              <h3 id="provider-custom-title">Connect an ACP agent</h3>
+              <p>Launches local executable code with stable ACP protocol v1.</p>
+            </div>
+            <button
+              ref={customToggleRef}
+              type="button"
+              aria-expanded={showCustomForm}
+              aria-controls="provider-custom-form"
+              onClick={() => setShowCustomForm((current) => !current)}
+            >
+              {showCustomForm ? 'Cancel' : 'Add agent'}
+            </button>
+          </div>
+          {showCustomForm ? (
+            <div id="provider-custom-form" className="provider-custom-form">
+              <label>
+                <span>Profile ID</span>
+                <input
+                  ref={customIdRef}
+                  value={customDraft.providerId}
+                  placeholder="acp.my-agent"
+                  onChange={(event) =>
+                    setCustomDraft((current) => ({
+                      ...current,
+                      providerId: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                <span>Display name</span>
+                <input
+                  value={customDraft.displayName}
+                  placeholder="My local agent"
+                  onChange={(event) =>
+                    setCustomDraft((current) => ({
+                      ...current,
+                      displayName: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="provider-custom-wide">
+                <span>Executable</span>
+                <input
+                  value={customDraft.command}
+                  placeholder="Absolute path or executable on PATH"
+                  onChange={(event) =>
+                    setCustomDraft((current) => ({
+                      ...current,
+                      command: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="provider-custom-wide">
+                <span>Arguments</span>
+                <textarea
+                  value={customDraft.args}
+                  rows={3}
+                  placeholder="One argument per line"
+                  onChange={(event) =>
+                    setCustomDraft((current) => ({
+                      ...current,
+                      args: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="provider-custom-confirm provider-custom-wide">
+                <input
+                  type="checkbox"
+                  checked={customDraft.confirmed}
+                  onChange={(event) =>
+                    setCustomDraft((current) => ({
+                      ...current,
+                      confirmed: event.target.checked,
+                    }))
+                  }
+                />
+                <span>I trust this command to run locally with my user permissions.</span>
+              </label>
+              <button
+                type="button"
+                className="provider-custom-submit provider-custom-wide"
+                disabled={
+                  !customDraft.confirmed ||
+                  !customDraft.providerId.trim() ||
+                  !customDraft.displayName.trim() ||
+                  !customDraft.command.trim() ||
+                  busyProviderId !== null
+                }
+                onClick={() => void createCustomProvider()}
+              >
+                Add disabled profile
+              </button>
+            </div>
+          ) : null}
+        </section>
+
         <div className="provider-settings-list">
           {registry?.providers.map((provider) => {
             const providerHealth = healthByProvider.get(provider.providerId);
@@ -231,6 +395,9 @@ export function ProviderSettings({
             const busy = busyProviderId === provider.providerId;
             const commandDraft = commandDrafts[provider.providerId] ?? '';
             const commandChanged = commandDraft.trim() !== (provider.command ?? '');
+            const argsDraft = argsDrafts[provider.providerId] ?? '';
+            const argsChanged =
+              argsDraft.trim() !== provider.args.join('\n');
             return (
               <article
                 key={provider.providerId}
@@ -243,7 +410,7 @@ export function ProviderSettings({
                     <span className="provider-settings-wave" aria-hidden="true"></span>
                     <div>
                       <div className="provider-settings-name-row">
-                        <h3>{renderProviderLabel(provider.providerId)}</h3>
+                        <h3>{provider.displayName}</h3>
                         {provider.providerId === 'freebuff' ? (
                           <span className="provider-primary-badge">Primary</span>
                         ) : null}
@@ -291,7 +458,7 @@ export function ProviderSettings({
 
                 <div className="provider-command-row">
                   <label htmlFor={`provider-command-${provider.providerId}`}>
-                    <span>Command override</span>
+                    <span>{provider.profileKind === 'custom' ? 'Executable' : 'Command override'}</span>
                     <input
                       id={`provider-command-${provider.providerId}`}
                       value={commandDraft}
@@ -299,6 +466,8 @@ export function ProviderSettings({
                       placeholder={
                         provider.providerId === 'freebuff'
                           ? 'Path to a Freebuff automation bridge'
+                          : provider.profileKind === 'custom'
+                            ? 'Executable path or name'
                           : `Use ${provider.displayName} from PATH`
                       }
                       onChange={(event) => {
@@ -321,6 +490,41 @@ export function ProviderSettings({
                     Save
                   </button>
                 </div>
+
+                {provider.profileKind === 'custom' ? (
+                  <div className="provider-command-row">
+                    <label htmlFor={`provider-args-${provider.providerId}`}>
+                      <span>Arguments</span>
+                      <textarea
+                        id={`provider-args-${provider.providerId}`}
+                        value={argsDraft}
+                        disabled={busy}
+                        rows={3}
+                        placeholder="One argument per line"
+                        onChange={(event) => {
+                          setArgsDrafts((current) => ({
+                            ...current,
+                            [provider.providerId]: event.target.value,
+                          }));
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!argsChanged || busy}
+                      onClick={() => {
+                        void updateProvider(provider.providerId, {
+                          args: argsDraft
+                            .split(/\r?\n/)
+                            .map((argument) => argument.trim())
+                            .filter(Boolean),
+                        });
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : null}
 
                 <footer className="provider-settings-card-footer">
                   <a href={provider.documentationUrl} target="_blank" rel="noreferrer">

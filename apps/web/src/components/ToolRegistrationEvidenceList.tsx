@@ -1,5 +1,6 @@
 import type { ProviderId, RoutingToolRequirement } from '@codewave/protocol';
 import type { ShellPanelsState } from '../lib/shell-panels-state';
+import { renderProviderLabel } from '../lib/shell-format';
 
 type ToolRegistrationEvidenceListProps = {
   snapshot: ShellPanelsState['toolPlane'];
@@ -113,7 +114,7 @@ export function ToolRegistrationEvidenceList({
           >
             <div className="qw-inspector-card-header">
               <div className="qw-inspector-card-title-group">
-                <strong>{row.providerId}</strong>
+                <strong>{renderProviderLabel(row.providerId)}</strong>
                 <span className="qw-inspector-subline">
                   {row.total} registrations, {row.providerEnumerated} enumerated, {row.eventObserved}{' '}
                   observed

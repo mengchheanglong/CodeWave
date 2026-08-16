@@ -10,7 +10,12 @@ import {
   type ArtifactRecord,
   type CheckpointRecord,
   type ProviderId,
+  type ProjectRecord,
   type RunSteeringInput,
+  type RunBudgetDimension,
+  type RunBudgetEnforcement,
+  type RunExecutionBudgetState,
+  type RunUsageFactsV1,
   type RunSteeringStatus,
   type RunStatus,
   type SessionToolRegistration,
@@ -19,8 +24,11 @@ import {
   type ToolInvocationRecord,
   type ToolInvocationStatus,
   type TranscriptMessage,
+  type TranscriptCompactionCheckpoint,
   type TranscriptRole,
   type TranscriptWindow,
+  type WorktreeTaskRecord,
+  type WorktreeTaskStatus,
   type WorkbenchEvent,
   type WorkbenchRun,
   type WorkbenchSession,
@@ -95,7 +103,11 @@ export class SQLiteStateStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.database.close();
+    try {
+      this.database.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } finally {
+      this.database.close();
+    }
   }
 
   private migrate(): void {
@@ -252,6 +264,86 @@ export class SQLiteStateStore {
         value TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_path TEXT NOT NULL UNIQUE,
+        default_branch TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS worktree_tasks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        branch_name TEXT NOT NULL UNIQUE,
+        base_ref TEXT NOT NULL,
+        base_commit TEXT NOT NULL,
+        worktree_path TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK (status IN ('active', 'accepted', 'reverted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        accepted_commit TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_worktree_tasks_project_created
+        ON worktree_tasks(project_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS run_execution_budgets (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+        schema_version TEXT NOT NULL,
+        max_wall_time_ms INTEGER,
+        max_tool_invocations INTEGER,
+        max_reported_tokens INTEGER,
+        deadline_at TEXT,
+        observed_tool_invocations INTEGER NOT NULL DEFAULT 0,
+        exceeded_dimension TEXT,
+        exceeded_at TEXT,
+        observed_value INTEGER,
+        limit_value INTEGER,
+        enforcement TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS run_usage_facts (
+        run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+        source_event_id TEXT NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,
+        schema_version TEXT NOT NULL,
+        reporting TEXT NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        reasoning_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        provider_total_tokens INTEGER,
+        recorded_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS transcript_compaction_checkpoints (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        previous_checkpoint_id TEXT REFERENCES transcript_compaction_checkpoints(id),
+        from_sequence INTEGER NOT NULL,
+        through_sequence INTEGER NOT NULL,
+        through_message_id TEXT NOT NULL REFERENCES transcript_messages(id),
+        through_run_id TEXT NOT NULL REFERENCES runs(id),
+        source_message_count INTEGER NOT NULL,
+        segment_digest TEXT NOT NULL,
+        coverage_digest TEXT NOT NULL,
+        summary_text TEXT NOT NULL,
+        memories_json TEXT NOT NULL,
+        generator_json TEXT NOT NULL,
+        policy_revision TEXT NOT NULL,
+        authority TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id, through_sequence, policy_revision),
+        CHECK(from_sequence > 0 AND through_sequence >= from_sequence)
+      );
+
+      CREATE INDEX IF NOT EXISTS transcript_compactions_session_sequence_idx
+        ON transcript_compaction_checkpoints(session_id, through_sequence DESC);
+
       CREATE TABLE IF NOT EXISTS run_steering_inputs (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -337,6 +429,7 @@ export class SQLiteStateStore {
     const expectedMetadata = {
       state_schema_version: 'codewave-state-v1',
       event_schema_version: 'codewave-event-v1',
+      transcript_compaction_schema_version: 'codewave-transcript-compaction-v1',
     } as const;
     for (const [key, expectedValue] of Object.entries(expectedMetadata)) {
       const existing = this.database
@@ -745,7 +838,10 @@ export class SQLiteStateStore {
       );
   }
 
-  createRun(run: WorkbenchRun): WorkbenchRun {
+  createRun(
+    run: WorkbenchRun,
+    executionBudget: RunExecutionBudgetState | null = null,
+  ): WorkbenchRun {
     this.withImmediateTransaction(() => {
       this.database
         .prepare(
@@ -781,6 +877,34 @@ export class SQLiteStateStore {
           run.completedAt,
           run.errorMessage,
         );
+
+      if (executionBudget) {
+        this.database
+          .prepare(
+            `INSERT INTO run_execution_budgets (
+               run_id, schema_version, max_wall_time_ms, max_tool_invocations,
+               max_reported_tokens, deadline_at, observed_tool_invocations,
+               exceeded_dimension, exceeded_at, observed_value, limit_value,
+               enforcement, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            executionBudget.runId,
+            executionBudget.budget.schemaVersion,
+            executionBudget.budget.maxWallTimeMs,
+            executionBudget.budget.maxToolInvocations,
+            executionBudget.budget.maxReportedTokens,
+            executionBudget.deadlineAt,
+            executionBudget.observedToolInvocations,
+            executionBudget.exceededDimension,
+            executionBudget.exceededAt,
+            executionBudget.observedValue,
+            executionBudget.limitValue,
+            executionBudget.enforcement,
+            executionBudget.createdAt,
+            executionBudget.updatedAt,
+          );
+      }
 
       const prompt = run.prompt.trim();
       if (prompt) {
@@ -1070,7 +1194,148 @@ export class SQLiteStateStore {
       oldestSequence,
       newestSequence,
       totalCount,
+      latestCompactionCheckpoint: this.getLatestTranscriptCompactionCheckpoint(
+        sessionId,
+        beforeSequence === null ? undefined : beforeSequence - 1,
+      ),
     };
+  }
+
+  getTranscriptHeadSequence(sessionId: string): number {
+    const row = this.database
+      .prepare(
+        'SELECT COALESCE(MAX(sequence), 0) AS head_sequence FROM transcript_messages WHERE session_id = ?',
+      )
+      .get(sessionId) as Record<string, unknown>;
+    return Number(row.head_sequence);
+  }
+
+  listTranscriptMessagesRange(
+    sessionId: string,
+    fromSequence: number,
+    throughSequence: number,
+  ): TranscriptMessage[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, session_id, run_id, sequence, parent_message_id, role,
+                content, created_at, source_event_id, metadata_json
+         FROM transcript_messages
+         WHERE session_id = ? AND sequence >= ? AND sequence <= ?
+         ORDER BY sequence ASC`,
+      )
+      .all(sessionId, fromSequence, throughSequence) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapTranscriptRow(row));
+  }
+
+  private mapTranscriptCompactionRow(
+    row: Record<string, unknown>,
+  ): TranscriptCompactionCheckpoint {
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      previousCheckpointId: row.previous_checkpoint_id
+        ? String(row.previous_checkpoint_id)
+        : null,
+      fromSequence: Number(row.from_sequence),
+      throughSequence: Number(row.through_sequence),
+      throughMessageId: String(row.through_message_id),
+      throughRunId: String(row.through_run_id),
+      sourceMessageCount: Number(row.source_message_count),
+      segmentDigest: String(row.segment_digest) as `sha256:${string}`,
+      coverageDigest: String(row.coverage_digest) as `sha256:${string}`,
+      summaryText: String(row.summary_text),
+      memories: parseJson<TranscriptCompactionCheckpoint['memories']>(
+        String(row.memories_json),
+      ),
+      generator: parseJson<TranscriptCompactionCheckpoint['generator']>(
+        String(row.generator_json),
+      ),
+      policyRevision: String(row.policy_revision),
+      authority: 'derived-non-authoritative',
+      createdAt: String(row.created_at),
+    };
+  }
+
+  getLatestTranscriptCompactionCheckpoint(
+    sessionId: string,
+    throughSequence?: number,
+  ): TranscriptCompactionCheckpoint | null {
+    const boundary = throughSequence ?? null;
+    const row = this.database
+      .prepare(
+        `SELECT * FROM transcript_compaction_checkpoints
+         WHERE session_id = ? AND (? IS NULL OR through_sequence <= ?)
+         ORDER BY through_sequence DESC LIMIT 1`,
+      )
+      .get(sessionId, boundary, boundary) as Record<string, unknown> | undefined;
+    return row ? this.mapTranscriptCompactionRow(row) : null;
+  }
+
+  listTranscriptCompactionCheckpoints(
+    sessionId: string,
+    options: { beforeSequence?: number; limit?: number } = {},
+  ): TranscriptCompactionCheckpoint[] {
+    const limit = Math.max(1, Math.min(50, Math.trunc(options.limit ?? 20)));
+    const before = options.beforeSequence ?? null;
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM transcript_compaction_checkpoints
+         WHERE session_id = ? AND (? IS NULL OR through_sequence < ?)
+         ORDER BY through_sequence DESC LIMIT ?`,
+      )
+      .all(sessionId, before, before, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapTranscriptCompactionRow(row));
+  }
+
+  createTranscriptCompactionCheckpoint(
+    checkpoint: TranscriptCompactionCheckpoint,
+    expectedTranscriptHeadSequence: number,
+    expectedPreviousCheckpointId: string | null,
+  ): TranscriptCompactionCheckpoint {
+    return this.withImmediateTransaction(() => {
+      if (
+        this.getTranscriptHeadSequence(checkpoint.sessionId) !==
+        expectedTranscriptHeadSequence
+      ) {
+        throw new Error('The transcript changed while the checkpoint was being derived.');
+      }
+      const previous = this.getLatestTranscriptCompactionCheckpoint(checkpoint.sessionId);
+      if ((previous?.id ?? null) !== expectedPreviousCheckpointId) {
+        throw new Error('The previous transcript checkpoint changed.');
+      }
+      const existing = this.database
+        .prepare('SELECT * FROM transcript_compaction_checkpoints WHERE id = ?')
+        .get(checkpoint.id) as Record<string, unknown> | undefined;
+      if (existing) return this.mapTranscriptCompactionRow(existing);
+      this.database
+        .prepare(
+          `INSERT INTO transcript_compaction_checkpoints (
+             id, session_id, previous_checkpoint_id, from_sequence,
+             through_sequence, through_message_id, through_run_id,
+             source_message_count, segment_digest, coverage_digest, summary_text,
+             memories_json, generator_json, policy_revision, authority, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          checkpoint.id,
+          checkpoint.sessionId,
+          checkpoint.previousCheckpointId,
+          checkpoint.fromSequence,
+          checkpoint.throughSequence,
+          checkpoint.throughMessageId,
+          checkpoint.throughRunId,
+          checkpoint.sourceMessageCount,
+          checkpoint.segmentDigest,
+          checkpoint.coverageDigest,
+          checkpoint.summaryText,
+          toJson(checkpoint.memories),
+          toJson(checkpoint.generator),
+          checkpoint.policyRevision,
+          checkpoint.authority,
+          checkpoint.createdAt,
+        );
+      return checkpoint;
+    });
   }
 
   getLatestTranscriptSequenceForRun(runId: string): number | null {
@@ -1174,10 +1439,289 @@ export class SQLiteStateStore {
     return persistedEvent;
   }
 
+  private mapProjectRow(row: Record<string, unknown>): ProjectRecord {
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      rootPath: String(row.root_path),
+      defaultBranch: String(row.default_branch),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private mapRunExecutionBudgetRow(
+    row: Record<string, unknown>,
+  ): RunExecutionBudgetState {
+    return {
+      runId: String(row.run_id),
+      budget: {
+        schemaVersion: 'codewave-run-budget-v1',
+        maxWallTimeMs:
+          row.max_wall_time_ms === null ? null : Number(row.max_wall_time_ms),
+        maxToolInvocations:
+          row.max_tool_invocations === null
+            ? null
+            : Number(row.max_tool_invocations),
+        maxReportedTokens:
+          row.max_reported_tokens === null
+            ? null
+            : Number(row.max_reported_tokens),
+      },
+      deadlineAt: row.deadline_at ? String(row.deadline_at) : null,
+      observedToolInvocations: Number(row.observed_tool_invocations),
+      exceededDimension: row.exceeded_dimension
+        ? (String(row.exceeded_dimension) as RunBudgetDimension)
+        : null,
+      exceededAt: row.exceeded_at ? String(row.exceeded_at) : null,
+      observedValue:
+        row.observed_value === null ? null : Number(row.observed_value),
+      limitValue: row.limit_value === null ? null : Number(row.limit_value),
+      enforcement: row.enforcement
+        ? (String(row.enforcement) as RunBudgetEnforcement)
+        : null,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  getRunExecutionBudget(runId: string): RunExecutionBudgetState | null {
+    const row = this.database
+      .prepare('SELECT * FROM run_execution_budgets WHERE run_id = ?')
+      .get(runId) as Record<string, unknown> | undefined;
+    return row ? this.mapRunExecutionBudgetRow(row) : null;
+  }
+
+  updateObservedToolInvocations(
+    runId: string,
+    observedToolInvocations: number,
+    updatedAt: string,
+  ): RunExecutionBudgetState | null {
+    this.database
+      .prepare(
+        `UPDATE run_execution_budgets
+         SET observed_tool_invocations = ?, updated_at = ?
+         WHERE run_id = ?`,
+      )
+      .run(observedToolInvocations, updatedAt, runId);
+    return this.getRunExecutionBudget(runId);
+  }
+
+  private mapRunUsageRow(row: Record<string, unknown>): RunUsageFactsV1 {
+    const value = (key: string) =>
+      row[key] === null || row[key] === undefined ? null : Number(row[key]);
+    return {
+      schemaVersion: 'codewave-usage-v1',
+      reporting: String(row.reporting) as RunUsageFactsV1['reporting'],
+      inputTokens: value('input_tokens'),
+      outputTokens: value('output_tokens'),
+      reasoningTokens: value('reasoning_tokens'),
+      cacheReadTokens: value('cache_read_tokens'),
+      cacheWriteTokens: value('cache_write_tokens'),
+      providerReportedTotalTokens: value('provider_total_tokens'),
+    };
+  }
+
+  getRunUsageFacts(runId: string): RunUsageFactsV1 | null {
+    const row = this.database
+      .prepare('SELECT * FROM run_usage_facts WHERE run_id = ?')
+      .get(runId) as Record<string, unknown> | undefined;
+    return row ? this.mapRunUsageRow(row) : null;
+  }
+
+  createProject(project: ProjectRecord): ProjectRecord {
+    this.database
+      .prepare(
+        `INSERT INTO projects (id, name, root_path, default_branch, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        project.id,
+        project.name,
+        project.rootPath,
+        project.defaultBranch,
+        project.createdAt,
+      );
+    return project;
+  }
+
+  listProjects(): ProjectRecord[] {
+    const rows = this.database
+      .prepare(
+        `SELECT id, name, root_path, default_branch, created_at
+         FROM projects ORDER BY created_at ASC, name ASC`,
+      )
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapProjectRow(row));
+  }
+
+  getProject(projectId: string): ProjectRecord | null {
+    const row = this.database
+      .prepare(
+        `SELECT id, name, root_path, default_branch, created_at
+         FROM projects WHERE id = ?`,
+      )
+      .get(projectId) as Record<string, unknown> | undefined;
+    return row ? this.mapProjectRow(row) : null;
+  }
+
+  private mapWorktreeTaskRow(row: Record<string, unknown>): WorktreeTaskRecord {
+    return {
+      id: String(row.id),
+      projectId: String(row.project_id),
+      title: String(row.title),
+      branchName: String(row.branch_name),
+      baseRef: String(row.base_ref),
+      baseCommit: String(row.base_commit),
+      worktreePath: String(row.worktree_path),
+      status: String(row.status) as WorktreeTaskStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      acceptedCommit: row.accepted_commit ? String(row.accepted_commit) : null,
+    };
+  }
+
+  createWorktreeTask(task: WorktreeTaskRecord): WorktreeTaskRecord {
+    this.database
+      .prepare(
+        `INSERT INTO worktree_tasks (
+           id, project_id, title, branch_name, base_ref, base_commit,
+           worktree_path, status, created_at, updated_at, accepted_commit
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        task.id,
+        task.projectId,
+        task.title,
+        task.branchName,
+        task.baseRef,
+        task.baseCommit,
+        task.worktreePath,
+        task.status,
+        task.createdAt,
+        task.updatedAt,
+        task.acceptedCommit,
+      );
+    return task;
+  }
+
+  listWorktreeTasks(projectId?: string): WorktreeTaskRecord[] {
+    const rows = (projectId
+      ? this.database
+          .prepare(
+            `SELECT * FROM worktree_tasks
+             WHERE project_id = ? ORDER BY created_at DESC`,
+          )
+          .all(projectId)
+      : this.database
+          .prepare('SELECT * FROM worktree_tasks ORDER BY created_at DESC')
+          .all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapWorktreeTaskRow(row));
+  }
+
+  getWorktreeTask(taskId: string): WorktreeTaskRecord | null {
+    const row = this.database
+      .prepare('SELECT * FROM worktree_tasks WHERE id = ?')
+      .get(taskId) as Record<string, unknown> | undefined;
+    return row ? this.mapWorktreeTaskRow(row) : null;
+  }
+
+  updateWorktreeTaskStatus(
+    taskId: string,
+    status: WorktreeTaskStatus,
+    updatedAt: string,
+    acceptedCommit: string | null,
+  ): WorktreeTaskRecord | null {
+    this.database
+      .prepare(
+        `UPDATE worktree_tasks
+         SET status = ?, updated_at = ?, accepted_commit = ?
+         WHERE id = ?`,
+      )
+      .run(status, updatedAt, acceptedCommit, taskId);
+    return this.getWorktreeTask(taskId);
+  }
+
+  appendBudgetExceededEvent(
+    event: WorkbenchEvent,
+    dimension: RunBudgetDimension,
+    observedValue: number,
+    limitValue: number,
+    enforcement: RunBudgetEnforcement,
+  ): WorkbenchEvent | null {
+    return this.withImmediateTransaction(() => {
+      const budget = this.database
+        .prepare(
+          `SELECT b.exceeded_dimension, r.status
+           FROM run_execution_budgets b JOIN runs r ON r.id = b.run_id
+           WHERE b.run_id = ?`,
+        )
+        .get(event.runId) as Record<string, unknown> | undefined;
+      if (
+        !budget ||
+        budget.exceeded_dimension ||
+        budget.status === 'completed' ||
+        budget.status === 'failed' ||
+        budget.status === 'cancelled'
+      ) {
+        return null;
+      }
+      const nextSequence = Number(
+        (
+          this.database
+            .prepare(
+              `SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+               FROM events WHERE run_id = ?`,
+            )
+            .get(event.runId) as Record<string, unknown>
+        ).next_sequence,
+      );
+      const nextEvent = { ...event, sequence: nextSequence };
+      this.database
+        .prepare(
+          `INSERT INTO events (
+             id, session_id, run_id, sequence, timestamp, source, type, payload_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          nextEvent.id,
+          nextEvent.sessionId,
+          nextEvent.runId,
+          nextEvent.sequence,
+          nextEvent.timestamp,
+          nextEvent.source,
+          nextEvent.type,
+          toJson(nextEvent.payload),
+        );
+      this.database
+        .prepare(
+          `UPDATE run_execution_budgets
+           SET exceeded_dimension = ?, exceeded_at = ?, observed_value = ?,
+               limit_value = ?, enforcement = ?, updated_at = ?
+           WHERE run_id = ? AND exceeded_dimension IS NULL`,
+        )
+        .run(
+          dimension,
+          event.timestamp,
+          observedValue,
+          limitValue,
+          enforcement,
+          event.timestamp,
+          event.runId,
+        );
+      return nextEvent;
+    });
+  }
+
   appendTerminalEvent(
     event: WorkbenchEvent,
     status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled'>,
     errorMessage: string | null,
+    usage: RunUsageFactsV1,
+    tokenBudgetObservation: {
+      observedValue: number | null;
+      limitValue: number | null;
+      exceeded: boolean;
+    } | null = null,
   ): WorkbenchEvent | null {
     return this.withImmediateTransaction(() => {
       const run = this.database
@@ -1231,6 +1775,44 @@ export class SQLiteStateStore {
            WHERE id = ? AND status IN ('queued', 'running', 'awaiting_approval')`,
         )
         .run(status, event.timestamp, errorMessage, event.runId);
+      this.database
+        .prepare(
+          `INSERT INTO run_usage_facts (
+             run_id, source_event_id, schema_version, reporting, input_tokens,
+             output_tokens, reasoning_tokens, cache_read_tokens,
+             cache_write_tokens, provider_total_tokens, recorded_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          event.runId,
+          nextEvent.id,
+          usage.schemaVersion,
+          usage.reporting,
+          usage.inputTokens,
+          usage.outputTokens,
+          usage.reasoningTokens,
+          usage.cacheReadTokens,
+          usage.cacheWriteTokens,
+          usage.providerReportedTotalTokens,
+          event.timestamp,
+        );
+      if (tokenBudgetObservation?.exceeded) {
+        this.database
+          .prepare(
+            `UPDATE run_execution_budgets
+             SET exceeded_dimension = 'reported-tokens', exceeded_at = ?,
+                 observed_value = ?, limit_value = ?,
+                 enforcement = 'terminal-observed', updated_at = ?
+             WHERE run_id = ? AND exceeded_dimension IS NULL`,
+          )
+          .run(
+            event.timestamp,
+            tokenBudgetObservation.observedValue,
+            tokenBudgetObservation.limitValue,
+            event.timestamp,
+            event.runId,
+          );
+      }
       return nextEvent;
     });
   }

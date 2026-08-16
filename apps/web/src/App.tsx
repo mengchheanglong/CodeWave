@@ -31,13 +31,11 @@ import {
   subscribeShellSummaryState,
   subscribeRunViewState,
 } from './app-controller';
-import { ComparePanel } from './components/ComparePanel';
 import { PromptModal } from './components/PromptModal';
 import { ProviderSettings } from './components/ProviderSettings';
 import { QuickOpen } from './components/QuickOpen';
 import { Composer } from './components/shell/Composer';
 import { ConversationHeader } from './components/shell/ConversationHeader';
-import { HintBar } from './components/shell/HintBar';
 import { Inspector, type UtilityTab } from './components/shell/Inspector';
 import { RunSurface } from './components/shell/RunSurface';
 import { RunToolbar } from './components/shell/RunToolbar';
@@ -49,6 +47,7 @@ import {
   FileTextIcon,
   FolderIcon,
   ScaleIcon,
+  WorkflowIcon,
   WrenchIcon,
 } from './components/icons';
 import { splitRunInspectorViews } from './lib/run-inspector-views';
@@ -81,6 +80,11 @@ import {
 } from './lib/attention-notifications';
 import { getWorkspaceLabel } from './lib/quick-open-helpers.js';
 import { buildQuickOpenItems } from './lib/quick-open-items.js';
+import {
+  chooseDesktopWorkspace,
+  observeDesktopRuntime,
+  type DesktopRuntimeStatus,
+} from './lib/desktop-bridge';
 import { formatTimestamp } from './shell-status-summary';
 import {
   parseApprovalPolicy,
@@ -128,7 +132,6 @@ export default function App() {
   );
   const [focusView, setFocusView] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
-  const [compareVisible, setCompareVisible] = useState(false);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
   const [showRunToolbar, setShowRunToolbar] = useState(true);
   const [runMenuOpen, setRunMenuOpen] = useState(false);
@@ -143,20 +146,17 @@ export default function App() {
   const [attentionBellOn, setAttentionBellOn] = useState(() =>
     attentionNotificationsEnabled(),
   );
+  const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
+    useState<DesktopRuntimeStatus | null>(null);
   const [appTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
-  const compareApiRef = useRef(
-    createDaemonApi({
-      onProviderRevisionConflict: async () => {
-        await requestRuntimeRefresh();
-      },
-    }),
-  );
 
   useEffect(() => {
     applyTheme(appTheme);
   }, [appTheme]);
+
+  useEffect(() => observeDesktopRuntime(setDesktopRuntimeStatus), []);
 
   useEffect(() => {
     const providerId =
@@ -175,6 +175,13 @@ export default function App() {
   const closeCompactNavigation = useCallback((restoreFocus = false) => {
     setCompactNavigationOpen(false);
     if (restoreFocus) {
+      window.setTimeout(() => compactNavigationToggleRef.current?.focus(), 0);
+    }
+  }, []);
+
+  const closeProviderSettings = useCallback(() => {
+    setProviderSettingsOpen(false);
+    if (window.matchMedia('(max-width: 700px)').matches) {
       window.setTimeout(() => compactNavigationToggleRef.current?.focus(), 0);
     }
   }, []);
@@ -337,7 +344,6 @@ export default function App() {
   useKeyboardShortcuts({
     railFilterInputRef,
     setQuickOpenVisible,
-    setCompareVisible,
     setFocusView,
     setUtilityCollapsed,
     setRailView,
@@ -491,6 +497,11 @@ export default function App() {
         icon: <FolderIcon size={13} />,
       },
       {
+        id: 'changes',
+        label: 'Changes',
+        icon: <WorkflowIcon size={13} />,
+      },
+      {
         id: 'artifacts',
         label: 'Artifacts',
         badge: shellPanelsState.artifacts.length,
@@ -622,8 +633,31 @@ export default function App() {
   const handleComposerPolicyChangeRef = useRef(handleComposerPolicyChange);
   handleComposerPolicyChangeRef.current = handleComposerPolicyChange;
 
-  function handleAddFolderToRail() {
-    setIsFolderModalOpen(true);
+  async function handleAddFolderToRail(): Promise<void> {
+    const selectedPath = await chooseDesktopWorkspace();
+    if (selectedPath === undefined) {
+      setIsFolderModalOpen(true);
+      return;
+    }
+    if (selectedPath !== null) {
+      handleFolderConfirm(selectedPath);
+    }
+  }
+
+  async function handleOpenWorkspace(nextWorkspacePath: string): Promise<void> {
+    const normalized = nextWorkspacePath.replace(/\\/g, '/').toLowerCase();
+    const existingSession = shellPanelsState.recentSessions.find(
+      (session) => session.workspacePath.replace(/\\/g, '/').toLowerCase() === normalized,
+    );
+    if (existingSession) {
+      await requestSessionSelection(existingSession.id);
+    } else {
+      await requestSessionDraftChange({ workspacePath: nextWorkspacePath });
+      await requestWorkspaceDraftCommit();
+      await requestCreateSession();
+    }
+    setUtilityView('changes');
+    setUtilityCollapsed(false);
   }
 
   function handleFolderConfirm(nextWorkspacePathInput: string) {
@@ -639,14 +673,14 @@ export default function App() {
     })();
   }
 
-  function handleToggleBell() {
+  async function handleToggleBell(): Promise<void> {
     if (attentionBellOn) {
       toggleAttentionNotifications(false);
       setAttentionBellOn(false);
     } else {
-      requestAttentionPermission();
-      toggleAttentionNotifications(true);
-      setAttentionBellOn(true);
+      const enabled = await requestAttentionPermission();
+      toggleAttentionNotifications(enabled);
+      setAttentionBellOn(enabled);
     }
   }
 
@@ -707,18 +741,6 @@ export default function App() {
         }}
       />
 
-      <ComparePanel
-        open={compareVisible}
-        prompt={shellControlsState.prompt}
-        workspacePath={shellControlsState.workspacePath}
-        providerRevision={shellPanelsState.providerRegistry?.revision ?? null}
-        api={compareApiRef.current}
-        onClose={() => {
-          setCompareVisible(false);
-        }}
-        formatTimestamp={formatTimestamp}
-      />
-
       <StatusStrip
         shellControlsState={shellControlsState}
         shellPanelsState={shellPanelsState}
@@ -740,6 +762,23 @@ export default function App() {
         compactNavigationToggleRef={compactNavigationToggleRef}
       />
 
+      {desktopRuntimeStatus &&
+      !['idle', 'ready'].includes(desktopRuntimeStatus.phase) ? (
+        <div
+          className={`desktop-runtime-banner desktop-runtime-${desktopRuntimeStatus.phase}`}
+          role={desktopRuntimeStatus.phase === 'failed' ? 'alert' : 'status'}
+        >
+          <span className="desktop-runtime-pulse" aria-hidden="true"></span>
+          <span>
+            {desktopRuntimeStatus.phase === 'restarting'
+              ? `Reconnecting local runtime · attempt ${desktopRuntimeStatus.restartAttempt}`
+              : desktopRuntimeStatus.phase === 'failed'
+                ? 'The local runtime stopped. Restart CodeWave to recover.'
+                : 'Preparing the local CodeWave runtime…'}
+          </span>
+        </div>
+      ) : null}
+
       <section
         className={`workbench-shell panes-workbench${focusView ? ' workbench-shell-focus' : ''}${
           compactNavigationOpen ? ' compact-navigation-open' : ''
@@ -753,7 +792,7 @@ export default function App() {
           runViewState={runViewState}
           onAddFolder={() => {
             closeCompactNavigation();
-            handleAddFolderToRail();
+            void handleAddFolderToRail();
           }}
           onOpenProviderSettings={() => {
             closeCompactNavigation();
@@ -928,11 +967,7 @@ export default function App() {
               onPolicyChange={(policy) => {
                 handleComposerPolicyChange(policy);
               }}
-              onCompareToggle={() => {
-                setCompareVisible((current) => !current);
-              }}
             />
-            <HintBar workspacePath={shellControlsState.workspacePath} />
           </main>
 
           <div
@@ -960,6 +995,7 @@ export default function App() {
             contextUsagePercent={contextUsagePercent}
             shellPanelsState={shellPanelsState}
             shellControlsState={shellControlsState}
+            onOpenWorkspace={handleOpenWorkspace}
           />
         </div>
       </section>
@@ -1010,7 +1046,7 @@ export default function App() {
         open={providerSettingsOpen}
         registry={shellPanelsState.providerRegistry}
         health={shellPanelsState.providerHealth}
-        onClose={() => setProviderSettingsOpen(false)}
+        onClose={closeProviderSettings}
       />
     </div>
   );

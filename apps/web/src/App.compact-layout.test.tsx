@@ -166,6 +166,7 @@ describe('App compact navigation', () => {
     expect(screen.getByRole('dialog', { name: 'Providers' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(toggle).toHaveFocus());
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
 

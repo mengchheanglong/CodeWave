@@ -127,7 +127,16 @@ export function buildSessionProviderNote({
   providerId: ProviderId;
   capabilities: ProviderCapabilities;
 }): string {
-  const providerLabel = providerId === 'qwen' ? 'Qwen' : 'Gemini';
+  const providerLabel =
+    providerId === 'qwen'
+      ? 'Qwen'
+      : providerId === 'gemini'
+        ? 'Gemini'
+        : providerId === 'opencode'
+          ? 'OpenCode'
+          : providerId === 'freebuff'
+            ? 'Freebuff'
+            : providerId;
   const notes: string[] = [];
 
   if (selectedSession?.orchestration) {

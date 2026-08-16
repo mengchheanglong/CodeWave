@@ -75,8 +75,7 @@ function handleCommandMode() {
 }
 
 class FakeGeminiAgent {
-  constructor(connection) {
-    this.connection = connection;
+  constructor() {
     this.sessions = new Map();
   }
 
@@ -100,7 +99,7 @@ class FakeGeminiAgent {
     return { sessionId };
   }
 
-  async prompt(params) {
+  async prompt(params, connection) {
     const session = this.sessions.get(params.sessionId);
     if (!session) {
       throw new Error(`Unknown session ${params.sessionId}`);
@@ -116,7 +115,7 @@ class FakeGeminiAgent {
       const toolCallId = `fake-tool-call-${index}`;
       const rawInput = buildRawInput(title);
 
-      await this.connection.sessionUpdate({
+      await connection.notify(acp.methods.client.session.update, {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: 'tool_call',
@@ -129,7 +128,9 @@ class FakeGeminiAgent {
       });
 
       if (shouldRequestPermission && index === 0) {
-        const permission = await this.connection.requestPermission({
+        const permission = await connection.request(
+          acp.methods.client.session.requestPermission,
+          {
           sessionId: params.sessionId,
           toolCall: {
             toolCallId,
@@ -150,13 +151,14 @@ class FakeGeminiAgent {
               optionId: 'reject-once',
             },
           ],
-        });
+          },
+        );
         if (
           permission.outcome.outcome === 'cancelled' ||
           permission.outcome.optionId !== 'allow-once'
         ) {
           for (let duplicate = 0; duplicate < 2; duplicate += 1) {
-            await this.connection.sessionUpdate({
+            await connection.notify(acp.methods.client.session.update, {
               sessionId: params.sessionId,
               update: {
                 sessionUpdate: 'tool_call_update',
@@ -172,7 +174,7 @@ class FakeGeminiAgent {
       }
 
       for (let duplicate = 0; duplicate < 2; duplicate += 1) {
-        await this.connection.sessionUpdate({
+        await connection.notify(acp.methods.client.session.update, {
           sessionId: params.sessionId,
           update: {
             sessionUpdate: 'tool_call_update',
@@ -188,7 +190,7 @@ class FakeGeminiAgent {
       index += 1;
     }
 
-    await this.connection.sessionUpdate({
+    await connection.notify(acp.methods.client.session.update, {
       sessionId: params.sessionId,
       update: {
         sessionUpdate: 'agent_thought_chunk',
@@ -199,7 +201,7 @@ class FakeGeminiAgent {
       },
     });
 
-    await this.connection.sessionUpdate({
+    await connection.notify(acp.methods.client.session.update, {
       sessionId: params.sessionId,
       update: {
         sessionUpdate: 'agent_message_chunk',
@@ -233,7 +235,22 @@ if (handleCommandMode()) {
   const input = Writable.toWeb(process.stdout);
   const output = Readable.toWeb(process.stdin);
   const stream = acp.ndJsonStream(input, output);
-  new acp.AgentSideConnection((connection) => new FakeGeminiAgent(connection), stream);
+  const implementation = new FakeGeminiAgent();
+  acp
+    .agent({ name: 'fake-gemini-acp-agent' })
+    .onRequest(acp.methods.agent.initialize, ({ params }) =>
+      implementation.initialize(params),
+    )
+    .onRequest(acp.methods.agent.session.new, ({ params }) =>
+      implementation.newSession(params),
+    )
+    .onRequest(acp.methods.agent.session.prompt, ({ params, client }) =>
+      implementation.prompt(params, client),
+    )
+    .onNotification(acp.methods.agent.session.cancel, ({ params }) =>
+      implementation.cancel(params),
+    )
+    .connect(stream);
 } else {
   process.stderr.write(`fake-gemini-acp-agent received unsupported args: ${args.join(' ')}\n`);
   process.exit(1);

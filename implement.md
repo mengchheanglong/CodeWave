@@ -8,11 +8,12 @@ Status: first executable slice extended with daemon-owned approvals, explicit ap
 ### Now
 
 - extend the append-only transcript base with explicit compaction checkpoints and pre-compaction memory hooks
+- add task-level execution budgets and attributable trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
 
 ### Next
 
-- add task-level trace evaluations for routing, provenance, recovery, and keep/discard harness iteration
 - add deterministic visual fixtures for specialty run states so UI-kit and shell polish can be regression-checked without depending on historical daemon data
+- add platform-native signed/notarized desktop release CI, installer upgrade/downgrade drills, and an authenticated update channel
 
 ### Blocked
 
@@ -1894,3 +1895,47 @@ That keeps the next step narrow: close the controller-decomposition phase and st
 - Implemented all six vectors against isolated real daemon child processes and a protocol-qualified synthetic Freebuff bridge. The harness performs external parent-process kills at named test-only barriers, verifies cleanup, and refuses to weaken expected outcomes to match implementation behavior.
 - Added mandatory keyed mutations, strict UTF-8/canonical JSON and declared-schema validation, canonical query hashing, versioned receipt provenance, honest `outcome_unknown` recovery, atomic terminal persistence, and a persisted launch-intent/bridge-acknowledgement correlation.
 - Added safe workspace file preview/create/CAS-edit APIs and the matching shell lifecycle: conflict reload, bounded draft recovery, binary and truncated-file refusal, rename/delete confirmation, compact-layout keyboard recovery, and real desktop/compact browser QA.
+
+## Stable ACP v1 runtime — 2026-08-13
+
+- Exact-pinned `@agentclientprotocol/sdk` 1.3.0 and kept production on stable wire protocol v1; no experimental-v2 import or mixed state machine is permitted.
+- Replaced deprecated `ClientSideConnection`/`unstable_resumeSession` usage with the SDK app client, typed method calls, CodeWave client metadata, and exact protocol-version rejection.
+- Replaced quiet-period replay guessing with capability-gated stable `session/resume` or `session/load`; agents that advertise neither now fail closed instead of silently loading or creating replacement state.
+- Added a 5-second bounded initialize path, a 1 MiB stdout-record fence, absolute existing-workspace validation, bounded provider session IDs, message-ID-aware assembly, wrong-session rejection, and deterministic child/stream cleanup.
+- Corrected permission semantics: one-time allow/reject choices win over persistent choices, a missing semantically matching option returns ACP cancellation, and run cancellation resolves pending provider permissions before sending `session/cancel`.
+- Added `npm run check:acp` with an SDK-app fixture covering exact dependency integrity, initialize metadata, new/resume/load/no-continuity paths, replay suppression, interleaved messages, mismatch/timeout/malformed/oversized/EOF failures, stop reasons, permissions, cancellation races, daemon approval ordering, terminal uniqueness, and child cleanup.
+
+## Generic ACP provider adapter — 2026-08-13
+
+- Added `@codewave/provider-acp`, driven only by a validated launch/profile descriptor. It performs a real ACP initialize probe, coalesces concurrent health/capability checks, derives resumability from negotiated capabilities, labels credential state as unverified, and never runs provider-specific discovery commands.
+- Moved OpenCode ACP launch, stderr handling, cancellation, and terminal ownership into the generic adapter while retaining OpenCode's built-in command resolution, tool hints, and optional legacy JSON-run mode.
+- Bounded stderr lines to 64 KiB and aggregate emitted stderr to 256 KiB, escalated ACP cleanup after a graceful close window, and retained the 1 MiB strict stdout JSON record fence.
+- Added a second, hand-written ACP fixture plus `npm run check:acp-provider` to prove coalesced probing, negotiated capabilities, normalized completion/cancellation, terminal uniqueness, child cleanup, mismatch rejection, and missing-executable diagnostics independently of the SDK fixture.
+
+## Dynamic ACP provider profiles — 2026-08-13
+
+- Migrated the daemon-owned provider policy to version 2 with automatic v1 reads, stable built-in IDs, validated lowercase `acp.*` custom IDs, exact executable/argument arrays, deterministic revisions, atomic persistence, and registry-driven labels.
+- Added custom-profile create/update/default and runtime paths through the existing scoped, idempotent, provider-revision-fenced daemon APIs. Disabled custom executables are not probed or spawned.
+- Added a Providers flow that requires explicit local-executable trust, creates profiles disabled, edits arguments without lossy shell splitting, and exposes honest protocol/continuity/credential diagnostics after a real initialize probe.
+- Removed a built-in-only controller coercion that silently changed custom session creation to Freebuff. Desktop and compact browser QA now prove custom selection, persisted Browser Wave identity, a real completed ACP run, bounded layouts, initial form focus, Escape dismissal, and compact focus restoration.
+- Added `npm run check:acp-custom` to exercise invalid IDs, disabled fail-closed behavior, enablement, health, session/run completion, restart persistence and resume, profile updates, and disablement through a real daemon process.
+
+## Isolated project tasks and Changes review — 2026-08-13
+
+- Added daemon-owned `projects` and `worktree_tasks` state plus exact `projects:read`/`projects:write` scopes. Registration accepts only the canonical Git root; task creation requires a clean source checkout and creates a readable `codewave/task-*` branch in the daemon-managed worktree root.
+- Added bounded change snapshots with Git porcelain file state, at most 512 KiB of retained patch text, complete changed-file hashing for review freshness, explicit binary/non-UTF-8/unexpanded/truncation signaling, and safe untracked previews.
+- Added version-fenced accept/revert mutations. Accept refuses incomplete review and commits only inside the task branch; revert discards tracked and non-ignored untracked task changes; neither operation merges or mutates the project branch. Accepted/reverted task workspaces remain inspectable but reject later provider runs.
+- Suppressed repository hooks, signing, pagers, and interactive Git prompts; bounded subprocess output; made task-worktree run preparation mutually exclusive with accept/revert; rebound every review to the persisted top-level/branch/common-Git identity; canonicalized task worktrees below the managed root; and hid/rejected `.git` plus root `.codewave` paths through every workspace file route.
+- Added the shell **Changes** view with project registration, autofocus task creation, dedicated task-session opening, bounded DiffCard review, explicit incomplete-review state, active-run controls, and accessible product-owned accept/revert confirmation dialogs.
+- Added `npm run check:worktrees` using a real temporary Git repository and daemon. It covers dirty/nested roots, readable branches, hook suppression, protected control paths, stale reviews, real commit/main preservation, concurrent same-worktree run refusal, destructive revert, oversized/binary review refusal, internal identity swaps, and junction escape containment.
+- Browser-verified the complete desktop and compact workflow at 1440×900, 390×844, and 320×568, including dialog Escape/focus restoration, zero page overflow, no console/page errors, a real task commit, and source-branch preservation.
+
+## Secure desktop alpha — 2026-08-13
+
+- Added `apps/desktop` with Electron 43.4.0 and Forge 7.11.2, a sandboxed/context-isolated renderer, an origin-checked minimal preload, and a privileged `codewave://app/` protocol that serves the Vite shell and proxies relative daemon APIs.
+- Added an Electron utility-process daemon supervisor using an ephemeral IPv4 loopback port, a per-launch 32-byte main-owned bootstrap secret, separate Electron-owned data/log directories, bounded log rotation, graceful stop with forced escalation, and a rolling three-restart-per-minute crash budget.
+- Made the daemon desktop-ready without changing CLI behavior: option-based workspace/data/host/port/bootstrap configuration, actual port-0 address reporting, exact timing-safe bootstrap gating on every route, bounded idempotent shutdown, provider/approval cancellation, SSE/socket closure, WAL checkpointing, and SQLite close.
+- Added a deterministic non-destructive first-run Git demo, native canonical directory selection, and renderer-visible runtime recovery status. Browser development retains the product-owned path prompt.
+- Hardened the package with CSP/header/body allowlists, asset containment, denied navigation/download/webview/certificate/device permissions, trusted-origin-only notifications, ASAR integrity/ASAR-only loading, and strict Electron fuses disabling Run-as-Node, `NODE_OPTIONS`, inspector CLI arguments, and file-protocol privilege elevation.
+- Added `check:desktop-daemon`, `check:desktop-security`, and `check:desktop-demo`. Packaged Windows dogfood covered first launch, provider setup, workspace file lifecycle, Git project registration, isolated task creation, review, Escape/cancel, task-branch acceptance with main preserved, compact 390/320 layouts, 2 MiB proxy rejection, origin rejection, restart persistence, forced daemon recovery, fuse inspection, and clean exit.
+- Public release remains gated on signed/notarized platform-native CI, installer upgrade/downgrade evidence, authenticated update metadata, and cross-platform package dogfood. The current package is an unsigned alpha.
