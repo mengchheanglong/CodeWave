@@ -47,6 +47,7 @@ const requesters: ControllerRequesterMap = {
   applySelectedSessionPolicyRequester: noopAsync,
   cancelSelectedRunRequester: noopAsync,
   undoRunRequester: noopAsync,
+  transcriptCompactionRequester: noopAsync,
   runModeDraftChangeRequester: noopAsync,
   executePlanRequester: noopAsync,
   followUpRunRequester: noopAsync,
@@ -211,6 +212,10 @@ export async function requestCancelSelectedRun(): Promise<void> {
 
 export async function requestUndoRun(): Promise<void> {
   await requesters.undoRunRequester();
+}
+
+export async function requestTranscriptCompaction(): Promise<void> {
+  await requesters.transcriptCompactionRequester();
 }
 
 export async function requestRunModeChange(mode: RunMode): Promise<void> {

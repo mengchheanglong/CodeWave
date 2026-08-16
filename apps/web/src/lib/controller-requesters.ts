@@ -57,6 +57,7 @@ type ControllerRequesterDeps = {
   createFollowUpRun: CreateFollowUpRun;
   executePlanRun: (planText: string) => Promise<void>;
   undoSelectedRun: () => Promise<void>;
+  compactTranscript: () => Promise<void>;
   updateRunMode: (mode: RunMode) => void;
   refreshRuntime: RefreshRuntime;
 };
@@ -90,6 +91,7 @@ export function createControllerRequesters(
     createFollowUpRun,
     executePlanRun,
     undoSelectedRun,
+    compactTranscript,
     updateRunMode,
     refreshRuntime,
   } = deps;
@@ -126,6 +128,9 @@ export function createControllerRequesters(
     },
     undoRunRequester: async () => {
       await undoSelectedRun().catch(() => {});
+    },
+    transcriptCompactionRequester: async () => {
+      await compactTranscript().catch(() => {});
     },
     runModeDraftChangeRequester: async (mode: RunMode) => {
       updateRunMode(mode);

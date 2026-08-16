@@ -34,7 +34,6 @@ function renderComposer(hasActiveRun: boolean) {
       textareaRef={createRef<HTMLTextAreaElement>()}
       autoResize={vi.fn()}
       onPolicyChange={vi.fn()}
-      onCompareToggle={vi.fn()}
     />,
   );
 }

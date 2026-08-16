@@ -1,6 +1,6 @@
 import { ContextMeter } from '@codewave/ui-kit';
 import { requestPromptDraftChange } from '../../../app-controller';
-import { ScaleIcon, SendIcon } from '../../icons';
+import { SendIcon } from '../../icons';
 
 type ComposerActionsProps = {
   contextUsagePercent: number;
@@ -11,7 +11,6 @@ type ComposerActionsProps = {
   sendHelperSecondary: string;
   startRunDisabled: boolean;
   autoResize: () => void;
-  onCompareToggle: () => void;
 };
 
 export function ComposerActions({
@@ -23,7 +22,6 @@ export function ComposerActions({
   sendHelperSecondary,
   startRunDisabled,
   autoResize,
-  onCompareToggle,
 }: ComposerActionsProps) {
   return (
     <>
@@ -54,14 +52,6 @@ export function ComposerActions({
             Clear
           </button>
         ) : null}
-        <button
-          type="button"
-          className="composer-clear-button composer-compare-button"
-          title="Compare this prompt across providers (Ctrl+Shift+C)"
-          onClick={onCompareToggle}
-        >
-          <ScaleIcon size={13} /> Compare
-        </button>
         <button
           id="start-run-button"
           className="composer-send-button"

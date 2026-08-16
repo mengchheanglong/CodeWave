@@ -277,3 +277,132 @@ describe('ProjectChangesPanel', () => {
     expect(screen.getByRole('button', { name: 'Open' })).toBeEnabled();
   });
 });
+
+describe('ProjectChangesPanel task trace evaluation', () => {
+  it('loads and renders the deterministic trace evaluation on demand', async () => {
+    const user = userEvent.setup();
+    const traceReport = {
+      id: 'trace:sha256:' + 'a'.repeat(64),
+      schemaVersion: 'codewave-task-trace-report-v1',
+      projectionVersion: 'codewave-task-trace-projection-v1',
+      rulesetVersion: 'codewave-task-trace-rules-v1',
+      subject: {
+        kind: 'worktree-task' as const,
+        taskRef: 'ref:sha256:' + 'b'.repeat(64),
+        taskStatus: 'active' as const,
+      },
+      sourceDigest: 'sha256:' + 'c'.repeat(64),
+      evaluatedThrough: '2026-08-13T00:00:02.000Z',
+      contentBoundary: 'metadata-only-v1' as const,
+      sourceCut: { taskUpdatedAt: '2026-08-13T00:00:01.000Z', runs: [] },
+      projection: {
+        sessions: [],
+        runs: [],
+        routing: [],
+        approvals: [],
+        tools: [],
+        usage: [],
+        recovery: [],
+        outcome: {
+          decision: 'undecided' as const,
+          source: 'none' as const,
+          reviewVersion: null,
+          receiptHash: null,
+          acceptedCommitPresent: false,
+          decidedAt: null,
+        },
+      },
+      assertions: [
+        {
+          id: 'CW-TT1' as const,
+          status: 'pass' as const,
+          reasonCode: 'CW-TT1_PASS',
+          evidenceRefs: [],
+        },
+        {
+          id: 'CW-TT6' as const,
+          status: 'unknown' as const,
+          reasonCode: 'CW-TT6_UNKNOWN',
+          evidenceRefs: [],
+        },
+      ],
+      summary: {
+        integrity: 'pass' as const,
+        completeness: 'partial' as const,
+        outcome: 'undecided' as const,
+        failedAssertions: [],
+        unknownAssertions: ['CW-TT6'],
+      },
+    };
+    let traceRequested = false;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/handshake') return handshakeResponse();
+      if (url === '/api/projects') return jsonResponse({ projects: [{ project, tasks: [task] }] });
+      if (url === `/api/tasks/${task.id}/changes` && !init?.method) {
+        return jsonResponse(changes());
+      }
+      if (url === `/api/tasks/${task.id}/trace` && !init?.method) {
+        traceRequested = true;
+        return jsonResponse(traceReport);
+      }
+      throw new Error(`Unexpected request ${init?.method ?? 'GET'} ${url}`);
+    }));
+
+    render(
+      <ProjectChangesPanel
+        workspacePath={task.worktreePath}
+        hasActiveRun={false}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText('1 changed file')).toBeInTheDocument();
+    expect(screen.queryByText('UNDECIDED')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Evaluate task trace' }));
+
+    await waitFor(() => expect(traceRequested).toBe(true));
+    expect(await screen.findByText('UNDECIDED')).toBeInTheDocument();
+    expect(screen.getByText(/integrity/i)).toBeInTheDocument();
+    expect(screen.getByText('PASS', { selector: '.task-trace-pill' })).toBeInTheDocument();
+    expect(screen.getByText('PARTIAL')).toBeInTheDocument();
+    expect(screen.getByText('CW-TT1')).toBeInTheDocument();
+    expect(screen.getByText('CW-TT6')).toBeInTheDocument();
+    expect(screen.getByText(traceReport.sourceDigest)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide evaluation' }));
+    expect(screen.queryByText('UNDECIDED')).not.toBeInTheDocument();
+  });
+
+  it('surfaces trace evaluation failures without breaking the review panel', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/handshake') return handshakeResponse();
+      if (url === '/api/projects') return jsonResponse({ projects: [{ project, tasks: [task] }] });
+      if (url === `/api/tasks/${task.id}/changes` && !init?.method) {
+        return jsonResponse(changes());
+      }
+      if (url === `/api/tasks/${task.id}/trace` && !init?.method) {
+        return jsonResponse({ error: 'Task trace projection failed.' }, 500);
+      }
+      throw new Error(`Unexpected request ${init?.method ?? 'GET'} ${url}`);
+    }));
+
+    render(
+      <ProjectChangesPanel
+        workspacePath={task.worktreePath}
+        hasActiveRun={false}
+        onOpenWorkspace={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText('1 changed file')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Evaluate task trace' }));
+
+    expect(await screen.findByText(/Task trace projection failed/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Evaluate task trace' }),
+    ).toBeInTheDocument();
+  });
+});

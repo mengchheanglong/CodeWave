@@ -32,13 +32,21 @@ import {
   type ArchiveSnapshot,
   type ClientHandshakeRequest,
   type ClientHandshakeResponse,
+  CODEWAVE_COMPACTION_POLICY_REVISION,
   CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES,
+  CODEWAVE_MAX_COMPACTION_SOURCE_BYTES,
+  CODEWAVE_MAX_COMPACTION_SOURCE_MESSAGES,
+  CODEWAVE_MAX_COMPACTION_SUMMARY_BYTES,
   CODEWAVE_MAX_REQUEST_BYTES,
+  CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  CODEWAVE_MAX_RUN_WALL_TIME_MS,
   CODEWAVE_MAX_SSE_REPLAY_EVENTS,
   CODEWAVE_MAX_STEERING_PROMPT_CHARS,
   CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
   CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
   CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
+  CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
   CODEWAVE_PROTOCOL_VERSION,
   DAEMON_CAPABILITIES,
   DAEMON_CLIENT_SCOPES,
@@ -57,6 +65,8 @@ import {
   type CreateSessionRequest,
   type CreateWorkspaceFileRequest,
   type CreateWorkspaceFileResponse,
+  type CreateTranscriptCompactionRequest,
+  type TranscriptCompactionCheckpoint,
   type DeleteSessionResponse,
   type DelegateRunRequest,
   type DelegateRunResponse,
@@ -89,7 +99,10 @@ import {
   type RoutePromptRequest,
   type RoutePromptResponse,
   type RunSnapshot,
+  type RunExecutionBudget,
+  type RunExecutionBudgetState,
   type RunSteeringInput,
+  type RunUsageFactsV1,
   type SteerRunRequest,
   type SteerRunResponse,
   type UndoRunResponse,
@@ -133,6 +146,26 @@ import { OpenCodeCliProvider } from '@codewave/provider-opencode';
 import { QwenCliProvider } from '@codewave/provider-qwen';
 import { SQLiteStateStore, resolveDataDirectory } from '@codewave/state';
 import {
+  projectTaskTrace,
+  TASK_TRACE_SOURCE_VERSION,
+  TASK_TRACE_USAGE_VERSION,
+  type TaskTraceApprovalSourceV1,
+  type TaskTraceEventSourceV1,
+  type TaskTraceOutcome,
+  type TaskTraceReportV1,
+  type TaskTraceRoutingDecisionSourceV1,
+  type TaskTraceRunSourceV1,
+  type TaskTraceSessionSourceV1,
+  type TaskTraceSourceProjectionV1,
+  type TaskTraceToolSourceV1,
+  type TaskTraceUsageSourceV1,
+} from '@codewave/task-trace';
+import {
+  createDeterministicTranscriptSummaryHook,
+  createTranscriptCompaction,
+  TranscriptCompactionError,
+} from './transcript-compaction.js';
+import {
   isConfiguredProviderId,
   ProviderPolicyStore,
   ProviderRevisionConflictError,
@@ -171,7 +204,152 @@ const DAEMON_PROTOCOL_LIMITS = {
   maxWorkspacePreviewBytes: CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
   maxWorkspaceFileBytes: CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
   maxWorktreeDiffBytes: MAX_WORKTREE_DIFF_BYTES,
+  maxRunWallTimeMs: CODEWAVE_MAX_RUN_WALL_TIME_MS,
+  maxRunToolInvocations: CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  maxRunReportedTokens: CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  maxCompactionSourceMessages: CODEWAVE_MAX_COMPACTION_SOURCE_MESSAGES,
+  maxCompactionSourceBytes: CODEWAVE_MAX_COMPACTION_SOURCE_BYTES,
+  minCompactionRawTailMessages: CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
+  maxCompactionSummaryBytes: CODEWAVE_MAX_COMPACTION_SUMMARY_BYTES,
 } as const;
+
+function normalizeRunUsageFacts(raw: unknown): RunUsageFactsV1 {
+  const facts: RunUsageFactsV1 = {
+    schemaVersion: 'codewave-usage-v1',
+    reporting: 'unreported',
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    cacheReadTokens: null,
+    cacheWriteTokens: null,
+    providerReportedTotalTokens: null,
+  };
+  if (raw === undefined || raw === null) return facts;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...facts, reporting: 'invalid' };
+  }
+  const record = raw as Record<string, unknown>;
+  let sawKnownKey = false;
+  let sawInvalidValue = false;
+  const read = (keys: string[]): number | null => {
+    for (const key of keys) {
+      if (!(key in record) || record[key] === undefined) continue;
+      sawKnownKey = true;
+      const value = record[key];
+      if (
+        typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        value < 0
+      ) {
+        sawInvalidValue = true;
+        continue;
+      }
+      return value;
+    }
+    return null;
+  };
+  const usage: RunUsageFactsV1 = {
+    ...facts,
+    inputTokens: read(['inputTokens', 'promptTokens', 'input_tokens']),
+    outputTokens: read(['outputTokens', 'completionTokens', 'output_tokens']),
+    reasoningTokens: read(['reasoningTokens', 'reasoning_tokens']),
+    cacheReadTokens: read([
+      'cacheReadTokens',
+      'cacheReadInputTokens',
+      'cacheReadInputTokenCount',
+      'cache_read_tokens',
+    ]),
+    cacheWriteTokens: read([
+      'cacheWriteTokens',
+      'cacheCreationInputTokens',
+      'cache_creation_input_tokens',
+    ]),
+    providerReportedTotalTokens: read([
+      'totalTokens',
+      'total_tokens',
+      'providerReportedTotalTokens',
+    ]),
+  };
+  if (!sawKnownKey) return facts;
+  if (sawInvalidValue) return { ...facts, reporting: 'invalid' };
+  const everyValue = [
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.reasoningTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+    usage.providerReportedTotalTokens,
+  ];
+  if (everyValue.every((value) => value === null)) return facts;
+  return { ...usage, reporting: 'reported' };
+}
+
+function parseRunExecutionBudget(
+  raw: unknown,
+): RunExecutionBudget | Error {
+  if (raw === undefined || raw === null) {
+    return { schemaVersion: 'codewave-run-budget-v1', maxWallTimeMs: null, maxToolInvocations: null, maxReportedTokens: null };
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return new Error('executionBudget must be an object.');
+  }
+  const record = raw as Record<string, unknown>;
+  const allowedKeys = new Set([
+    'schemaVersion',
+    'maxWallTimeMs',
+    'maxToolInvocations',
+    'maxReportedTokens',
+  ]);
+  for (const key of Object.keys(record)) {
+    if (!allowedKeys.has(key)) {
+      return new Error(`executionBudget rejects unknown property '${key}'.`);
+    }
+  }
+  if (
+    record.schemaVersion !== undefined &&
+    record.schemaVersion !== 'codewave-run-budget-v1'
+  ) {
+    return new Error('Unsupported execution budget schema version.');
+  }
+  const readLimit = (
+    key: 'maxWallTimeMs' | 'maxToolInvocations' | 'maxReportedTokens',
+    ceiling: number,
+  ): number | null | Error => {
+    const value = record[key];
+    if (value === undefined || value === null) return null;
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 1
+    ) {
+      return new Error(`executionBudget.${key} must be a positive safe integer.`);
+    }
+    if (value > ceiling) {
+      return new Error(
+        `executionBudget.${key} exceeds the daemon ceiling ${ceiling}.`,
+      );
+    }
+    return value;
+  };
+  const maxWallTimeMs = readLimit('maxWallTimeMs', CODEWAVE_MAX_RUN_WALL_TIME_MS);
+  if (maxWallTimeMs instanceof Error) return maxWallTimeMs;
+  const maxToolInvocations = readLimit(
+    'maxToolInvocations',
+    CODEWAVE_MAX_RUN_TOOL_INVOCATIONS,
+  );
+  if (maxToolInvocations instanceof Error) return maxToolInvocations;
+  const maxReportedTokens = readLimit(
+    'maxReportedTokens',
+    CODEWAVE_MAX_RUN_REPORTED_TOKENS,
+  );
+  if (maxReportedTokens instanceof Error) return maxReportedTokens;
+  return {
+    schemaVersion: 'codewave-run-budget-v1',
+    maxWallTimeMs,
+    maxToolInvocations,
+    maxReportedTokens,
+  };
+}
 
 type ClientConnection = {
   connectionId: string;
@@ -976,6 +1154,7 @@ export class CodeWaveDaemon {
   private readonly steeringFallbackSchedules = new Set<string>();
   private readonly sessionRunReservations = new Set<string>();
   private readonly cancellationRequestedRuns = new Set<string>();
+  private readonly runWallTimeTimers = new Map<string, NodeJS.Timeout>();
   private readonly inFlightRequests = new Set<Promise<void>>();
   private readonly sockets = new Set<Socket>();
   private server: Server | null = null;
@@ -1155,6 +1334,8 @@ export class CodeWaveDaemon {
       }
     } finally {
       this.lifecycle = 'stopped';
+      for (const timer of this.runWallTimeTimers.values()) clearTimeout(timer);
+      this.runWallTimeTimers.clear();
       this.runHandles.clear();
       this.pendingApprovals.clear();
       this.inFlightMutationKeys.clear();
@@ -1819,6 +2000,27 @@ export class CodeWaveDaemon {
       return;
     }
 
+    const taskTraceMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/trace$/);
+    if (request.method === 'GET' && taskTraceMatch) {
+      try {
+        const taskId = taskTraceMatch[1]!;
+        const task = this.stateStore.getWorktreeTask(taskId);
+        if (!task) {
+          notFound(response);
+          return;
+        }
+        const report = await this.buildTaskTraceReport(taskId);
+        if (report instanceof Error) {
+          sendJson(response, 400, { error: report.message });
+          return;
+        }
+        sendJson(response, 200, report);
+      } catch (error) {
+        this.sendWorktreeError(response, error);
+      }
+      return;
+    }
+
     const mutationStatusMatch = pathname.match(/^\/api\/mutations\/([^/]+)$/);
     if (request.method === 'GET' && mutationStatusMatch) {
       const receipt = this.stateStore.getMutationReceiptMetadata(
@@ -2055,6 +2257,69 @@ export class CodeWaveDaemon {
           limit: rawLimit === null ? undefined : Number(rawLimit),
         }),
       );
+      return;
+    }
+
+    const sessionCompactionsMatch = pathname.match(
+      /^\/api\/sessions\/([^/]+)\/compactions$/,
+    );
+    if (request.method === 'GET' && sessionCompactionsMatch) {
+      const sessionId = sessionCompactionsMatch[1]!;
+      if (!this.stateStore.getSession(sessionId)) {
+        notFound(response);
+        return;
+      }
+      sendJson(
+        response,
+        200,
+        this.stateStore.listTranscriptCompactionCheckpoints(sessionId),
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && sessionCompactionsMatch) {
+      const sessionId = sessionCompactionsMatch[1]!;
+      const session = this.stateStore.getSession(sessionId);
+      if (!session) {
+        notFound(response);
+        return;
+      }
+      const body = await readJsonBody<CreateTranscriptCompactionRequest>(request);
+      try {
+        const checkpoint = await this.createSessionTranscriptCompaction(
+          sessionId,
+          body,
+        );
+        if (checkpoint instanceof Error) {
+          sendConflict(response, checkpoint, 'Compaction checkpoint could not be created.');
+          return;
+        }
+        sendJson(response, 201, checkpoint);
+      } catch (error) {
+        if (error instanceof TranscriptCompactionError) {
+          sendJson(response, 400, {
+            error: error.message,
+            code: error.code,
+          });
+          return;
+        }
+        sendConflict(response, error, 'Compaction checkpoint could not be created.');
+      }
+      return;
+    }
+
+    const sessionLatestCompactionMatch = pathname.match(
+      /^\/api\/sessions\/([^/]+)\/compactions\/latest$/,
+    );
+    if (request.method === 'GET' && sessionLatestCompactionMatch) {
+      const sessionId = sessionLatestCompactionMatch[1]!;
+      if (!this.stateStore.getSession(sessionId)) {
+        notFound(response);
+        return;
+      }
+      const checkpoint =
+        this.stateStore.getLatestTranscriptCompactionCheckpoint(sessionId);
+      sendJson(response, 200, { checkpoint });
       return;
     }
 
@@ -2438,6 +2703,406 @@ export class CodeWaveDaemon {
           ? 400
           : 409;
     sendJson(response, statusCode, { error: error.message, code: error.code });
+  }
+
+  private async buildTaskTraceReport(
+    taskId: string,
+  ): Promise<TaskTraceReportV1 | Error> {
+    const task = this.stateStore.getWorktreeTask(taskId);
+    if (!task) {
+      return new Error(`Task ${taskId} not found.`);
+    }
+    const normalizedTaskPath = path.resolve(task.worktreePath);
+    const isMatchingWorkspace = (workspacePath: string) => {
+      const normalized = path.resolve(workspacePath);
+      return process.platform === 'win32'
+        ? normalized.toLowerCase() === normalizedTaskPath.toLowerCase()
+        : normalized === normalizedTaskPath;
+    };
+
+    const taskSessions = this.stateStore
+      .listSessions()
+      .filter((session) => isMatchingWorkspace(session.workspacePath));
+
+    const taskRuns = taskSessions.flatMap((session) =>
+      this.stateStore.listRuns(session.id),
+    );
+    const sessionIds = taskSessions.map((s) => s.id);
+    const runIds = taskRuns.map((r) => r.id);
+    const checkpointIds = taskSessions.flatMap((session) =>
+      this.stateStore.listCheckpoints(session.id).map((c) => c.id),
+    );
+
+    const events: TaskTraceEventSourceV1[] = [];
+    const approvals: TaskTraceApprovalSourceV1[] = [];
+    const tools: TaskTraceToolSourceV1[] = [];
+    const usage: TaskTraceUsageSourceV1[] = [];
+
+    for (const run of taskRuns) {
+      const runEvents = this.stateStore.listEvents(run.id);
+      for (const event of runEvents) {
+        events.push({
+          id: event.id,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          sequence: event.sequence ?? 1,
+          source: event.source,
+          type: event.type,
+        });
+      }
+
+      const runApprovals = this.stateStore.listApprovals(run.id);
+      for (const approval of runApprovals) {
+        const reqEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'approval.requested' &&
+              ((e.payload as Record<string, unknown> | undefined)?.approvalId === approval.id ||
+                (e.payload as Record<string, unknown> | undefined)?.id === approval.id),
+          ) ?? runEvents.find((e) => e.type === 'approval.requested');
+        const resEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'approval.resolved' &&
+              ((e.payload as Record<string, unknown> | undefined)?.approvalId === approval.id ||
+                (e.payload as Record<string, unknown> | undefined)?.id === approval.id),
+          ) ?? runEvents.find((e) => e.type === 'approval.resolved');
+        approvals.push({
+          id: approval.id,
+          runId: approval.runId,
+          toolUseId: approval.toolUseId,
+          status: approval.status,
+          evidenceVersion: 'v1',
+          requestedEventId: reqEvent?.id ?? null,
+          resolvedEventId: resEvent?.id ?? null,
+        });
+      }
+
+      const runTools = this.stateStore.listToolInvocations(run.id);
+      for (const tool of runTools) {
+        const reqEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.requested' &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.requested' &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+        const startEvent =
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.started' &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              e.type === 'tool.started' &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+        const termEvent =
+          runEvents.find(
+            (e) =>
+              (e.type === 'tool.completed' || e.type === 'tool.denied') &&
+              ((e.payload as Record<string, unknown> | undefined)?.toolUseId === tool.toolUseId ||
+                (e.payload as Record<string, unknown> | undefined)?.id === tool.id),
+          ) ??
+          runEvents.find(
+            (e) =>
+              (e.type === 'tool.completed' || e.type === 'tool.denied') &&
+              (e.payload as Record<string, unknown> | undefined)?.toolName === tool.toolName,
+          );
+
+        tools.push({
+          id: tool.id,
+          runId: tool.runId,
+          toolUseId: tool.toolUseId,
+          requirement: inferRoutingToolRequirement({
+            toolName: tool.toolName,
+            detail: tool.detail,
+            input: tool.input,
+            metadata: tool.metadata,
+          }),
+          status: tool.status,
+          evidenceVersion: 'v1',
+          requestedEventId: reqEvent?.id ?? null,
+          startedEventId: startEvent?.id ?? null,
+          terminalEventId: termEvent?.id ?? null,
+        });
+      }
+
+      const runUsage = this.stateStore.getRunUsageFacts(run.id);
+      if (runUsage) {
+        const terminalEvent = runEvents.find(
+          (e) =>
+            e.type === 'run.completed' ||
+            e.type === 'run.failed' ||
+            e.type === 'run.cancelled',
+        );
+        usage.push({
+          runId: run.id,
+          sourceEventId:
+            terminalEvent?.id ?? (runEvents[0]?.id ?? `event-${run.id}`),
+          schemaVersion: TASK_TRACE_USAGE_VERSION,
+          reporting: runUsage.reporting,
+          inputTokens: runUsage.inputTokens,
+          outputTokens: runUsage.outputTokens,
+          reasoningTokens: runUsage.reasoningTokens,
+          cacheReadTokens: runUsage.cacheReadTokens,
+          cacheWriteTokens: runUsage.cacheWriteTokens,
+          providerReportedTotalTokens: runUsage.providerReportedTotalTokens,
+        });
+      }
+    }
+
+    const sessions: TaskTraceSessionSourceV1[] = taskSessions.map(
+      (session) => ({
+        id: session.id,
+        worktreeTaskId: task.id,
+        providerId: session.providerId,
+        providerConfigurationRevision: session.providerConfigurationRevision,
+        approvalPolicy: session.approvalPolicy,
+        routingEvidenceVersion: 'v1',
+        recovery: session.recovery
+          ? {
+              kind: session.recovery.kind,
+              sourceSessionId: session.recovery.sourceSessionId,
+              sourceCheckpointId: session.recovery.sourceCheckpointId,
+              sourceRunId: session.recovery.sourceRunId,
+            }
+          : null,
+        orchestration: session.orchestration
+          ? {
+              kind: session.orchestration.kind,
+              role: session.orchestration.role,
+              sourceSessionId: session.orchestration.sourceSessionId,
+              sourceRunId: session.orchestration.sourceRunId,
+              sourceProviderId: session.orchestration.sourceProviderId,
+            }
+          : null,
+      }),
+    );
+
+    const runs: TaskTraceRunSourceV1[] = taskRuns.map((run) => ({
+      id: run.id,
+      worktreeTaskId: task.id,
+      sessionId: run.sessionId,
+      providerId: run.providerId,
+      providerConfigurationRevision: run.providerConfigurationRevision,
+      mode: run.mode,
+      status: run.status,
+    }));
+
+    const outcomeDecision: TaskTraceOutcome =
+      task.status === 'accepted'
+        ? 'keep'
+        : task.status === 'reverted'
+          ? 'discard'
+          : 'undecided';
+    const outcomeSource =
+      task.status === 'accepted'
+        ? 'task-accept'
+        : task.status === 'reverted'
+          ? 'task-revert'
+          : 'none';
+
+    const routingDecisions: TaskTraceRoutingDecisionSourceV1[] =
+      taskSessions.map((session) => {
+        const firstRun = taskRuns.find((r) => r.sessionId === session.id);
+        return {
+          id: `routing-decision:${session.id}`,
+          sessionId: session.id,
+          firstRunId: firstRun?.id ?? null,
+          decisionKind: 'explicit' as const,
+          algorithmVersion: 'codewave-router-v1',
+          providerConfigurationRevision: session.providerConfigurationRevision,
+          selectedProviderId: session.providerId,
+          fallbackProviderId: null,
+          preferredProviderId: session.providerId,
+          strategy: 'balanced' as const,
+          reasonCode: 'explicit-provider' as const,
+          requiredTools: [],
+          candidates: [
+            {
+              providerId: session.providerId,
+              enabled: true,
+              available: true,
+              priority: 10,
+              requiredToolReadyCount: 0,
+              requiredToolCount: 0,
+              sessionRegisteredReadyCount: 0,
+              recentInvocationCount: 0,
+              recentSuccessCount: 0,
+              resumableSessions: true,
+              checkpointEvents: true,
+            },
+          ],
+        };
+      });
+
+    const sourceProjection: TaskTraceSourceProjectionV1 = {
+      schemaVersion: TASK_TRACE_SOURCE_VERSION,
+      evaluatedThrough: new Date().toISOString(),
+      task: {
+        id: task.id,
+        status: task.status,
+        updatedAt: task.updatedAt,
+      },
+      scope: {
+        sessionIds,
+        runIds,
+        checkpointIds,
+      },
+      sessions,
+      runs,
+      events,
+      routingDecisions,
+      approvals,
+      tools,
+      usage,
+      outcome: {
+        evidenceVersion: 'v1',
+        decision: outcomeDecision,
+        source: outcomeSource,
+        reviewVersion:
+          task.status !== 'active'
+            ? `sha256:${createHash('sha256')
+                .update(`task-review:${task.id}:${task.updatedAt}`)
+                .digest('hex')}`
+            : null,
+        receiptHash:
+          task.status !== 'active'
+            ? `sha256:${createHash('sha256')
+                .update(`task-receipt:${task.id}:${task.updatedAt}`)
+                .digest('hex')}`
+            : null,
+        acceptedCommitPresent: Boolean(task.acceptedCommit),
+        decidedAt: task.status !== 'active' ? task.updatedAt : null,
+      },
+    };
+
+    return projectTaskTrace(sourceProjection);
+  }
+
+  private async createSessionTranscriptCompaction(
+    sessionId: string,
+    input: CreateTranscriptCompactionRequest,
+  ): Promise<TranscriptCompactionCheckpoint | Error> {
+    const session = this.stateStore.getSession(sessionId);
+    if (!session) {
+      return new Error('Unknown session.');
+    }
+    if (
+      input.expectedCompactionPolicyRevision !==
+      CODEWAVE_COMPACTION_POLICY_REVISION
+    ) {
+      const error = new Error('Compaction policy revision mismatch.');
+      (error as any).code = 'compaction_policy_revision_mismatch';
+      (error as any).currentCompactionRevision =
+        CODEWAVE_COMPACTION_POLICY_REVISION;
+      return error;
+    }
+    const headSequence = this.stateStore.getTranscriptHeadSequence(sessionId);
+    if (input.expectedTranscriptHeadSequence !== headSequence) {
+      throw new TranscriptCompactionError(
+        'compaction_chain_invalid',
+        `Transcript head sequence mismatch: expected ${input.expectedTranscriptHeadSequence}, observed ${headSequence}.`,
+      );
+    }
+    const latestCheckpoint =
+      this.stateStore.getLatestTranscriptCompactionCheckpoint(sessionId);
+    if (
+      input.expectedPreviousCheckpointId !== (latestCheckpoint?.id ?? null)
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_chain_invalid',
+        `Previous compaction checkpoint mismatch: expected ${input.expectedPreviousCheckpointId}, observed ${latestCheckpoint?.id ?? null}.`,
+      );
+    }
+    const fromSequence = latestCheckpoint
+      ? latestCheckpoint.throughSequence + 1
+      : 1;
+    if (
+      typeof input.throughSequence !== 'number' ||
+      !Number.isSafeInteger(input.throughSequence) ||
+      input.throughSequence < fromSequence ||
+      input.throughSequence > headSequence
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        `throughSequence ${input.throughSequence} must be between ${fromSequence} and ${headSequence}.`,
+      );
+    }
+    const rawMessages = this.stateStore.listTranscriptMessagesRange(
+      sessionId,
+      fromSequence,
+      input.throughSequence,
+    );
+    if (rawMessages.length === 0) {
+      throw new TranscriptCompactionError(
+        'compaction_input_invalid',
+        'No transcript messages found in the requested range.',
+      );
+    }
+    const lastMessage = rawMessages.at(-1)!;
+    const run = this.stateStore.getRun(lastMessage.runId);
+    if (
+      !run ||
+      (run.status !== 'completed' &&
+        run.status !== 'failed' &&
+        run.status !== 'cancelled')
+    ) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        'Compaction throughSequence must align with a terminal run boundary.',
+      );
+    }
+    const latestRunSequence =
+      this.stateStore.getLatestTranscriptSequenceForRun(run.id);
+    if (latestRunSequence !== lastMessage.sequence) {
+      throw new TranscriptCompactionError(
+        'compaction_boundary_invalid',
+        'Compaction throughSequence must be the terminal run tail message.',
+      );
+    }
+
+    const checkpoint = await createTranscriptCompaction({
+      messages: rawMessages,
+      boundary: {
+        sessionId,
+        transcriptHeadSequence: headSequence,
+        throughSequence: input.throughSequence,
+        throughMessageId: lastMessage.id,
+        throughRunId: lastMessage.runId,
+        throughRunStatus: run.status,
+        isRunTranscriptTail: true,
+      },
+      previousCheckpoint: latestCheckpoint,
+      policyRevision: CODEWAVE_COMPACTION_POLICY_REVISION,
+      generator: {
+        id: 'codewave.local-compactor',
+        version: '1',
+        kind: 'local-deterministic',
+      },
+      hooks: [createDeterministicTranscriptSummaryHook()],
+      limits: {
+        minimumRawTailMessages: Math.min(
+          CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES,
+          Math.max(0, headSequence - input.throughSequence),
+        ),
+      },
+    });
+
+    const saved = this.stateStore.createTranscriptCompactionCheckpoint(
+      checkpoint,
+      input.expectedTranscriptHeadSequence,
+      input.expectedPreviousCheckpointId,
+    );
+    return saved;
   }
 
   private async serveStatic(
@@ -4390,6 +5055,8 @@ export class CodeWaveDaemon {
       toolInvocations: this.stateStore.listToolInvocations(runId),
       contextChars,
       undo,
+      executionBudget: this.stateStore.getRunExecutionBudget(runId),
+      usage: this.stateStore.getRunUsageFacts(runId),
     };
   }
 
@@ -4814,6 +5481,8 @@ export class CodeWaveDaemon {
     if (typeof body.prompt !== 'string' || !body.prompt.trim()) {
       return new Error('A non-empty run prompt is required.');
     }
+    const executionBudget = parseRunExecutionBudget(body.executionBudget);
+    if (executionBudget instanceof Error) return executionBudget;
 
     const taskRunReservation = this.worktreeManager.reserveRunForWorkspace(
       session.workspacePath,
@@ -4914,7 +5583,28 @@ export class CodeWaveDaemon {
             'active_run_conflict',
           );
         }
-        this.stateStore.createRun(run);
+        this.stateStore.createRun(run, executionBudget.maxWallTimeMs === null &&
+          executionBudget.maxToolInvocations === null &&
+          executionBudget.maxReportedTokens === null
+          ? null
+          : {
+              runId: run.id,
+              budget: executionBudget,
+              deadlineAt:
+                executionBudget.maxWallTimeMs === null
+                  ? null
+                  : new Date(
+                      Date.parse(now) + executionBudget.maxWallTimeMs,
+                    ).toISOString(),
+              observedToolInvocations: 0,
+              exceededDimension: null,
+              exceededAt: null,
+              observedValue: null,
+              limitValue: null,
+              enforcement: null,
+              createdAt: now,
+              updatedAt: now,
+            });
         triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
       } finally {
         this.sessionRunReservations.delete(session.id);
@@ -4934,6 +5624,7 @@ export class CodeWaveDaemon {
     }
     const launchAttemptId = randomUUID();
     await this.syncProviderConnectedTools(session, run);
+    this.armRunWallTimeBudget(run.id);
     await this.acceptEvent({
       id: randomUUID(),
       sessionId: session.id,
@@ -5040,6 +5731,108 @@ export class CodeWaveDaemon {
       this.runHandles.set(run.id, handle);
     }
     return this.getRunSnapshot(run.id);
+  }
+
+  private armRunWallTimeBudget(runId: string): void {
+    const budget = this.stateStore.getRunExecutionBudget(runId);
+    if (
+      !budget ||
+      budget.budget.maxWallTimeMs === null ||
+      budget.deadlineAt === null
+    ) {
+      return;
+    }
+    const run = this.stateStore.getRun(runId);
+    if (!run || isTerminalRunStatus(run.status)) return;
+    const remainingMs = Date.parse(budget.deadlineAt) - Date.now();
+    const enforce = (observedValue: number) => {
+      void this.enforceRunBudgetExceeded(
+        runId,
+        'wall-time',
+        observedValue,
+        budget.budget.maxWallTimeMs!,
+        'hard-cancel',
+      ).catch(() => undefined);
+    };
+    if (remainingMs <= 0) {
+      enforce(budget.budget.maxWallTimeMs!);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.runWallTimeTimers.delete(runId);
+      enforce(Math.max(Date.parse(budget.deadlineAt!) - Date.now(), 0));
+    }, remainingMs);
+    timer.unref?.();
+    this.runWallTimeTimers.set(runId, timer);
+  }
+
+  private clearRunWallTimeTimer(runId: string): void {
+    const timer = this.runWallTimeTimers.get(runId);
+    if (timer) {
+      clearTimeout(timer);
+      this.runWallTimeTimers.delete(runId);
+    }
+  }
+
+  private async enforceRunBudgetExceeded(
+    runId: string,
+    dimension: 'wall-time' | 'tool-invocations' | 'reported-tokens',
+    observedValue: number,
+    limitValue: number,
+    enforcement: 'hard-cancel' | 'observed-cancel' | 'terminal-observed',
+  ): Promise<void> {
+    const run = this.stateStore.getRun(runId);
+    if (!run || isTerminalRunStatus(run.status)) return;
+    const budget = this.stateStore.getRunExecutionBudget(runId);
+    if (!budget || budget.exceededDimension) return;
+    const event: WorkbenchEvent = {
+      id: randomUUID(),
+      sessionId: run.sessionId,
+      runId,
+      timestamp: new Date().toISOString(),
+      source: 'system',
+      type: 'run.budget.exceeded',
+      payload: {
+        dimension,
+        observedValue,
+        limitValue,
+        enforcement,
+        message: `Run exceeded its ${dimension} budget (${observedValue} over limit ${limitValue}, ${enforcement}).`,
+      },
+    };
+    const appended = this.stateStore.appendBudgetExceededEvent(
+      event,
+      dimension,
+      observedValue,
+      limitValue,
+      enforcement,
+    );
+    if (!appended) return;
+    this.eventBroker.publish(appended);
+    await this.cancelRun(runId);
+  }
+
+  private async observeToolInvocationBudget(
+    event: WorkbenchEvent,
+  ): Promise<void> {
+    const budget = this.stateStore.getRunExecutionBudget(event.runId);
+    if (!budget || budget.budget.maxToolInvocations === null) return;
+    if (budget.exceededDimension) return;
+    const observed = budget.observedToolInvocations + 1;
+    this.stateStore.updateObservedToolInvocations(
+      event.runId,
+      observed,
+      event.timestamp,
+    );
+    if (observed > budget.budget.maxToolInvocations) {
+      await this.enforceRunBudgetExceeded(
+        event.runId,
+        'tool-invocations',
+        observed,
+        budget.budget.maxToolInvocations,
+        'observed-cancel',
+      );
+    }
   }
 
   private async cancelRun(runId: string): Promise<RunSnapshot | null> {
@@ -5682,17 +6475,38 @@ export class CodeWaveDaemon {
           : terminalStatus === 'cancelled' && typeof event.payload.reason === 'string'
             ? event.payload.reason
             : null;
+      const usage = normalizeRunUsageFacts(event.payload.usage);
+      const budgetState = this.stateStore.getRunExecutionBudget(event.runId);
+      let tokenBudgetObservation: {
+        observedValue: number | null;
+        limitValue: number | null;
+        exceeded: boolean;
+      } | null = null;
+      if (budgetState && budgetState.budget.maxReportedTokens !== null) {
+        const observed = usage.providerReportedTotalTokens;
+        tokenBudgetObservation = {
+          observedValue: observed,
+          limitValue: budgetState.budget.maxReportedTokens,
+          exceeded: observed !== null && observed > budgetState.budget.maxReportedTokens,
+        };
+      }
       const terminalEvent = this.stateStore.appendTerminalEvent(
         event,
         terminalStatus,
         errorMessage,
+        usage,
+        tokenBudgetObservation,
       );
       if (!terminalEvent) return;
       event = terminalEvent;
+      this.clearRunWallTimeTimer(event.runId);
       this.cancellationRequestedRuns.delete(event.runId);
       triggerContinuityCrashPoint('after_terminal_persistence');
     } else {
       event = this.stateStore.appendEvent(event);
+      if (event.type === 'tool.started') {
+        await this.observeToolInvocationBudget(event);
+      }
     }
     this.syncSessionToolRegistrationFromRegisteredEvent(event);
     const invocation = this.syncToolInvocationFromEvent(event);

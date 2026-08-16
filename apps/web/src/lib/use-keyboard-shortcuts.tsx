@@ -46,7 +46,6 @@ const UTILITY_VIEW_ORDER: readonly UtilityView[] = [
 type UseKeyboardShortcutsOptions = {
   railFilterInputRef: RefObject<HTMLInputElement | null>;
   setQuickOpenVisible: React.Dispatch<React.SetStateAction<boolean>>;
-  setCompareVisible: React.Dispatch<React.SetStateAction<boolean>>;
   setFocusView: React.Dispatch<React.SetStateAction<boolean>>;
   setUtilityCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setRailView: React.Dispatch<React.SetStateAction<RailView>>;
@@ -63,7 +62,6 @@ type UseKeyboardShortcutsOptions = {
 export function useKeyboardShortcuts({
   railFilterInputRef,
   setQuickOpenVisible,
-  setCompareVisible,
   setFocusView,
   setUtilityCollapsed,
   setRailView,
@@ -96,12 +94,6 @@ export function useKeyboardShortcuts({
       if (isMetaKey && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setQuickOpenVisible((current) => !current);
-        return;
-      }
-
-      if (isMetaKey && event.shiftKey && event.key.toLowerCase() === 'c') {
-        event.preventDefault();
-        setCompareVisible((current) => !current);
         return;
       }
 
@@ -221,7 +213,6 @@ export function useKeyboardShortcuts({
   }, [
     railFilterInputRef,
     setQuickOpenVisible,
-    setCompareVisible,
     setFocusView,
     setUtilityCollapsed,
     setRailView,

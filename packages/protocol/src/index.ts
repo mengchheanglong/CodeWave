@@ -8,6 +8,15 @@ export const CODEWAVE_DEFAULT_TRANSCRIPT_MESSAGES = 100;
 export const CODEWAVE_MAX_TRANSCRIPT_MESSAGES = 200;
 export const CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES = 256 * 1024;
 export const CODEWAVE_MAX_WORKSPACE_FILE_BYTES = 1024 * 1024;
+export const CODEWAVE_MAX_RUN_WALL_TIME_MS = 24 * 60 * 60 * 1000;
+export const CODEWAVE_MAX_RUN_TOOL_INVOCATIONS = 10_000;
+export const CODEWAVE_MAX_RUN_REPORTED_TOKENS = 10_000_000;
+export const CODEWAVE_COMPACTION_POLICY_REVISION =
+  'sha256:bc85f1a8b716191a35bc3d93ee27935a04001dcbe6385cb04554d9bd85822dc2';
+export const CODEWAVE_MAX_COMPACTION_SOURCE_MESSAGES = 100;
+export const CODEWAVE_MAX_COMPACTION_SOURCE_BYTES = 256 * 1024;
+export const CODEWAVE_MIN_COMPACTION_RAW_TAIL_MESSAGES = 32;
+export const CODEWAVE_MAX_COMPACTION_SUMMARY_BYTES = 32 * 1024;
 
 export const DAEMON_CLIENT_SCOPES = [
   'runtime:read',
@@ -39,6 +48,9 @@ export const DAEMON_CAPABILITIES = [
   'workspace-files',
   'project-worktrees',
   'append-only-transcripts',
+  'execution-budgets',
+  'transcript-compaction-checkpoints',
+  'task-trace-evaluation',
 ] as const;
 export type DaemonCapability = (typeof DAEMON_CAPABILITIES)[number];
 
@@ -62,6 +74,13 @@ export interface DaemonProtocolLimits {
   maxWorkspacePreviewBytes: number;
   maxWorkspaceFileBytes: number;
   maxWorktreeDiffBytes: number;
+  maxRunWallTimeMs: number;
+  maxRunToolInvocations: number;
+  maxRunReportedTokens: number;
+  maxCompactionSourceMessages: number;
+  maxCompactionSourceBytes: number;
+  minCompactionRawTailMessages: number;
+  maxCompactionSummaryBytes: number;
 }
 
 export interface ClientHandshakeResponse {
@@ -264,6 +283,14 @@ export type ToolInvocationStatus =
   | 'completed'
   | 'denied';
 export type TranscriptRole = 'user' | 'assistant' | 'system';
+export type RunBudgetDimension =
+  | 'wall-time'
+  | 'tool-invocations'
+  | 'reported-tokens';
+export type RunBudgetEnforcement =
+  | 'hard-cancel'
+  | 'observed-cancel'
+  | 'terminal-observed';
 
 export type WorkbenchEventType =
   | 'run.started'
@@ -282,6 +309,7 @@ export type WorkbenchEventType =
   | 'approval.resolved'
   | 'artifact.created'
   | 'checkpoint.saved'
+  | 'run.budget.exceeded'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -375,6 +403,195 @@ export interface TranscriptWindow {
   oldestSequence: number | null;
   newestSequence: number | null;
   totalCount: number;
+  latestCompactionCheckpoint?: TranscriptCompactionCheckpoint | null;
+}
+
+export interface DerivedMemoryCandidate {
+  id: string;
+  hookId?: string;
+  hookVersion?: string;
+  key?: string;
+  kind?: string;
+  content?: string;
+  text?: string;
+  sourceMessageIds: string[];
+  authority: 'derived-non-authoritative';
+}
+
+export interface TranscriptCompactionSummaryFragment {
+  hookId: string;
+  hookVersion: string;
+  key: string;
+  content: string;
+  sourceMessageIds: string[];
+}
+
+export interface TranscriptCompactionHookResult {
+  hookId: string;
+  hookVersion: string;
+  summaryFragments: TranscriptCompactionSummaryFragment[];
+  memories: Omit<DerivedMemoryCandidate, 'id'>[];
+}
+
+export interface TranscriptCompactionCheckpoint {
+  id: string;
+  sessionId: string;
+  previousCheckpointId: string | null;
+  fromSequence: number;
+  throughSequence: number;
+  throughMessageId: string;
+  throughRunId: string;
+  sourceMessageCount: number;
+  segmentDigest: string;
+  coverageDigest: string;
+  outputDigest?: string;
+  summaryText: string;
+  summaryFragments?: TranscriptCompactionSummaryFragment[];
+  memories: DerivedMemoryCandidate[];
+  hookResults?: TranscriptCompactionHookResult[];
+  generator: {
+    id: string;
+    version: string;
+    kind: 'local-deterministic';
+  };
+  policyRevision: string;
+  authority: 'derived-non-authoritative';
+  schemaVersion?: 'codewave-transcript-compaction-v1' | string;
+  createdAt: string;
+}
+
+export interface CreateTranscriptCompactionRequest {
+  throughSequence: number;
+  expectedTranscriptHeadSequence: number;
+  expectedPreviousCheckpointId: string | null;
+  expectedCompactionPolicyRevision: string;
+}
+
+export interface RunExecutionBudget {
+  schemaVersion: 'codewave-run-budget-v1';
+  maxWallTimeMs: number | null;
+  maxToolInvocations: number | null;
+  maxReportedTokens: number | null;
+}
+
+export interface RunUsageFactsV1 {
+  schemaVersion: 'codewave-usage-v1';
+  reporting: 'reported' | 'unreported' | 'invalid';
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  providerReportedTotalTokens: number | null;
+}
+
+export interface RunExecutionBudgetState {
+  runId: string;
+  budget: RunExecutionBudget;
+  deadlineAt: string | null;
+  observedToolInvocations: number;
+  exceededDimension: RunBudgetDimension | null;
+  exceededAt: string | null;
+  observedValue: number | null;
+  limitValue: number | null;
+  enforcement: RunBudgetEnforcement | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskTraceReportV1 {
+  id: `trace:sha256:${string}`;
+  schemaVersion: 'codewave-task-trace-report-v1';
+  projectionVersion: 'codewave-task-trace-projection-v1';
+  rulesetVersion: 'codewave-task-trace-ruleset-v1';
+  subject: {
+    kind: 'worktree-task';
+    taskRef: `ref:sha256:${string}`;
+    taskStatus: WorktreeTaskStatus;
+  };
+  sourceDigest: `sha256:${string}`;
+  evaluatedThrough: string;
+  contentBoundary: 'metadata-only-v1';
+  sourceCut: {
+    taskUpdatedAt: string;
+    runs: Array<{
+      runRef: `ref:sha256:${string}`;
+      lastEventSequence: number;
+      lastEventRef: `ref:sha256:${string}` | null;
+    }>;
+  };
+  projection: {
+    sessions: Array<{
+      sessionRef: `ref:sha256:${string}`;
+      providerId: ProviderId;
+      providerConfigurationRevision: string;
+      approvalPolicy: ApprovalPolicy;
+      recovery: {
+        kind: SessionRecoveryKind;
+        sourceSessionRef: `ref:sha256:${string}`;
+        sourceCheckpointRef: `ref:sha256:${string}` | null;
+        sourceRunRef: `ref:sha256:${string}` | null;
+        sourceExists: boolean;
+        cycleDetected: boolean;
+      } | null;
+    }>;
+    runs: Array<{
+      runRef: `ref:sha256:${string}`;
+      sessionRef: `ref:sha256:${string}`;
+      providerId: ProviderId;
+      providerConfigurationRevision: string;
+      mode: RunMode;
+      status: RunStatus;
+    }>;
+    routing: Array<{
+      decisionRef: `ref:sha256:${string}`;
+      sessionRef: `ref:sha256:${string}`;
+      firstRunRef: `ref:sha256:${string}` | null;
+      decisionKind: string;
+      selectedProviderId: ProviderId;
+      reasonCode: string;
+    }>;
+    approvals: Array<{
+      approvalRef: `ref:sha256:${string}`;
+      runRef: `ref:sha256:${string}`;
+      toolUseId: string | null;
+      status: ApprovalStatus;
+    }>;
+    tools: Array<{
+      invocationRef: `ref:sha256:${string}`;
+      runRef: `ref:sha256:${string}`;
+      toolUseId: string | null;
+      status: ToolInvocationStatus;
+    }>;
+    usage: Array<{
+      runRef: `ref:sha256:${string}`;
+      reporting: 'reported' | 'unreported' | 'invalid';
+      inputTokens: number | null;
+      outputTokens: number | null;
+      providerReportedTotalTokens: number | null;
+    }>;
+    outcome: {
+      decision: 'keep' | 'discard' | 'undecided';
+      source: 'task-accept' | 'task-revert' | 'none';
+      reviewVersion: string | null;
+      receiptHash: string | null;
+      acceptedCommitPresent: boolean;
+      decidedAt: string | null;
+    };
+  };
+  assertions: Array<{
+    id: 'CW-TT1' | 'CW-TT2' | 'CW-TT3' | 'CW-TT4' | 'CW-TT5' | 'CW-TT6' | 'CW-TT7' | 'CW-TT8';
+    status: 'pass' | 'fail' | 'unknown' | 'not_applicable';
+    reasonCode: string;
+    evidenceRefs: string[];
+  }>;
+  summary: {
+    integrity: 'pass' | 'fail';
+    completeness: 'complete' | 'partial';
+    outcome: 'keep' | 'discard' | 'undecided';
+    failedAssertions: string[];
+    unknownAssertions: string[];
+  };
 }
 
 export interface ArtifactRecord {
@@ -764,6 +981,8 @@ export interface RunSnapshot {
   toolInvocations: ToolInvocationRecord[];
   contextChars: number;
   undo: RunUndoInfo;
+  executionBudget?: RunExecutionBudgetState | null;
+  usage?: RunUsageFactsV1 | null;
 }
 
 export interface ArchiveSessionSummary {
@@ -830,6 +1049,7 @@ export interface StartRunRequest {
   prompt: string;
   expectedProviderRevision: string;
   mode?: RunMode;
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface SteerRunRequest {
@@ -861,6 +1081,7 @@ export interface CompareRunRequest {
   providers: ProviderId[];
   expectedProviderRevision: string;
   approvalPolicy?: ApprovalPolicy;
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface CompareRunResponse {
@@ -875,6 +1096,7 @@ export interface RoutePromptRequest {
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
   requiredTools?: RoutingToolRequirement[];
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface RoutePromptResponse {
@@ -888,6 +1110,7 @@ export interface FollowUpRunRequest {
   expectedProviderRevision: string;
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface FollowUpRunResponse {
@@ -903,6 +1126,7 @@ export interface DelegateRunRequest {
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
   requiredTools?: RoutingToolRequirement[];
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface DelegateRunResponse {
@@ -917,6 +1141,7 @@ export interface HandoffRunRequest {
   preferredProviderId?: ProviderId | null;
   approvalPolicy?: ApprovalPolicy;
   requiredTools?: RoutingToolRequirement[];
+  executionBudget?: RunExecutionBudget;
 }
 
 export interface HandoffRunResponse {

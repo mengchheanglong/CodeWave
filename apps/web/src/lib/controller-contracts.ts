@@ -68,6 +68,7 @@ export type ControllerRequesterMap = {
   applySelectedSessionPolicyRequester: () => Promise<void>;
   cancelSelectedRunRequester: () => Promise<void>;
   undoRunRequester: () => Promise<void>;
+  transcriptCompactionRequester: () => Promise<void>;
   runModeDraftChangeRequester: (mode: RunMode) => Promise<void>;
   executePlanRequester: (planText: string) => Promise<void>;
   followUpRunRequester: CreateFollowUpRun;

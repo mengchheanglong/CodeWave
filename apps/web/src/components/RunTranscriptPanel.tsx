@@ -20,6 +20,7 @@ type RunTranscriptPanelProps = {
     decision: 'approved' | 'denied',
   ) => void;
   onExecutePlan: (planText: string) => void;
+  onCompactTranscript?: () => void;
   showThinking: boolean;
   formatTimestamp: (timestamp: string) => string;
   expandAllSignal?: number;
@@ -32,11 +33,13 @@ export function RunTranscriptPanel({
   approvals,
   onResolveApproval,
   onExecutePlan,
+  onCompactTranscript,
   showThinking,
   formatTimestamp,
   expandAllSignal = 0,
 }: RunTranscriptPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const steps = useMemo(
     () => buildTimelineSteps(selectedRun, events),
     [selectedRun, events],
@@ -47,22 +50,29 @@ export function RunTranscriptPanel({
   const [allExpanded, setAllExpanded] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
-  const priorMessages = useMemo(
-    () => {
-      const messages = transcript?.messages ?? [];
-      const currentRunSequence = messages.find(
-        (message) => message.runId === selectedRun?.id,
-      )?.sequence;
-      if (currentRunSequence === undefined) {
-        return [];
-      }
-      return messages.filter(
-        (message) => message.sequence < currentRunSequence,
-      );
-    },
-    [selectedRun?.id, transcript],
+  const priorMessages = useMemo(() => {
+    const messages = transcript?.messages ?? [];
+    const currentRunSequence = messages.find(
+      (message) => message.runId === selectedRun?.id,
+    )?.sequence;
+    if (currentRunSequence === undefined) {
+      return [];
+    }
+    return messages.filter(
+      (message) => message.sequence < currentRunSequence,
+    );
+  }, [selectedRun?.id, transcript?.messages]);
+  const visiblePriorMessages = useMemo(() => {
+    if (historyExpanded) {
+      return priorMessages;
+    }
+    return priorMessages.slice(-5);
+  }, [historyExpanded, priorMessages]);
+  const hiddenPriorMessageCount = Math.max(
+    0,
+    priorMessages.length - visiblePriorMessages.length,
   );
-  const visiblePriorMessages = historyExpanded ? priorMessages : [];
+
   const priorSteps = useMemo<TimelineStep[]>(
     () =>
       visiblePriorMessages.map((message) => ({
@@ -100,12 +110,19 @@ export function RunTranscriptPanel({
   }, [selectedRun, steps]);
 
   useEffect(() => {
-    if (!containerRef.current || !selectedRun || steps.length === 0) {
+    if (!selectedRun || steps.length === 0) {
       return;
     }
 
-    containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [selectedRun, steps]);
+    const scrollContainer =
+      containerRef.current?.closest('.run-scroll') ?? containerRef.current;
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+    if (typeof bottomAnchorRef.current?.scrollIntoView === 'function') {
+      bottomAnchorRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [selectedRun?.id, steps.length, events.length, approvals.length, historyExpanded]);
 
   useEffect(() => {
     setHistoryExpanded(false);
@@ -172,6 +189,46 @@ export function RunTranscriptPanel({
 
   return (
     <div ref={containerRef} className="transcript-stream terminal-stream">
+      {selectedRun.status === 'completed' ||
+      selectedRun.status === 'failed' ||
+      selectedRun.status === 'cancelled' ? (
+        <div className="transcript-history-actions">
+          <button
+            type="button"
+            className="transcript-toolbar-button"
+            onClick={() => onCompactTranscript?.()}
+            title="Create a derived, non-authoritative compaction checkpoint through the end of the selected run"
+          >
+            Compact history
+          </button>
+        </div>
+      ) : null}
+      {transcript?.latestCompactionCheckpoint ? (
+        <section className="compaction-checkpoint-card" aria-label="Compacted history checkpoint">
+          <header className="compaction-checkpoint-header">
+            <span className="compaction-pill">Compacted Checkpoint</span>
+            <span className="compaction-range">
+              Seq 1–{transcript.latestCompactionCheckpoint.throughSequence} ({transcript.latestCompactionCheckpoint.sourceMessageCount} msgs)
+            </span>
+            <span className="compaction-authority">derived-non-authoritative</span>
+          </header>
+          <p className="compaction-summary-text">{transcript.latestCompactionCheckpoint.summaryText}</p>
+          {transcript.latestCompactionCheckpoint.memories && transcript.latestCompactionCheckpoint.memories.length > 0 ? (
+            <div className="compaction-memories-list">
+              <span className="compaction-memories-label">Derived Memories:</span>
+              <ul className="compaction-memories-items">
+                {transcript.latestCompactionCheckpoint.memories.map((m) => (
+                  <li key={m.id} className="compaction-memory-item">
+                    <span className="compaction-memory-kind">{m.kind ?? 'fact'}</span>
+                    <span>{m.content ?? m.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       {priorMessages.length > 0 ? (
         <section
           className={`session-memory${historyExpanded ? ' expanded' : ' collapsed'}`}
@@ -271,6 +328,7 @@ export function RunTranscriptPanel({
         approvals={approvals}
         onResolveApproval={onResolveApproval}
       />
+      <div ref={bottomAnchorRef} className="transcript-bottom-anchor" style={{ height: 1 }} />
     </div>
   );
 }

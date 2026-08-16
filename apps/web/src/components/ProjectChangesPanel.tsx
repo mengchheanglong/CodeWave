@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ProjectListResponse,
   ProjectTaskGroup,
+  TaskTraceReportV1,
   WorktreeChangesSnapshot,
   WorktreeTaskRecord,
 } from '@codewave/protocol';
@@ -47,6 +48,23 @@ export function ProjectChangesPanel({
   const [taskTitle, setTaskTitle] = useState('');
   const [acceptOpen, setAcceptOpen] = useState(false);
   const [revertOpen, setRevertOpen] = useState(false);
+  const [taskTrace, setTaskTrace] = useState<TaskTraceReportV1 | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+  const [traceExpanded, setTraceExpanded] = useState(false);
+
+  async function loadTaskTrace(taskId: string): Promise<void> {
+    setTraceLoading(true);
+    setError(null);
+    try {
+      const trace = await apiRef.current.getTaskTrace(taskId);
+      setTaskTrace(trace);
+      setTraceExpanded(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Task trace could not be evaluated.');
+    } finally {
+      setTraceLoading(false);
+    }
+  }
 
   const normalizedWorkspace = comparablePath(workspacePath);
   const activeGroup = useMemo(
@@ -356,6 +374,65 @@ export function ProjectChangesPanel({
               </button>
             </div>
           ) : null}
+
+          <div className="task-trace-section">
+            <div className="task-trace-header">
+              <div>
+                <strong>Task Evaluation & Trace</strong>
+                <span className="task-trace-subtitle">Deterministic ruleset evaluation and causal lineage</span>
+              </div>
+              <button
+                type="button"
+                className="secondary-button task-trace-eval-button"
+                disabled={busy || traceLoading}
+                onClick={() => {
+                  if (traceExpanded) {
+                    setTraceExpanded(false);
+                  } else {
+                    void loadTaskTrace(changes.task.id);
+                  }
+                }}
+              >
+                {traceLoading ? 'Evaluating…' : traceExpanded ? 'Hide evaluation' : 'Evaluate task trace'}
+              </button>
+            </div>
+
+            {traceExpanded && taskTrace ? (
+              <div className="task-trace-body">
+                <div className="task-trace-summary-strip">
+                  <div className="task-trace-badge-group">
+                    <span className="task-trace-label">Outcome</span>
+                    <span className={`task-trace-pill ${taskTrace.summary.outcome}`}>{taskTrace.summary.outcome.toUpperCase()}</span>
+                  </div>
+                  <div className="task-trace-badge-group">
+                    <span className="task-trace-label">Integrity</span>
+                    <span className={`task-trace-pill ${taskTrace.summary.integrity}`}>{taskTrace.summary.integrity.toUpperCase()}</span>
+                  </div>
+                  <div className="task-trace-badge-group">
+                    <span className="task-trace-label">Completeness</span>
+                    <span className={`task-trace-pill ${taskTrace.summary.completeness}`}>{taskTrace.summary.completeness.toUpperCase()}</span>
+                  </div>
+                </div>
+
+                <div className="task-trace-assertions-grid">
+                  {taskTrace.assertions.map((assertion) => (
+                    <div key={assertion.id} className={`task-trace-assertion-card ${assertion.status}`}>
+                      <div className="task-trace-assertion-header">
+                        <code>{assertion.id}</code>
+                        <span className={`task-trace-status-tag ${assertion.status}`}>{assertion.status}</span>
+                      </div>
+                      <span className="task-trace-reason">{assertion.reasonCode}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="task-trace-digest-line">
+                  <span>Source digest:</span>
+                  <code>{taskTrace.sourceDigest}</code>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </section>
       ) : null}
 

@@ -11,6 +11,7 @@
     "@codewave/provider-opencode": "file:../../packages/providers/opencode",
     "@codewave/protocol": "file:../../packages/protocol",
     "@codewave/provider-qwen": "file:../../packages/providers/qwen",
-    "@codewave/state": "file:../../packages/state"
+    "@codewave/state": "file:../../packages/state",
+    "@codewave/task-trace": "file:../../packages/task-trace"
   }
 }

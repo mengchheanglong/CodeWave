@@ -7,6 +7,7 @@ import type {
   RunSnapshot,
 } from '@codewave/protocol';
 import { isRoutingToolRequirement } from '@codewave/protocol';
+import { CODEWAVE_COMPACTION_POLICY_REVISION } from '@codewave/protocol';
 import type { DaemonApi } from './daemon-api.js';
 import { formatRecommendation } from '../shell-status-summary.js';
 import type { DelegateRole, FollowUpKind } from './shell-controls-state.js';
@@ -409,8 +410,54 @@ export function createControllerRunActionFlows(
     await refreshRun(runId);
   }
 
+  async function compactTranscript() {
+    const run = state.selectedRun;
+    const session = state.selectedSession;
+    const transcript = state.transcript;
+    if (!run || !session || !transcript) {
+      return;
+    }
+    if (
+      run.status !== 'completed' &&
+      run.status !== 'failed' &&
+      run.status !== 'cancelled'
+    ) {
+      state.runUpdateFeedbackMessage =
+        'History can only be compacted after the selected run finishes.';
+      emitShellSummaryState();
+      return;
+    }
+    const tail = [...(transcript.messages ?? [])]
+      .reverse()
+      .find((message) => message.runId === run.id);
+    if (!tail || transcript.newestSequence === null) {
+      state.runUpdateFeedbackMessage =
+        'The selected run has no transcript messages to compact.';
+      emitShellSummaryState();
+      return;
+    }
+    try {
+      const checkpoint = await api.createSessionCompaction(session.id, {
+        throughSequence: tail.sequence,
+        expectedTranscriptHeadSequence: transcript.newestSequence,
+        expectedPreviousCheckpointId:
+          transcript.latestCompactionCheckpoint?.id ?? null,
+        expectedCompactionPolicyRevision: CODEWAVE_COMPACTION_POLICY_REVISION,
+      });
+      state.runUpdateFeedbackMessage = `Compacted history through sequence ${checkpoint.throughSequence}.`;
+    } catch (error) {
+      state.runUpdateFeedbackMessage =
+        error instanceof Error
+          ? error.message
+          : 'Transcript compaction could not be created.';
+    }
+    emitShellSummaryState();
+    await refreshRun(run.id);
+  }
+
   return {
     cancelSelectedRun,
+    compactTranscript,
     createFollowUpRun,
     createSession,
     delegatePrompt,
