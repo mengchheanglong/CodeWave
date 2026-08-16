@@ -43,6 +43,7 @@ export type ControllerRunActionState = Pick<
   | 'runtime'
   | 'selectedSession'
   | 'selectedRun'
+  | 'transcript'
   | 'recommendation'
   | 'sessions'
   | 'runs'

@@ -47,6 +47,9 @@ import type {
   UpdateSessionRequest,
   UpdateDefaultProviderRequest,
   UpdateProviderConfigurationRequest,
+  TaskTraceReportV1,
+  TranscriptCompactionCheckpoint,
+  CreateTranscriptCompactionRequest,
   WorkbenchSession,
   WorktreeChangesSnapshot,
   WorktreeTaskRecord,
@@ -90,6 +93,17 @@ export interface DaemonApi {
     taskId: string,
     input: RevertWorktreeChangesRequest,
   ): Promise<WorktreeChangesSnapshot>;
+  getTaskTrace(taskId: string): Promise<TaskTraceReportV1>;
+  getSessionCompactions(
+    sessionId: string,
+  ): Promise<TranscriptCompactionCheckpoint[]>;
+  createSessionCompaction(
+    sessionId: string,
+    input: CreateTranscriptCompactionRequest,
+  ): Promise<TranscriptCompactionCheckpoint>;
+  getLatestSessionCompaction(
+    sessionId: string,
+  ): Promise<{ checkpoint: TranscriptCompactionCheckpoint | null }>;
   getSessions(): Promise<WorkbenchSession[]>;
   createSession(input: CreateSessionRequest): Promise<WorkbenchSession>;
   deleteSession(sessionId: string): Promise<DeleteSessionResponse>;
@@ -412,6 +426,27 @@ export function createDaemonApi({
       return requestJson<WorktreeChangesSnapshot>(
         `/api/tasks/${encodeURIComponent(taskId)}/revert`,
         { method: 'POST', body: input },
+      );
+    },
+    getTaskTrace(taskId) {
+      return requestJson<TaskTraceReportV1>(
+        `/api/tasks/${encodeURIComponent(taskId)}/trace`,
+      );
+    },
+    getSessionCompactions(sessionId) {
+      return requestJson<TranscriptCompactionCheckpoint[]>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions`,
+      );
+    },
+    createSessionCompaction(sessionId, input) {
+      return requestJson<TranscriptCompactionCheckpoint>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions`,
+        { method: 'POST', body: input },
+      );
+    },
+    getLatestSessionCompaction(sessionId) {
+      return requestJson<{ checkpoint: TranscriptCompactionCheckpoint | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/compactions/latest`,
       );
     },
     getSessions() {

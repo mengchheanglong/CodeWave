@@ -811,7 +811,7 @@ Package the validated local workspace as a secure desktop alpha without creating
 - queued steering with expected-run fencing plus runtime-negotiated Freebuff bridge steering and safe rejection/timeout/terminal/restart fallback (implemented)
 - mandatory durable idempotency keys, strict canonical mutation schemas, and configuration revision hashes (implemented)
 - monotonic event sequences and cursor-bounded SSE replay (implemented)
-- append-only parent-linked transcripts and bounded hydration (implemented); explicit compaction checkpoints and pre-compaction memory hooks
+- append-only parent-linked transcripts and bounded hydration (implemented); explicit derived compaction checkpoints with pre-compaction memory hooks are covered by the Phase 6b contract below
 - exact-pinned stable ACP v1 app runtime with strict protocol negotiation, bounded framing, capability-gated resume/load, replay suppression, permission cancellation ordering, message identity, and one terminal owner (implemented for built-in and custom ACP paths)
 - profile-driven ACP v1 adapter with coalesced initialize probes, capability-derived resumability, bounded diagnostics/process cleanup, OpenCode as the reference descriptor, and durable provider-policy-v2 `acp.*` profiles (implemented)
 
@@ -830,6 +830,15 @@ Package the validated local workspace as a secure desktop alpha without creating
 - offline/install/upgrade/provider-PATH acceptance matrix before public binaries
 
 The local package/lifecycle/security baseline is implemented. Signed/notarized CI artifacts, installer upgrade/downgrade evidence, and an authenticated update channel remain release gates; see [the desktop alpha contract](desktop-alpha.md).
+
+### Phase 6b — Long-run harness controls (implemented baseline)
+
+- per-run execution budgets with honest enforcement levels: wall time is hard-cancel, tool invocations are observed-cancel after the daemon observes a started tool, and provider-reported tokens are terminal-observed only; every limit is persisted with the run and surfaced on snapshots
+- `run.budget.exceeded` is a normalized, monotonic event recorded exactly once per run before cancellation is requested
+- transcript compaction creates immutable, derived-non-authoritative checkpoints chained by coverage digests; the append-only transcript is never rewritten or deleted, and provider-native session context is explicitly unchanged
+- pre-compaction memory hooks are local-deterministic, timeout-bounded, citation-checked, and all-or-nothing; derived memories are labeled non-authoritative evidence, not truth
+- compaction requests are fenced by expected transcript head, expected previous checkpoint, and an exact policy revision; the daemon refuses them at non-terminal run boundaries
+- task-level trace evaluation projects persisted metadata only (sessions, runs, events, routing, approvals, tools, usage, outcome) into a deterministic, digest-addressed report with pass/fail/unknown assertions for integrity, completeness, and keep/discard outcome; it never re-reads prompt or tool content
 
 ### Phase 7 — Research plugins
 
@@ -866,6 +875,7 @@ The local package/lifecycle/security baseline is implemented. Signed/notarized C
 16. Outbound MCP adapters must remain narrow daemon clients, never raw daemon proxies or alternate state/provider control planes. Mutations require a separately reviewed scope, confirmation, idempotency, cancellation, and audit design.
 17. Project tasks begin from an exact clean Git root, live only in daemon-managed worktrees, and require a complete version-matched review before task-branch acceptance. CodeWave never exposes Git control paths or merges the project branch implicitly.
 18. Desktop renderer code receives neither the daemon port nor bootstrap secret. It uses only the product protocol proxy and a minimal, origin-checked preload; Electron main owns process lifecycle, native dialogs, and local release security policy.
+19. Run budgets state their enforcement level honestly (hard-cancel, observed-cancel, or terminal-observed) and never present provider-reported token totals as a guaranteed spend cap. Compaction checkpoints are derived, immutable, and fenced; task trace evaluation is metadata-only and deterministic.
 
 ---
 
@@ -873,4 +883,4 @@ The local package/lifecycle/security baseline is implemented. Signed/notarized C
 
 Keep CodeWave product-owned: daemon + normalized protocol + state + adapters + orchestration. Integrate providers through stable machine boundaries, prefer ACP/API/structured streams, and reject terminal scraping as a production architecture.
 
-The current provider order is Freebuff first, OpenCode/local second, and explicitly enabled paid/BYOK providers after that. With shared structured transport and capability-proven Freebuff bridge steering in place, the next major backend investments are explicit transcript compaction/memory hooks, task-level trace evaluation, and additional native steering adapters only where their machine protocols can acknowledge delivery, as described in [the 2026 harness research note](harness-research-2026.md).
+The current provider order is Freebuff first, OpenCode/local second, and explicitly enabled paid/BYOK providers after that. With shared structured transport, capability-proven Freebuff bridge steering, fenced execution budgets, derived compaction checkpoints, and deterministic task trace evaluation in place, the next major backend investments are additional native steering adapters only where their machine protocols can acknowledge delivery, plus crash-boundary hardening found by the continuity conformance vectors, as described in [the 2026 harness research note](harness-research-2026.md).

@@ -31,13 +31,11 @@ import {
   subscribeShellSummaryState,
   subscribeRunViewState,
 } from './app-controller';
-import { ComparePanel } from './components/ComparePanel';
 import { PromptModal } from './components/PromptModal';
 import { ProviderSettings } from './components/ProviderSettings';
 import { QuickOpen } from './components/QuickOpen';
 import { Composer } from './components/shell/Composer';
 import { ConversationHeader } from './components/shell/ConversationHeader';
-import { HintBar } from './components/shell/HintBar';
 import { Inspector, type UtilityTab } from './components/shell/Inspector';
 import { RunSurface } from './components/shell/RunSurface';
 import { RunToolbar } from './components/shell/RunToolbar';
@@ -134,7 +132,6 @@ export default function App() {
   );
   const [focusView, setFocusView] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
-  const [compareVisible, setCompareVisible] = useState(false);
   const [showSessionSetup, setShowSessionSetup] = useState(false);
   const [showRunToolbar, setShowRunToolbar] = useState(true);
   const [runMenuOpen, setRunMenuOpen] = useState(false);
@@ -154,13 +151,6 @@ export default function App() {
   const [appTheme] = useState<AppTheme>(() => readInitialTheme());
   const [railFilter, setRailFilter] = useState('');
   const { textareaRef, autoResize } = useAutoResizeTextarea();
-  const compareApiRef = useRef(
-    createDaemonApi({
-      onProviderRevisionConflict: async () => {
-        await requestRuntimeRefresh();
-      },
-    }),
-  );
 
   useEffect(() => {
     applyTheme(appTheme);
@@ -354,7 +344,6 @@ export default function App() {
   useKeyboardShortcuts({
     railFilterInputRef,
     setQuickOpenVisible,
-    setCompareVisible,
     setFocusView,
     setUtilityCollapsed,
     setRailView,
@@ -752,19 +741,6 @@ export default function App() {
         }}
       />
 
-      <ComparePanel
-        open={compareVisible}
-        prompt={shellControlsState.prompt}
-        workspacePath={shellControlsState.workspacePath}
-        providerRevision={shellPanelsState.providerRegistry?.revision ?? null}
-        providers={shellPanelsState.providerRegistry?.providers ?? []}
-        api={compareApiRef.current}
-        onClose={() => {
-          setCompareVisible(false);
-        }}
-        formatTimestamp={formatTimestamp}
-      />
-
       <StatusStrip
         shellControlsState={shellControlsState}
         shellPanelsState={shellPanelsState}
@@ -991,11 +967,7 @@ export default function App() {
               onPolicyChange={(policy) => {
                 handleComposerPolicyChange(policy);
               }}
-              onCompareToggle={() => {
-                setCompareVisible((current) => !current);
-              }}
             />
-            <HintBar workspacePath={shellControlsState.workspacePath} />
           </main>
 
           <div

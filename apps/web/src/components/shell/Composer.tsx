@@ -30,7 +30,6 @@ type ComposerProps = {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   autoResize: () => void;
   onPolicyChange: (policy: ApprovalPolicy) => void;
-  onCompareToggle: () => void;
 };
 
 export function Composer({
@@ -52,7 +51,6 @@ export function Composer({
   textareaRef,
   autoResize,
   onPolicyChange,
-  onCompareToggle,
 }: ComposerProps) {
   const mentionState = useMemo(() => {
     const prompt = shellControlsState.prompt;
@@ -75,16 +73,18 @@ export function Composer({
       return;
     }
 
-    if (event.key !== 'Enter' || event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      const text = event.currentTarget.value.trim();
+      if (!text) {
+        return;
+      }
+      void (async () => {
+        await requestPromptDraftChange(event.currentTarget.value);
+        await requestStartRun();
+      })();
       return;
     }
-
-    event.preventDefault();
-    if (shellControlsState.startRunDisabled) {
-      return;
-    }
-
-    void requestStartRun();
   }
 
   function handleMentionSelect(relativePath: string) {
@@ -192,7 +192,6 @@ export function Composer({
             sendHelperSecondary={sendHelperSecondary}
             startRunDisabled={shellControlsState.startRunDisabled}
             autoResize={autoResize}
-            onCompareToggle={onCompareToggle}
           />
         </div>
       </div>

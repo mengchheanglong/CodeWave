@@ -328,7 +328,7 @@ function stateProjection(paths, projectionVersion = 'codewave-reconstruction-v1'
   if (projectionVersion !== 'codewave-reconstruction-v1') {
     throw new Error(`Unsupported reconstruction projection version '${projectionVersion}'.`);
   }
-  const database = new DatabaseSync(databasePath(paths), { readOnly: true });
+  const database = new DatabaseSync(databasePath(paths));
   try {
     return {
       projectionVersion,
