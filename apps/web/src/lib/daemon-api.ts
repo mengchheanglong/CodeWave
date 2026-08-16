@@ -258,7 +258,7 @@ export function createDaemonApi({
     const requestHeaders = new Headers(headers);
     const method = String(rest.method ?? 'GET').toUpperCase();
     if (
-      (method === 'POST' || method === 'PATCH' || method === 'DELETE') &&
+      (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') &&
       !requestHeaders.has('Idempotency-Key')
     ) {
       requestHeaders.set(

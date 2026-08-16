@@ -114,7 +114,8 @@ simple, composable, and built for experimentation.
 - **Scoped client handshake** — web and automation clients negotiate protocol v1, daemon capabilities, granular scopes, connection lifetime, and transport limits before protected API access
 - **Cursor-bounded event replay** — monotonic per-run event sequences, SSE resume cursors, and a 500-event replay ceiling keep reconnects ordered without rehydrating unbounded history
 - **Durable session memory** — prompts and normalized final messages are atomically recorded in a parent-linked, monotonic transcript chain; snapshots hydrate the latest 100 messages and the transcript API paginates backward up to 200 at a time
-- **Durable mutation safety** — `Idempotency-Key` receipts survive daemon restarts, replay the original response, and reject key reuse with a different payload
+- **Durable mutation safety** — protected mutations require an `Idempotency-Key`; strict canonical-JSON receipts survive daemon restarts, replay the original response, and reject key reuse with a different payload
+- **Safe workspace files** — bounded UTF-8 preview, create-only writes, compare-and-swap editing, conflict recovery, and explicit binary/truncation states keep the file surface useful without silently overwriting changed or partial content
 - **Deterministic run lifecycle** — one active run per session, stale-run fencing for updates, restart reconciliation, capability-proven in-flight steering, and a durable follow-up queue whenever native delivery is unavailable or unacknowledged
 - **Reviewed provider policy** — every provider-dependent mutation carries the exact content-addressed provider revision the user reviewed; stale launches fail closed with the current revision and the shell refreshes before retry
 
@@ -172,6 +173,8 @@ simple, composable, and built for experimentation.
 - `npm run check:harness` — scoped handshake/version negotiation, restart renegotiation, parent-linked transcript migration/pagination, restart-safe idempotency, provider-policy revision fencing, overlap rejection, native/rejected/unacknowledged/queued steering, cursor-bounded SSE replay, Freebuff bridge normalization, legacy migration, and restart recovery
 - Fake runtime fixtures for Qwen and Gemini to enable repeatable CI testing
 
+The normative [CodeWave continuity contract](docs/continuity-contract.md) defines the stronger acceptance boundary for authorization races, semantic idempotency, one-active-run concurrency, externally killed daemon recovery, deterministic reconstruction, causal provenance, and content-limited audit evidence. It is a conformance target rather than a guarantee: only a current, passing `npm run check:continuity` report may promote those claims.
+
 ---
 
 ## Architecture
@@ -224,6 +227,8 @@ npm test -w @codewave/web                # React interaction/property suite
 npm run check:shell                      # Shell usability tests
 npm run check:providers                  # Provider policy and routing tests
 npm run check:harness                    # Daemon lifecycle/idempotency/steering E2E
+npm run check:adversarial                # Daemon boundary and hostile-input regression suite
+npm run check:continuity                 # Crash/replay/reconstruction conformance suite
 npm run check:registrations              # Tool registration E2E tests
 npm run check:registrations:json         # CI-friendly JSON summary
 ```
@@ -242,11 +247,11 @@ CODEWAVE_GEMINI_ENABLED=true
 CODEWAVE_GEMINI_COMMAND=/path/to/gemini
 ```
 
-Setting a provider command also enables that provider unless its `CODEWAVE_<PROVIDER>_ENABLED` override explicitly disables it. For Freebuff, `CODEWAVE_FREEBUFF_COMMAND` must identify a protocol-qualified automation bridge—not the raw interactive TUI. The bridge must answer `--codewave-bridge-info` with `{"name":"codewave-freebuff-bridge","protocolVersion":1}`, then begin every run with `{"type":"bridge.hello","protocolVersion":1}`. It receives `--cwd`, `--prompt`, `--output-format jsonl`, and optional `--resume` arguments. Each later stdout line may be a JSON object with `type` set to `session`, `output`, `message`, `tool`, `checkpoint`, or `result`; CodeWave converts those records into shared events, session metadata, checkpoints, artifacts, and terminal state. A run succeeds only after an explicit valid `result` record—clean process exit alone fails closed. See [the Freebuff bridge contract](docs/freebuff-bridge.md).
+Setting a provider command also enables that provider unless its `CODEWAVE_<PROVIDER>_ENABLED` override explicitly disables it. For Freebuff, `CODEWAVE_FREEBUFF_COMMAND` must identify a protocol-qualified automation bridge—not the raw interactive TUI. The bridge must answer `--codewave-bridge-info` with `{"name":"codewave-freebuff-bridge","protocolVersion":1}`, then echo the supplied launch-attempt ID in its first `bridge.hello` record. It receives `--cwd`, `--prompt`, `--output-format jsonl`, `--launch-attempt-id`, and optional `--resume` arguments. Each later stdout line may be a JSON object with `type` set to `session`, `output`, `message`, `tool`, `checkpoint`, or `result`; CodeWave converts those records into shared events, session metadata, checkpoints, artifacts, and terminal state. A run succeeds only after an explicit valid `result` record—clean process exit alone fails closed. See [the Freebuff bridge contract](docs/freebuff-bridge.md).
 
 A bridge can opt into live updates by first emitting `{"type":"capabilities","protocolVersion":1,"inFlightSteering":true}`. CodeWave then sends newline-delimited `steer` commands on stdin with `steeringId`, `prompt`, and `createdAt`. The bridge must answer with a matching `{"type":"steering","steeringId":"…","status":"accepted"}` before CodeWave marks the input applied to the active run. Rejection, timeout, process close, or missing negotiation leaves the already-persisted input queued for the next run.
 
-Mutating daemon endpoints accept an `Idempotency-Key` header. CodeWave's web client sends one automatically. A retry with the same method, path, and canonical JSON body receives the persisted original response; reusing the key for a different payload fails closed with HTTP 409. If the daemon stops after reserving a key but before persisting a response, that key remains fenced and returns a pending-outcome 409 instead of risking a duplicate side effect.
+Protected mutating daemon endpoints require an `Idempotency-Key` header; missing keys fail with HTTP 428 before state, provider, or workspace effects. CodeWave's web client sends one automatically. A retry with the same method, normalized path/query, and strict canonical JSON body receives the persisted original response; invalid UTF-8, duplicate keys, unsafe numeric values, undeclared fields, and unsupported schema versions fail before receipt reservation. Reusing a key for a different payload fails closed with HTTP 409. If the daemon stops after reserving a key but before persisting a response, that key remains fenced and returns an outcome-unknown 409 instead of risking a duplicate side effect.
 
 Provider-dependent mutations also carry `expectedProviderRevision`, taken from the registry's deterministic SHA-256 revision. Sessions, runs, and queued steering persist the accepted revision for auditability. If enablement, command, priority, or the default changes before submission, the daemon returns HTTP 409 with `code: "provider_revision_conflict"` and `currentProviderRevision`; the shell refreshes the registry so the user can review and retry against current policy.
 

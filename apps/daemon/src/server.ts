@@ -1,7 +1,13 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
 import {
+  constants as fsConstants,
+  createReadStream,
+  existsSync,
+  writeFileSync,
+} from 'node:fs';
+import {
+  open,
   lstat,
   mkdir,
   readdir,
@@ -11,7 +17,12 @@ import {
   stat,
   unlink,
 } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +36,8 @@ import {
   CODEWAVE_MAX_SSE_REPLAY_EVENTS,
   CODEWAVE_MAX_STEERING_PROMPT_CHARS,
   CODEWAVE_MAX_TRANSCRIPT_MESSAGES,
+  CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
+  CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
   CODEWAVE_PROTOCOL_VERSION,
   DAEMON_CAPABILITIES,
   DAEMON_CLIENT_SCOPES,
@@ -37,6 +50,8 @@ import {
   type CompareRunRequest,
   type CompareRunResponse,
   type CreateSessionRequest,
+  type CreateWorkspaceFileRequest,
+  type CreateWorkspaceFileResponse,
   type DeleteSessionResponse,
   type DelegateRunRequest,
   type DelegateRunResponse,
@@ -44,6 +59,7 @@ import {
   type FollowUpRunResponse,
   type HandoffRunRequest,
   type HandoffRunResponse,
+  type MutationReceiptStatusResponse,
   type RecommendPromptRequest,
   type RecommendPromptResponse,
   type OrchestrationRecommendation,
@@ -80,12 +96,16 @@ import {
   type ToolPlaneSnapshot,
   type ToolInvocationRecord,
   type UpdateSessionRequest,
+  type UpdateWorkspaceFileRequest,
+  type UpdateWorkspaceFileResponse,
   type UpdateDefaultProviderRequest,
   type UpdateProviderConfigurationRequest,
   type WorkbenchEvent,
   type WorkbenchRun,
   type RunStatus,
   type WorkbenchSession,
+  type WorkspaceEntriesResponse,
+  type WorkspaceFilePreviewResponse,
   inferRoutingToolRequirement,
   isDaemonClientScope,
   isRoutingToolRequirement,
@@ -134,6 +154,8 @@ const DAEMON_PROTOCOL_LIMITS = {
   idempotencyKeyMaxLength: 128,
   connectionTtlSeconds: CLIENT_CONNECTION_TTL_MS / 1000,
   maxClientConnections: MAX_CLIENT_CONNECTIONS,
+  maxWorkspacePreviewBytes: CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
+  maxWorkspaceFileBytes: CODEWAVE_MAX_WORKSPACE_FILE_BYTES,
 } as const;
 
 type ClientConnection = {
@@ -156,6 +178,33 @@ const idempotencyResponseContexts = new WeakMap<
   }
 >();
 
+function triggerContinuityCrashPoint(point: string): void {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.CODEWAVE_TEST_CRASH_POINT === point
+  ) {
+    const signalPath = process.env.CODEWAVE_TEST_CRASH_SIGNAL_PATH;
+    if (!signalPath) {
+      throw new Error('A test crash signal path is required for continuity failpoints.');
+    }
+    writeFileSync(signalPath, point, { encoding: 'utf8', flag: 'wx' });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+  }
+}
+
+const continuityBarrierWaiters: Array<() => void> = [];
+async function waitAtContinuityRunBarrier(): Promise<void> {
+  if (process.env.NODE_ENV !== 'test') return;
+  const expected = Number(process.env.CODEWAVE_TEST_CONCURRENT_RUN_BARRIER ?? 0);
+  if (!Number.isInteger(expected) || expected < 2) return;
+  await new Promise<void>((resolve) => {
+    continuityBarrierWaiters.push(resolve);
+    if (continuityBarrierWaiters.length >= expected) {
+      for (const release of continuityBarrierWaiters.splice(0)) release();
+    }
+  });
+}
+
 function sendJson(
   response: ServerResponse,
   statusCode: number,
@@ -167,6 +216,7 @@ function sendJson(
     idempotencyResponseContexts.delete(response);
     try {
       idempotency.persist(statusCode, responseJson);
+      triggerContinuityCrashPoint('after_receipt_finalization');
     } finally {
       idempotency.complete();
     }
@@ -194,7 +244,15 @@ function sendConflict(
   }
   sendJson(response, 409, {
     error: error instanceof Error ? error.message : fallbackMessage,
+    ...(error instanceof DaemonConflictError ? { code: error.code } : {}),
   });
+}
+
+class DaemonConflictError extends Error {
+  constructor(message: string, readonly code: string) {
+    super(message);
+    this.name = 'DaemonConflictError';
+  }
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<string> {
@@ -212,7 +270,12 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
     chunks.push(buffer);
   }
 
-  const body = Buffer.concat(chunks).toString('utf8');
+  let body: string;
+  try {
+    body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+  } catch {
+    throw new CanonicalJsonError('Request body must be valid UTF-8.');
+  }
   requestBodyCache.set(request, body);
   return body;
 }
@@ -223,6 +286,160 @@ async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
     throw new Error('Request body is required.');
   }
   return JSON.parse(body) as T;
+}
+
+class CanonicalJsonError extends Error {
+  readonly code = 'invalid_canonical_json';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'CanonicalJsonError';
+  }
+}
+
+function hasLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function assertCanonicalJsonValue(value: unknown, pathLabel = '$'): void {
+  if (typeof value === 'string') {
+    if (hasLoneSurrogate(value)) {
+      throw new CanonicalJsonError(`${pathLabel} contains a lone Unicode surrogate.`);
+    }
+    return;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new CanonicalJsonError(`${pathLabel} contains a non-finite number.`);
+    }
+    if (Object.is(value, -0)) {
+      throw new CanonicalJsonError(`${pathLabel} contains negative zero.`);
+    }
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new CanonicalJsonError(`${pathLabel} contains an unsafe integer.`);
+    }
+    return;
+  }
+  if (value === null || typeof value === 'boolean') return;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      assertCanonicalJsonValue(value[index], `${pathLabel}[${index}]`);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (hasLoneSurrogate(key)) {
+        throw new CanonicalJsonError(`${pathLabel} contains an invalid object key.`);
+      }
+      assertCanonicalJsonValue(entry, `${pathLabel}.${key}`);
+    }
+    return;
+  }
+  throw new CanonicalJsonError(`${pathLabel} contains an unsupported JSON value.`);
+}
+
+function assertNoDuplicateJsonKeys(source: string): void {
+  let index = 0;
+  const fail = (message: string): never => {
+    throw new CanonicalJsonError(`${message} at JSON offset ${index}.`);
+  };
+  const skipWhitespace = () => {
+    while (/\s/.test(source[index] ?? '')) index += 1;
+  };
+  const parseStringToken = (): string => {
+    if (source[index] !== '"') fail('Expected a JSON string');
+    const start = index;
+    index += 1;
+    while (index < source.length) {
+      const character = source[index++];
+      if (character === '"') {
+        try {
+          return JSON.parse(source.slice(start, index)) as string;
+        } catch {
+          fail('Invalid JSON string');
+        }
+      }
+      if (character === '\\') {
+        if (index >= source.length) fail('Unterminated JSON escape');
+        index += 1;
+      }
+    }
+    return fail('Unterminated JSON string');
+  };
+  const parseValue = (): void => {
+    skipWhitespace();
+    const character = source[index];
+    if (character === '{') {
+      index += 1;
+      skipWhitespace();
+      const keys = new Set<string>();
+      if (source[index] === '}') {
+        index += 1;
+        return;
+      }
+      while (index < source.length) {
+        skipWhitespace();
+        const key = parseStringToken();
+        if (keys.has(key)) {
+          throw new CanonicalJsonError(`Duplicate JSON object key '${key}'.`);
+        }
+        keys.add(key);
+        skipWhitespace();
+        if (source[index] !== ':') fail('Expected a colon after an object key');
+        index += 1;
+        parseValue();
+        skipWhitespace();
+        if (source[index] === '}') {
+          index += 1;
+          return;
+        }
+        if (source[index] !== ',') fail('Expected a comma between object members');
+        index += 1;
+      }
+      fail('Unterminated JSON object');
+    }
+    if (character === '[') {
+      index += 1;
+      skipWhitespace();
+      if (source[index] === ']') {
+        index += 1;
+        return;
+      }
+      while (index < source.length) {
+        parseValue();
+        skipWhitespace();
+        if (source[index] === ']') {
+          index += 1;
+          return;
+        }
+        if (source[index] !== ',') fail('Expected a comma between array values');
+        index += 1;
+      }
+      fail('Unterminated JSON array');
+    }
+    if (character === '"') {
+      parseStringToken();
+      return;
+    }
+    const token = source.slice(index).match(/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[0];
+    if (!token) return fail('Invalid JSON value');
+    index += token.length;
+  };
+
+  parseValue();
+  skipWhitespace();
+  if (index !== source.length) fail('Unexpected trailing JSON input');
 }
 
 function stableJson(value: unknown): string {
@@ -242,9 +459,13 @@ function stableJson(value: unknown): string {
 function canonicalizeRequestBody(body: string): string {
   if (!body.trim()) return '';
   try {
-    return stableJson(JSON.parse(body));
-  } catch {
-    return body;
+    assertNoDuplicateJsonKeys(body);
+    const parsed = JSON.parse(body) as unknown;
+    assertCanonicalJsonValue(parsed);
+    return stableJson(parsed);
+  } catch (error) {
+    if (error instanceof CanonicalJsonError) throw error;
+    throw new CanonicalJsonError('Request body is not valid JSON.');
   }
 }
 
@@ -429,18 +650,6 @@ type PendingApproval = {
 
 type WorkspaceEntryKind = 'file' | 'folder';
 
-type WorkspaceEntryRecord = {
-  name: string;
-  relativePath: string;
-  kind: WorkspaceEntryKind;
-};
-
-type WorkspaceEntriesResponse = {
-  workspacePath: string;
-  relativePath: string;
-  entries: WorkspaceEntryRecord[];
-};
-
 type CreateWorkspaceFolderRequest = {
   workspacePath: string;
   parentPath?: string | null;
@@ -452,6 +661,65 @@ type RenameWorkspaceEntryRequest = {
   targetPath: string;
   nextName: string;
 };
+
+type WorkspaceFileErrorCode =
+  | 'workspace_path_escape'
+  | 'workspace_entry_not_found'
+  | 'workspace_entry_not_file'
+  | 'workspace_file_binary'
+  | 'workspace_file_invalid'
+  | 'workspace_file_too_large'
+  | 'workspace_entry_exists'
+  | 'workspace_file_version_conflict'
+  | 'workspace_parent_not_folder'
+  | 'workspace_io_error';
+
+class WorkspaceFileError extends Error {
+  constructor(
+    message: string,
+    readonly code: WorkspaceFileErrorCode,
+    readonly statusCode: 400 | 404 | 409 | 415,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = 'WorkspaceFileError';
+  }
+}
+
+function validateDeclaredMutationSchema(
+  method: string,
+  pathname: string,
+  body: string,
+): void {
+  if (!body.trim()) return;
+  const parsed = JSON.parse(body) as unknown;
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new CanonicalJsonError('Mutation request body must be a JSON object.');
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.requestSchemaVersion !== undefined &&
+    record.requestSchemaVersion !== 'codewave-daemon-mutation-v1'
+  ) {
+    throw new CanonicalJsonError('Unsupported CodeWave mutation request schema version.');
+  }
+  let allowed: Set<string> | null = null;
+  if (pathname === '/api/workspace/files' && method === 'POST') {
+    allowed = new Set([
+      'requestSchemaVersion', 'workspacePath', 'parentPath', 'name', 'content',
+    ]);
+  } else if (pathname === '/api/workspace/files' && method === 'PUT') {
+    allowed = new Set([
+      'requestSchemaVersion', 'workspacePath', 'targetPath', 'content', 'expectedVersion',
+    ]);
+  }
+  if (allowed) {
+    const undeclared = Object.keys(record).find((key) => !allowed!.has(key));
+    if (undeclared) {
+      throw new CanonicalJsonError(`Mutation request contains undeclared property '${undeclared}'.`);
+    }
+  }
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -511,6 +779,57 @@ function pathEscapesRoot(rootPath: string, targetPath: string): boolean {
   );
 }
 
+async function inspectUtf8File(
+  handle: Awaited<ReturnType<typeof open>>,
+  previewLimit: number,
+  totalSize: number,
+): Promise<{
+  version: string;
+  previewBytes: Buffer;
+  containsNul: boolean;
+  validUtf8: boolean;
+}> {
+  const bytesToRead = Math.min(totalSize, previewLimit);
+  const buffer = Buffer.alloc(bytesToRead);
+  const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+  const previewBytes = buffer.subarray(0, bytesRead);
+  let validUtf8 = true;
+  try {
+    if (totalSize <= previewLimit) {
+      new TextDecoder('utf-8', { fatal: true }).decode(previewBytes);
+    } else {
+      decodeUtf8Prefix(previewBytes);
+    }
+  } catch {
+    validUtf8 = false;
+  }
+  const digest = createHash('sha256').update(previewBytes).digest('hex');
+  return {
+    version:
+      totalSize <= previewLimit
+        ? `sha256:${digest}`
+        : `sha256-preview-v1:${previewBytes.length}:${digest}`,
+    previewBytes,
+    containsNul: previewBytes.includes(0),
+    validUtf8,
+  };
+}
+
+function decodeUtf8Prefix(bytes: Buffer): { content: string; byteLength: number } {
+  for (let trim = 0; trim <= Math.min(3, bytes.length); trim += 1) {
+    const candidate = trim === 0 ? bytes : bytes.subarray(0, bytes.length - trim);
+    try {
+      return {
+        content: new TextDecoder('utf-8', { fatal: true }).decode(candidate),
+        byteLength: candidate.length,
+      };
+    } catch {
+      // A bounded preview may end inside a multi-byte code point.
+    }
+  }
+  throw new Error('Unable to find a valid UTF-8 preview boundary.');
+}
+
 export class CodeWaveDaemon {
   private readonly port: number;
   private readonly dataDirectory: string;
@@ -530,6 +849,8 @@ export class CodeWaveDaemon {
   private readonly nativeSteeringChains = new Map<string, Promise<void>>();
   private readonly steeringFallbackSchedules = new Set<string>();
   private readonly sessionRunReservations = new Set<string>();
+  private server: Server | null = null;
+  private stopped = false;
 
   constructor(private readonly rootPath: string, port = DEFAULT_DAEMON_PORT) {
     this.port = port;
@@ -542,10 +863,14 @@ export class CodeWaveDaemon {
     this.stateStore.pruneMutationReceipts(
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     );
+    this.stateStore.reconcilePendingMutationReceipts(new Date().toISOString());
     this.reconcileInterruptedRuns();
   }
 
   async start(): Promise<void> {
+    if (this.server || this.stopped) {
+      throw new Error('CodeWave daemon instances can only be started once.');
+    }
     const server = createServer((request, response) => {
       void this.handleIncomingRequest(request, response).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -562,7 +887,22 @@ export class CodeWaveDaemon {
     await new Promise<void>((resolve) => {
       server.listen(this.port, '127.0.0.1', () => resolve());
     });
+    this.server = server;
     await this.resumeQueuedSteeringInputs();
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    const server = this.server;
+    this.server = null;
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      });
+    }
+    this.stateStore.close();
   }
 
   getBaseUrl(): string {
@@ -581,6 +921,7 @@ export class CodeWaveDaemon {
       return null;
     }
     if (pathname === '/api/runtime') return 'runtime:read';
+    if (pathname.startsWith('/api/mutations/')) return 'runtime:read';
     if (pathname.startsWith('/api/providers')) {
       return method === 'GET' ? 'providers:read' : 'providers:write';
     }
@@ -663,6 +1004,28 @@ export class CodeWaveDaemon {
       return false;
     }
     return true;
+  }
+
+  private getClientConnection(request: IncomingMessage, url: URL): ClientConnection | null {
+    const rawHeader = request.headers['x-codewave-connection'];
+    const connectionId =
+      (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader) ??
+      url.searchParams.get('connectionId') ??
+      null;
+    return connectionId ? this.clientConnections.get(connectionId) ?? null : null;
+  }
+
+  private async waitForMutationReceipt(
+    key: string,
+    timeoutMs = 30_000,
+  ): Promise<ReturnType<SQLiteStateStore['getMutationReceipt']>> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const receipt = this.stateStore.getMutationReceipt(key);
+      if (receipt?.state === 'completed' && receipt.statusCode > 0) return receipt;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return this.stateStore.getMutationReceipt(key);
   }
 
   private negotiateClient(
@@ -760,11 +1123,23 @@ export class CodeWaveDaemon {
       await this.handleRequest(request, response);
       return;
     }
-    const mutating = method === 'POST' || method === 'PATCH' || method === 'DELETE';
+    const mutating =
+      method === 'POST' ||
+      method === 'PUT' ||
+      method === 'PATCH' ||
+      method === 'DELETE';
     const rawKey = request.headers['idempotency-key'];
     const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
-    if (!mutating || !key) {
+    if (!mutating) {
       await this.handleRequest(request, response);
+      return;
+    }
+
+    if (!key) {
+      sendJson(response, 428, {
+        error: 'Protected mutations require an Idempotency-Key header.',
+        code: 'idempotency_key_required',
+      });
       return;
     }
 
@@ -777,27 +1152,76 @@ export class CodeWaveDaemon {
     }
 
     const operation = `${method} ${canonicalizeMutationTarget(url)}`;
-    const body = await readRequestBody(request);
+    let body: string;
+    let canonicalBody: string;
+    try {
+      body = await readRequestBody(request);
+      canonicalBody = canonicalizeRequestBody(body);
+      validateDeclaredMutationSchema(method, url.pathname, body);
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Invalid canonical JSON.',
+        code: 'invalid_canonical_json',
+      });
+      return;
+    }
     const requestHash = createHash('sha256')
       .update(operation)
       .update('\0')
-      .update(canonicalizeRequestBody(body))
+      .update(canonicalBody)
       .digest('hex');
     const existing = this.stateStore.getMutationReceipt(key);
     if (existing) {
+      if (
+        existing.protocolVersion !== CODEWAVE_PROTOCOL_VERSION ||
+        existing.canonicalizationVersion !== 'codewave-canonical-json-v1' ||
+        existing.requestSchemaVersion !== 'codewave-daemon-mutation-v1'
+      ) {
+        sendJson(response, 409, {
+          error: 'The stored mutation receipt uses an unsupported protocol or serializer version.',
+          code: 'mutation_version_unsupported',
+        });
+        return;
+      }
+      if (existing.state === 'response_redacted') {
+        sendJson(response, 410, {
+          error: 'The original mutation outcome is retained, but its replay payload was removed with session content.',
+          code: 'mutation_response_redacted',
+        });
+        return;
+      }
       if (existing.operation !== operation || existing.requestHash !== requestHash) {
         sendJson(response, 409, {
           error:
             'This idempotency key was already used for a different mutation payload.',
+          code: 'idempotency_key_reused',
         });
         return;
       }
-      if (existing.statusCode === 0) {
+      if (
+        existing.state === 'pending' &&
+        existing.statusCode === 0 &&
+        this.inFlightMutationKeys.has(key)
+      ) {
+        const finalized = await this.waitForMutationReceipt(key);
+        if (finalized?.state === 'completed' && finalized.statusCode > 0) {
+          response.setHeader('Idempotency-Key', key);
+          response.setHeader('Idempotency-Replayed', 'true');
+          response.writeHead(finalized.statusCode, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'X-CodeWave-Protocol-Version': String(CODEWAVE_PROTOCOL_VERSION),
+          });
+          response.end(finalized.responseJson);
+          return;
+        }
+      }
+      if (existing.state !== 'completed' || existing.statusCode === 0) {
         response.setHeader('Idempotency-Key', key);
         response.setHeader('Idempotency-Pending', 'true');
         sendJson(response, 409, {
           error:
             'This mutation was reserved but its final response was interrupted. CodeWave will not execute it again; inspect current state before issuing a new mutation.',
+          code: 'mutation_outcome_unknown',
         });
         return;
       }
@@ -814,11 +1238,13 @@ export class CodeWaveDaemon {
     if (this.inFlightMutationKeys.has(key)) {
       sendJson(response, 409, {
         error: 'A mutation with this idempotency key is still in progress.',
+        code: 'mutation_in_progress',
       });
       return;
     }
 
     this.inFlightMutationKeys.add(key);
+    triggerContinuityCrashPoint('before_receipt_reservation');
     this.stateStore.createMutationReceipt({
       key,
       operation,
@@ -826,8 +1252,22 @@ export class CodeWaveDaemon {
       statusCode: 0,
       responseJson: '',
       createdAt: new Date().toISOString(),
+      state: 'pending',
+      finalizedAt: null,
+      protocolVersion: CODEWAVE_PROTOCOL_VERSION,
+      clientName: this.getClientConnection(request, url)?.clientName ?? 'unknown-client',
+      clientVersion: this.getClientConnection(request, url)?.clientVersion ?? 'unknown-version',
+      canonicalizationVersion: 'codewave-canonical-json-v1',
+      requestSchemaVersion: 'codewave-daemon-mutation-v1',
     });
-    const complete = () => this.inFlightMutationKeys.delete(key);
+    triggerContinuityCrashPoint('after_receipt_reservation');
+    let completed = false;
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      this.inFlightMutationKeys.delete(key);
+    };
+    response.once('finish', complete);
     response.once('close', complete);
     idempotencyResponseContexts.set(response, {
       key,
@@ -970,6 +1410,91 @@ export class CodeWaveDaemon {
       }
 
       sendJson(response, 200, listing satisfies WorkspaceEntriesResponse);
+      return;
+    }
+
+    const mutationStatusMatch = pathname.match(/^\/api\/mutations\/([^/]+)$/);
+    if (request.method === 'GET' && mutationStatusMatch) {
+      const receipt = this.stateStore.getMutationReceiptMetadata(
+        decodeURIComponent(mutationStatusMatch[1]!),
+      );
+      if (!receipt) {
+        notFound(response);
+        return;
+      }
+      sendJson(response, 200, {
+        key: receipt.key,
+        operation: receipt.operation,
+        requestHash: receipt.requestHash,
+        state: receipt.state,
+        statusCode: receipt.statusCode > 0 ? receipt.statusCode : null,
+        createdAt: receipt.createdAt,
+        finalizedAt: receipt.finalizedAt,
+        provenance: {
+          protocolVersion: receipt.protocolVersion,
+          clientName: receipt.clientName,
+          clientVersion: receipt.clientVersion,
+          canonicalizationVersion: receipt.canonicalizationVersion,
+          requestSchemaVersion: receipt.requestSchemaVersion,
+        },
+      } satisfies MutationReceiptStatusResponse);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/workspace/files') {
+      const workspacePath = url.searchParams.get('workspacePath');
+      const targetPath = url.searchParams.get('targetPath');
+      if (!workspacePath || !targetPath) {
+        sendJson(response, 400, {
+          error: 'workspacePath and targetPath are required.',
+          code: 'workspace_file_invalid',
+        });
+        return;
+      }
+
+      const preview = await this.readWorkspaceFile(workspacePath, targetPath);
+      if (preview instanceof WorkspaceFileError) {
+        sendJson(response, preview.statusCode, {
+          error: preview.message,
+          code: preview.code,
+          ...preview.details,
+        });
+        return;
+      }
+
+      sendJson(response, 200, preview satisfies WorkspaceFilePreviewResponse);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/workspace/files') {
+      const body = await readJsonBody<CreateWorkspaceFileRequest>(request);
+      const created = await this.createWorkspaceFile(body);
+      if (created instanceof WorkspaceFileError) {
+        sendJson(response, created.statusCode, {
+          error: created.message,
+          code: created.code,
+          ...created.details,
+        });
+        return;
+      }
+
+      sendJson(response, 201, created satisfies CreateWorkspaceFileResponse);
+      return;
+    }
+
+    if (request.method === 'PUT' && pathname === '/api/workspace/files') {
+      const body = await readJsonBody<UpdateWorkspaceFileRequest>(request);
+      const updated = await this.updateWorkspaceFile(body);
+      if (updated instanceof WorkspaceFileError) {
+        sendJson(response, updated.statusCode, {
+          error: updated.message,
+          code: updated.code,
+          ...updated.details,
+        });
+        return;
+      }
+
+      sendJson(response, 200, updated satisfies UpdateWorkspaceFileResponse);
       return;
     }
 
@@ -1189,6 +1714,10 @@ export class CodeWaveDaemon {
         notFound(response);
         return;
       }
+      this.stateStore.redactMutationResponsesContaining(
+        sessionId,
+        new Date().toISOString(),
+      );
 
       sendJson(
         response,
@@ -1610,7 +2139,7 @@ export class CodeWaveDaemon {
       }
 
       const entries = await readdir(absolutePath, { withFileTypes: true });
-      const mappedEntries: WorkspaceEntryRecord[] = entries
+      const mappedEntries: WorkspaceEntriesResponse['entries'] = entries
         .filter((entry) => entry.isDirectory() || entry.isFile())
         .map((entry) => {
           const entryAbsolutePath = path.join(absolutePath, entry.name);
@@ -1640,6 +2169,453 @@ export class CodeWaveDaemon {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return new Error(`Unable to list workspace entries: ${message}`);
+    }
+  }
+
+  private async validateRealWorkspaceParentContainment(
+    workspaceRoot: string,
+    absolutePath: string,
+  ): Promise<Error | null> {
+    return this.validateRealWorkspaceContainment(
+      workspaceRoot,
+      path.dirname(absolutePath),
+    );
+  }
+
+  private async readWorkspaceFile(
+    workspacePath: string,
+    targetPath: string,
+  ): Promise<WorkspaceFilePreviewResponse | WorkspaceFileError> {
+    const normalizedTargetPath = normalizeRelativePath(targetPath);
+    if (!normalizedTargetPath) {
+      return new WorkspaceFileError(
+        'A file path inside the workspace is required.',
+        'workspace_file_invalid',
+        400,
+      );
+    }
+    const resolved = this.resolveWorkspaceTargetPath(workspacePath, normalizedTargetPath);
+    if (resolved instanceof Error) {
+      return new WorkspaceFileError(
+        resolved.message,
+        'workspace_path_escape',
+        409,
+      );
+    }
+
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      const containmentError = await this.validateRealWorkspaceParentContainment(
+        resolved.workspaceRoot,
+        resolved.absolutePath,
+      );
+      if (containmentError) {
+        return new WorkspaceFileError(
+          containmentError.message,
+          'workspace_path_escape',
+          409,
+        );
+      }
+      const targetStats = await stat(resolved.absolutePath);
+      if (!targetStats.isFile()) {
+        return new WorkspaceFileError(
+          'The selected workspace entry is not a file.',
+          'workspace_entry_not_file',
+          409,
+        );
+      }
+
+      // Open after realpath containment validation and reject symbolic entries.
+      // O_NOFOLLOW closes the remaining swap window on platforms that support it.
+      const linkStats = await lstat(resolved.absolutePath);
+      if (linkStats.isSymbolicLink()) {
+        return new WorkspaceFileError(
+          'File preview does not follow symbolic links or junctions.',
+          'workspace_path_escape',
+          409,
+        );
+      }
+      const noFollow = typeof fsConstants.O_NOFOLLOW === 'number'
+        ? fsConstants.O_NOFOLLOW
+        : 0;
+      handle = await open(
+        resolved.absolutePath,
+        fsConstants.O_RDONLY | noFollow,
+      );
+      const openedStats = await handle.stat();
+      if (!openedStats.isFile()) {
+        return new WorkspaceFileError(
+          'The selected workspace entry is not a file.',
+          'workspace_entry_not_file',
+          409,
+        );
+      }
+      const inspected = await inspectUtf8File(
+        handle,
+        CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
+        openedStats.size,
+      );
+      if (inspected.containsNul) {
+        return new WorkspaceFileError(
+          'Binary files cannot be previewed as text.',
+          'workspace_file_binary',
+          415,
+        );
+      }
+      if (!inspected.validUtf8) {
+        return new WorkspaceFileError(
+          'The file is not valid UTF-8 text.',
+          'workspace_file_binary',
+          415,
+        );
+      }
+      const preview = decodeUtf8Prefix(inspected.previewBytes);
+
+      return {
+        workspacePath: resolved.workspaceRoot,
+        relativePath: this.toWorkspaceRelativePath(
+          resolved.workspaceRoot,
+          resolved.absolutePath,
+        ),
+        name: path.basename(resolved.absolutePath),
+        content: preview.content,
+        encoding: 'utf-8',
+        byteLength: openedStats.size,
+        contentByteLength: preview.byteLength,
+        truncated: openedStats.size > preview.byteLength,
+        maxPreviewBytes: CODEWAVE_MAX_WORKSPACE_PREVIEW_BYTES,
+        version: inspected.version,
+      };
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code === 'ENOENT') {
+        return new WorkspaceFileError(
+          'The selected workspace file does not exist.',
+          'workspace_entry_not_found',
+          404,
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return new WorkspaceFileError(
+        `Unable to preview workspace file: ${message}`,
+        'workspace_io_error',
+        409,
+      );
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  private async createWorkspaceFile(
+    request: CreateWorkspaceFileRequest,
+  ): Promise<CreateWorkspaceFileResponse | WorkspaceFileError> {
+    if (!request || typeof request.workspacePath !== 'string') {
+      return new WorkspaceFileError(
+        'workspacePath is required.',
+        'workspace_file_invalid',
+        400,
+      );
+    }
+    const fileName = typeof request.name === 'string' ? request.name.trim() : '';
+    if (!isValidEntryName(fileName)) {
+      return new WorkspaceFileError(
+        'File name is invalid.',
+        'workspace_file_invalid',
+        400,
+      );
+    }
+    if (request.content !== undefined && typeof request.content !== 'string') {
+      return new WorkspaceFileError(
+        'File content must be UTF-8 text.',
+        'workspace_file_invalid',
+        400,
+      );
+    }
+    const content = request.content ?? '';
+    const contentBytes = Buffer.from(content, 'utf8');
+    if (contentBytes.length > CODEWAVE_MAX_WORKSPACE_FILE_BYTES) {
+      return new WorkspaceFileError(
+        'File content exceeds the 1 MiB workspace creation limit.',
+        'workspace_file_too_large',
+        400,
+      );
+    }
+
+    const resolvedParent = this.resolveWorkspaceTargetPath(
+      request.workspacePath,
+      request.parentPath ?? '',
+    );
+    if (resolvedParent instanceof Error) {
+      return new WorkspaceFileError(
+        resolvedParent.message,
+        'workspace_path_escape',
+        409,
+      );
+    }
+
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      const containmentError = await this.validateRealWorkspaceContainment(
+        resolvedParent.workspaceRoot,
+        resolvedParent.absolutePath,
+      );
+      if (containmentError) {
+        return new WorkspaceFileError(
+          containmentError.message,
+          'workspace_path_escape',
+          409,
+        );
+      }
+      const parentStats = await stat(resolvedParent.absolutePath);
+      if (!parentStats.isDirectory()) {
+        return new WorkspaceFileError(
+          'The parent path is not a folder.',
+          'workspace_parent_not_folder',
+          409,
+        );
+      }
+
+      const absolutePath = path.resolve(resolvedParent.absolutePath, fileName);
+      if (pathEscapesRoot(resolvedParent.workspaceRoot, absolutePath)) {
+        return new WorkspaceFileError(
+          'Created path escapes the selected workspace.',
+          'workspace_path_escape',
+          409,
+        );
+      }
+      handle = await open(
+        absolutePath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+        0o600,
+      );
+      await handle.writeFile(contentBytes);
+      await handle.sync();
+      return {
+        workspacePath: resolvedParent.workspaceRoot,
+        relativePath: this.toWorkspaceRelativePath(
+          resolvedParent.workspaceRoot,
+          absolutePath,
+        ),
+        name: fileName,
+        byteLength: contentBytes.length,
+        created: true,
+        version: `sha256:${createHash('sha256').update(contentBytes).digest('hex')}`,
+      };
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code === 'EEXIST') {
+        return new WorkspaceFileError(
+          'A workspace entry with that name already exists.',
+          'workspace_entry_exists',
+          409,
+        );
+      }
+      if (nodeError.code === 'ENOENT') {
+        return new WorkspaceFileError(
+          'The parent workspace folder does not exist.',
+          'workspace_entry_not_found',
+          404,
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return new WorkspaceFileError(
+        `Unable to create workspace file: ${message}`,
+        'workspace_io_error',
+        409,
+      );
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  private async updateWorkspaceFile(
+    request: UpdateWorkspaceFileRequest,
+  ): Promise<UpdateWorkspaceFileResponse | WorkspaceFileError> {
+    if (
+      !request ||
+      typeof request.workspacePath !== 'string' ||
+      typeof request.targetPath !== 'string' ||
+      !normalizeRelativePath(request.targetPath) ||
+      typeof request.content !== 'string' ||
+      typeof request.expectedVersion !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/.test(request.expectedVersion)
+    ) {
+      return new WorkspaceFileError(
+        'workspacePath, targetPath, UTF-8 content, and a sha256 expectedVersion are required.',
+        'workspace_file_invalid',
+        400,
+      );
+    }
+    const contentBytes = Buffer.from(request.content, 'utf8');
+    if (contentBytes.length > CODEWAVE_MAX_WORKSPACE_FILE_BYTES) {
+      return new WorkspaceFileError(
+        'File content exceeds the 1 MiB workspace update limit.',
+        'workspace_file_too_large',
+        400,
+      );
+    }
+    const resolved = this.resolveWorkspaceTargetPath(
+      request.workspacePath,
+      request.targetPath,
+    );
+    if (resolved instanceof Error) {
+      return new WorkspaceFileError(
+        resolved.message,
+        'workspace_path_escape',
+        409,
+      );
+    }
+
+    const temporaryPath = path.join(
+      path.dirname(resolved.absolutePath),
+      `.codewave-save-${randomUUID()}.tmp`,
+    );
+    let targetHandle: Awaited<ReturnType<typeof open>> | null = null;
+    let temporaryCreated = false;
+    try {
+      const containmentError = await this.validateRealWorkspaceParentContainment(
+        resolved.workspaceRoot,
+        resolved.absolutePath,
+      );
+      if (containmentError) {
+        return new WorkspaceFileError(
+          containmentError.message,
+          'workspace_path_escape',
+          409,
+        );
+      }
+      const linkStats = await lstat(resolved.absolutePath);
+      if (linkStats.isSymbolicLink()) {
+        return new WorkspaceFileError(
+          'Workspace file updates do not follow symbolic links or junctions.',
+          'workspace_path_escape',
+          409,
+        );
+      }
+      const noFollow = typeof fsConstants.O_NOFOLLOW === 'number'
+        ? fsConstants.O_NOFOLLOW
+        : 0;
+      targetHandle = await open(
+        resolved.absolutePath,
+        fsConstants.O_RDONLY | noFollow,
+      );
+      const targetStats = await targetHandle.stat();
+      if (!targetStats.isFile()) {
+        return new WorkspaceFileError(
+          'The selected workspace entry is not a file.',
+          'workspace_entry_not_file',
+          409,
+        );
+      }
+      if (targetStats.size > CODEWAVE_MAX_WORKSPACE_FILE_BYTES) {
+        return new WorkspaceFileError(
+          'The existing file exceeds the 1 MiB workspace editing limit.',
+          'workspace_file_too_large',
+          400,
+        );
+      }
+      const currentBytes = await targetHandle.readFile();
+      const currentVersion = `sha256:${createHash('sha256')
+        .update(currentBytes)
+        .digest('hex')}`;
+      if (currentBytes.includes(0)) {
+        return new WorkspaceFileError(
+          'Binary files cannot be edited as text.',
+          'workspace_file_binary',
+          415,
+        );
+      }
+      try {
+        new TextDecoder('utf-8', { fatal: true }).decode(currentBytes);
+      } catch {
+        return new WorkspaceFileError(
+          'The file is not valid UTF-8 text.',
+          'workspace_file_binary',
+          415,
+        );
+      }
+      if (currentVersion !== request.expectedVersion) {
+        return new WorkspaceFileError(
+          'The workspace file changed after it was opened. Reload it before saving.',
+          'workspace_file_version_conflict',
+          409,
+          { currentVersion },
+        );
+      }
+      await targetHandle.close();
+      targetHandle = null;
+
+      const tempHandle = await open(
+        temporaryPath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL,
+        targetStats.mode & 0o777,
+      );
+      temporaryCreated = true;
+      try {
+        await tempHandle.writeFile(contentBytes);
+        await tempHandle.sync();
+      } finally {
+        await tempHandle.close();
+      }
+
+      // Re-open and compare immediately before replacement. The exclusive
+      // same-directory temporary plus version check makes external edits
+      // observable instead of silently overwriting them.
+      const confirmHandle = await open(
+        resolved.absolutePath,
+        fsConstants.O_RDONLY | noFollow,
+      );
+      try {
+        const confirmedBytes = await confirmHandle.readFile();
+        const confirmedVersion = `sha256:${createHash('sha256')
+          .update(confirmedBytes)
+          .digest('hex')}`;
+        if (confirmedVersion !== request.expectedVersion) {
+          return new WorkspaceFileError(
+            'The workspace file changed while it was being saved. Reload it before retrying.',
+            'workspace_file_version_conflict',
+            409,
+            { currentVersion: confirmedVersion },
+          );
+        }
+      } finally {
+        await confirmHandle.close();
+      }
+
+      await renamePath(temporaryPath, resolved.absolutePath);
+      temporaryCreated = false;
+      return {
+        workspacePath: resolved.workspaceRoot,
+        relativePath: this.toWorkspaceRelativePath(
+          resolved.workspaceRoot,
+          resolved.absolutePath,
+        ),
+        name: path.basename(resolved.absolutePath),
+        byteLength: contentBytes.length,
+        version: `sha256:${createHash('sha256').update(contentBytes).digest('hex')}`,
+        updated: true,
+      };
+    } catch (error) {
+      if (error instanceof WorkspaceFileError) return error;
+      const nodeError = error as NodeJS.ErrnoException;
+      if (nodeError.code === 'ENOENT') {
+        return new WorkspaceFileError(
+          'The selected workspace file does not exist.',
+          'workspace_entry_not_found',
+          404,
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return new WorkspaceFileError(
+        `Unable to update workspace file: ${message}`,
+        'workspace_io_error',
+        409,
+      );
+    } finally {
+      await targetHandle?.close().catch(() => undefined);
+      if (temporaryCreated) {
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+      }
     }
   }
 
@@ -3340,16 +4316,20 @@ export class CodeWaveDaemon {
       return new Error('A non-empty run prompt is required.');
     }
 
+    await waitAtContinuityRunBarrier();
+
     const activeRun = this.stateStore.listNonTerminalRuns(session.id).at(-1);
     if (activeRun) {
-      return new Error(
+      return new DaemonConflictError(
         `Run ${activeRun.id} is already active in this session. Queue an update against that run instead.`,
+        'active_run_conflict',
       );
     }
 
     if (this.sessionRunReservations.has(session.id)) {
-      return new Error(
+      return new DaemonConflictError(
         'A run launch is already being prepared for this session. Refresh before retrying.',
+        'active_run_conflict',
       );
     }
 
@@ -3402,17 +4382,20 @@ export class CodeWaveDaemon {
         .listNonTerminalRuns(session.id)
         .at(-1);
       if (newlyActiveRun) {
-        return new Error(
+        return new DaemonConflictError(
           `Run ${newlyActiveRun.id} became active while this launch was being prepared. Queue an update against that run instead.`,
+          'active_run_conflict',
         );
       }
       this.stateStore.createRun(run);
+      triggerContinuityCrashPoint('after_run_persist_before_provider_launch');
     } finally {
       this.sessionRunReservations.delete(session.id);
     }
     if (run.preRunCommit) {
       this.stateStore.setRunPreRunCommit(run.id, run.preRunCommit);
     }
+    const launchAttemptId = randomUUID();
     await this.syncProviderConnectedTools(session, run);
     await this.acceptEvent({
       id: randomUUID(),
@@ -3425,6 +4408,7 @@ export class CodeWaveDaemon {
         providerId: session.providerId,
         providerConfigurationRevision: registry.revision,
         workspacePath: session.workspacePath,
+        launchAttemptId,
         ...(session.orchestration
           ? {
               orchestration: session.orchestration,
@@ -3436,6 +4420,7 @@ export class CodeWaveDaemon {
     let handle: Awaited<ReturnType<ProviderAdapter['startRun']>>;
     try {
       handle = await provider.startRun({
+        launchAttemptId,
         session,
         run,
         emitEvent: async (event) => {
@@ -3445,6 +4430,51 @@ export class CodeWaveDaemon {
           this.updateSession(session.id, run.id, updates),
         requestApproval: async (approval) => this.requestApproval(run, approval),
       });
+      const launchedRun = this.stateStore.getRun(run.id);
+      if (launchedRun && !isTerminalRunStatus(launchedRun.status)) {
+        this.runHandles.set(run.id, handle);
+      }
+      if (handle.launched) {
+        const acknowledgement = await Promise.race([
+          handle.launched,
+          new Promise<null>((resolve) => {
+            const timeout = setTimeout(() => resolve(null), 3_000);
+            timeout.unref?.();
+          }),
+        ]);
+        if (acknowledgement) {
+          await this.acceptEvent({
+            id: randomUUID(),
+            sessionId: session.id,
+            runId: run.id,
+            timestamp: acknowledgement.acknowledgedAt,
+            source: 'system',
+            type: 'run.provider.launched',
+            payload: {
+              launchId: acknowledgement.launchId,
+              protocol: acknowledgement.protocol,
+              providerId: run.providerId,
+              providerConfigurationRevision: run.providerConfigurationRevision,
+              daemonServerVersion: DAEMON_SERVER_VERSION,
+            },
+          });
+          triggerContinuityCrashPoint('after_provider_launch_acknowledgement');
+        } else {
+          await this.acceptEvent({
+            id: randomUUID(),
+            sessionId: session.id,
+            runId: run.id,
+            timestamp: new Date().toISOString(),
+            source: 'system',
+            type: 'run.output.delta',
+            payload: {
+              stream: 'stderr',
+              text: 'Provider launch acknowledgement was not observed within 3 seconds.',
+              code: 'provider_launch_unacknowledged',
+            },
+          });
+        }
+      }
     } catch (launchError) {
       const message =
         launchError instanceof Error
@@ -3826,9 +4856,15 @@ export class CodeWaveDaemon {
       typeof event.payload.toolName === 'string'
         ? event.payload.toolName
         : existing?.toolName ?? 'unknown';
-    const input =
-      event.payload.input && typeof event.payload.input === 'object'
+    const incomingInput =
+      event.payload.input &&
+      typeof event.payload.input === 'object' &&
+      !Array.isArray(event.payload.input)
         ? (event.payload.input as Record<string, unknown>)
+        : null;
+    const input =
+      incomingInput && (Object.keys(incomingInput).length > 0 || !existing)
+        ? incomingInput
         : existing?.input ?? {};
     const detail =
       typeof event.payload.detail === 'string'
@@ -3861,7 +4897,9 @@ export class CodeWaveDaemon {
       };
     } else if (event.type === 'tool.completed') {
       status = 'completed';
-      output = event.payload.output ?? null;
+      if (Object.hasOwn(event.payload, 'output')) {
+        output = event.payload.output ?? null;
+      }
       metadata = {
         ...metadata,
         ...(typeof event.payload.isError === 'boolean'
@@ -4052,7 +5090,34 @@ export class CodeWaveDaemon {
       return;
     }
 
-    event = this.stateStore.appendEvent(event);
+    const terminalStatus =
+      event.type === 'run.completed'
+        ? 'completed'
+        : event.type === 'run.failed'
+          ? 'failed'
+          : event.type === 'run.cancelled'
+            ? 'cancelled'
+            : null;
+    if (terminalStatus) {
+      const errorMessage =
+        terminalStatus === 'failed'
+          ? typeof event.payload.message === 'string'
+            ? event.payload.message
+            : 'Run failed'
+          : terminalStatus === 'cancelled' && typeof event.payload.reason === 'string'
+            ? event.payload.reason
+            : null;
+      const terminalEvent = this.stateStore.appendTerminalEvent(
+        event,
+        terminalStatus,
+        errorMessage,
+      );
+      if (!terminalEvent) return;
+      event = terminalEvent;
+      triggerContinuityCrashPoint('after_terminal_persistence');
+    } else {
+      event = this.stateStore.appendEvent(event);
+    }
     this.syncSessionToolRegistrationFromRegisteredEvent(event);
     const invocation = this.syncToolInvocationFromEvent(event);
     this.syncSessionToolRegistrationFromEvent(event, invocation);
@@ -4143,10 +5208,6 @@ export class CodeWaveDaemon {
         return;
       }
 
-      this.stateStore.updateRunStatus(event.runId, 'completed', {
-        completedAt: event.timestamp,
-        errorMessage: null,
-      });
       await this.denyPendingApprovalsForRun(
         event.runId,
         'Run completed before the approval was resolved.',
@@ -4164,13 +5225,6 @@ export class CodeWaveDaemon {
         return;
       }
 
-      this.stateStore.updateRunStatus(event.runId, 'failed', {
-        completedAt: event.timestamp,
-        errorMessage:
-          typeof event.payload.message === 'string'
-            ? event.payload.message
-            : 'Run failed',
-      });
       await this.denyPendingApprovalsForRun(
         event.runId,
         'Run failed before the approval was resolved.',
@@ -4179,17 +5233,6 @@ export class CodeWaveDaemon {
     }
 
     if (event.type === 'run.cancelled') {
-      const current = this.stateStore.getRun(event.runId);
-      if (!current || isTerminalRunStatus(current.status)) {
-        this.runHandles.delete(event.runId);
-        return;
-      }
-
-      this.stateStore.updateRunStatus(event.runId, 'cancelled', {
-        completedAt: event.timestamp,
-        errorMessage:
-          typeof event.payload.reason === 'string' ? event.payload.reason : null,
-      });
       await this.denyPendingApprovalsForRun(
         event.runId,
         'Run was cancelled before the approval was resolved.',

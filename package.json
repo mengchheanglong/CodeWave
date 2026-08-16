@@ -21,6 +21,7 @@
     "check:transport": "tsx scripts/validate-structured-transport.ts",
     "check:harness": "node scripts/validate-daemon-harness.mjs",
     "check:adversarial": "node scripts/validate-daemon-adversarial.mjs",
+    "check:continuity": "node scripts/validate-continuity.mjs",
     "check:registrations": "node scripts/validate-registration-signals.mjs",
     "check:registrations:json": "node scripts/validate-registration-signals.mjs --summary-json artifacts/registration-summary.json"
   },

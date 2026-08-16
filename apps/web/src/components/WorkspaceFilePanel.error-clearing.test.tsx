@@ -169,11 +169,11 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
     });
 
     // First operation: delete fails
-    vi.mocked(window.confirm).mockReturnValueOnce(true);
     (global.fetch as any).mockRejectedValueOnce(new Error('Permission denied'));
 
     const deleteButton = screen.getAllByRole('button', { name: /Delete/i })[0];
     await user.click(deleteButton);
+    await user.click(screen.getByRole('button', { name: 'Delete file' }));
 
     // Verify error is displayed
     await waitFor(() => {
@@ -181,7 +181,6 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
     });
 
     // Second operation: delete succeeds
-    vi.mocked(window.confirm).mockReturnValueOnce(true);
     (global.fetch as any)
       .mockResolvedValueOnce({
         ok: true,
@@ -197,6 +196,7 @@ describe('WorkspaceFilePanel - Error Clearing on Success', () => {
       });
 
     await user.click(deleteButton);
+    await user.click(screen.getByRole('button', { name: 'Delete file' }));
 
     // Verify error is cleared
     await waitFor(() => {

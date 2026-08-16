@@ -424,7 +424,6 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             });
 
             // Delete folder
-            vi.mocked(window.confirm).mockReturnValueOnce(true);
             (global.fetch as any)
               .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
               .mockResolvedValueOnce({
@@ -443,6 +442,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               container.querySelectorAll<HTMLButtonElement>('button'),
             ).filter((button) => button.textContent === 'Delete');
             await user.click(deleteButtons[0]);
+            await user.click(screen.getByRole('button', { name: 'Delete folder' }));
 
             // Property: Deleted folder should not appear in listing
             await waitFor(() => {
@@ -498,7 +498,6 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             });
 
             // Delete file
-            vi.mocked(window.confirm).mockReturnValueOnce(true);
             (global.fetch as any)
               .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
               .mockResolvedValueOnce({
@@ -516,6 +515,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             const deleteButtons = Array.from(container.querySelectorAll('button')).filter(btn => btn.textContent === 'Delete');
             if (deleteButtons[0]) {
               await user.click(deleteButtons[0]);
+              await user.click(screen.getByRole('button', { name: 'Delete file' }));
             }
 
             // Property: Deleted file should not appear in listing
@@ -705,8 +705,6 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
             });
 
             // Delete folder
-            vi.mocked(window.confirm).mockReturnValueOnce(true);
-            
             let refreshCalled = false;
             (global.fetch as any)
               .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
@@ -723,6 +721,7 @@ describe('WorkspaceFilePanel - Folder Operations Properties', () => {
               });
 
             await user.click(screen.getAllByRole('button', { name: /Delete/i })[0]);
+            await user.click(screen.getByRole('button', { name: 'Delete folder' }));
 
             // Property: View should refresh and folder should be gone
             await waitFor(() => {

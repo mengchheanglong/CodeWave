@@ -365,11 +365,35 @@ try {
   record('under-scoped connection fails closed', 403, deniedProviderRead.status);
 
   const oversizedBody = await rawRequest('POST', '/api/sessions', {
+    key: 'oversized-request-body-01',
     rawBody: `{"padding":"${'x'.repeat(2 * 1024 * 1024)}"}`,
   });
   record('request body ceiling is enforced', 400, oversizedBody.status);
   const healthAfterOversize = await rawRequest('GET', '/api/health', { connection: null });
   record('daemon survives oversized request', 200, healthAfterOversize.status);
+
+  const invalidUtf8Key = 'invalid-utf8-mutation-01';
+  const invalidUtf8 = await rawRequest('POST', '/api/sessions', {
+    key: invalidUtf8Key,
+    rawBody: Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d]),
+  });
+  record('invalid UTF-8 mutation body is rejected', 400, invalidUtf8.status);
+  record('invalid UTF-8 has stable reason code', 'invalid_canonical_json', invalidUtf8.payload?.code);
+  const invalidUtf8Receipt = await rawRequest(
+    'GET',
+    `/api/mutations/${encodeURIComponent(invalidUtf8Key)}`,
+  );
+  record('invalid UTF-8 fails before receipt reservation', 404, invalidUtf8Receipt.status);
+
+  const unkeyedMutation = await rawRequest('POST', '/api/definitely-missing', {
+    body: { hostile: true },
+  });
+  record('protected mutation requires idempotency key', 428, unkeyedMutation.status);
+  record(
+    'missing idempotency key has stable reason code',
+    'idempotency_key_required',
+    unkeyedMutation.payload?.code,
+  );
 
   const missingApi = await rawRequest('POST', '/api/definitely-missing', {
     key: 'missing-api-route-0001',
