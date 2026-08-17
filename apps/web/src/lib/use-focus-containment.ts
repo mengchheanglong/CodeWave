@@ -29,7 +29,17 @@ export function useFocusContainment(
       const container = containerRef.current;
       if (!container) return;
       const focusable = [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
-        (element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true',
+        (element) => {
+          if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
+          if (typeof element.checkVisibility === 'function') {
+            return element.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true });
+          }
+          if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+          }
+          return true;
+        },
       );
       if (focusable.length === 0) {
         event.preventDefault();

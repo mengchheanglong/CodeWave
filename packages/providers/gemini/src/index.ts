@@ -840,6 +840,7 @@ export class GeminiCliProvider implements ProviderAdapter {
           input: {},
           detail: message.error?.message ?? message.output ?? null,
         });
+        return;
       }
 
       await publish('tool.completed', {

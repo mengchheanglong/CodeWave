@@ -29,6 +29,8 @@ export function useAutoResizeTextarea() {
 
   useEffect(() => {
     autoResize();
+    window.addEventListener('resize', autoResize);
+    return () => window.removeEventListener('resize', autoResize);
   }, [autoResize]);
 
   return { textareaRef, autoResize };

@@ -255,6 +255,7 @@ export function createControllerRunStreamFlows(
     ) {
       return;
     }
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
     const eventSource = new EventSource(streamUrl);
     eventSource.onmessage = (message) => {
       if (
@@ -309,7 +310,13 @@ export function createControllerRunStreamFlows(
         event.type === 'run.cancelled' ||
         event.type.startsWith('run.steering.')
       ) {
-        void refreshRun(runId).catch(() => {});
+        if (refreshTimeout) {
+          clearTimeout(refreshTimeout);
+        }
+        refreshTimeout = setTimeout(() => {
+          refreshTimeout = null;
+          void refreshRun(runId).catch(() => {});
+        }, 100);
         return;
       }
 

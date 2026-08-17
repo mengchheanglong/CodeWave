@@ -987,9 +987,11 @@ export class QwenCliProvider implements ProviderAdapter {
     payload: ControlRequestPayload;
   }): Promise<Record<string, unknown>> {
     if (!isCanUseToolRequest(payload)) {
-      throw new Error(
-        `Unsupported control request subtype: ${payload.subtype ?? 'unknown'}`,
-      );
+      return {
+        subtype: payload.subtype ?? 'unknown',
+        behavior: 'deny',
+        message: `Unsupported control request subtype: ${payload.subtype ?? 'unknown'}`,
+      };
     }
 
     const toolName = payload.tool_name?.trim();

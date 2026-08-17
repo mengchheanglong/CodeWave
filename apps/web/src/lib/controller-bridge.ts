@@ -17,12 +17,10 @@ import type {
   SessionDraftPatch,
 } from './controller-contracts.js';
 
-let runViewListener: ((nextState: RunViewState) => void) | null = null;
-let shellPanelsListener: ((nextState: ShellPanelsState) => void) | null = null;
-let shellControlsListener: ((nextState: ShellControlsState) => void) | null =
-  null;
-let shellSummaryListener: ((nextState: ShellSummaryState) => void) | null =
-  null;
+const runViewListeners = new Set<(nextState: RunViewState) => void>();
+const shellPanelsListeners = new Set<(nextState: ShellPanelsState) => void>();
+const shellControlsListeners = new Set<(nextState: ShellControlsState) => void>();
+const shellSummaryListeners = new Set<(nextState: ShellSummaryState) => void>();
 
 const noopAsync = async () => {};
 const requesters: ControllerRequesterMap = {
@@ -58,62 +56,54 @@ export function setControllerRequesters(next: ControllerRequesterMap) {
 }
 
 export function emitRunViewState(nextState: RunViewState) {
-  runViewListener?.(nextState);
+  runViewListeners.forEach((listener) => listener(nextState));
 }
 
 export function emitShellPanelsState(nextState: ShellPanelsState) {
-  shellPanelsListener?.(nextState);
+  shellPanelsListeners.forEach((listener) => listener(nextState));
 }
 
 export function emitShellControlsState(nextState: ShellControlsState) {
-  shellControlsListener?.(nextState);
+  shellControlsListeners.forEach((listener) => listener(nextState));
 }
 
 export function emitShellSummaryState(nextState: ShellSummaryState) {
-  shellSummaryListener?.(nextState);
+  shellSummaryListeners.forEach((listener) => listener(nextState));
 }
 
 export function subscribeRunViewState(
   listener: (nextState: RunViewState) => void,
 ): () => void {
-  runViewListener = listener;
+  runViewListeners.add(listener);
   return () => {
-    if (runViewListener === listener) {
-      runViewListener = null;
-    }
+    runViewListeners.delete(listener);
   };
 }
 
 export function subscribeShellPanelsState(
   listener: (nextState: ShellPanelsState) => void,
 ): () => void {
-  shellPanelsListener = listener;
+  shellPanelsListeners.add(listener);
   return () => {
-    if (shellPanelsListener === listener) {
-      shellPanelsListener = null;
-    }
+    shellPanelsListeners.delete(listener);
   };
 }
 
 export function subscribeShellControlsState(
   listener: (nextState: ShellControlsState) => void,
 ): () => void {
-  shellControlsListener = listener;
+  shellControlsListeners.add(listener);
   return () => {
-    if (shellControlsListener === listener) {
-      shellControlsListener = null;
-    }
+    shellControlsListeners.delete(listener);
   };
 }
 
 export function subscribeShellSummaryState(
   listener: (nextState: ShellSummaryState) => void,
 ): () => void {
-  shellSummaryListener = listener;
+  shellSummaryListeners.add(listener);
   return () => {
-    if (shellSummaryListener === listener) {
-      shellSummaryListener = null;
-    }
+    shellSummaryListeners.delete(listener);
   };
 }
 

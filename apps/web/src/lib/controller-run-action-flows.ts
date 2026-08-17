@@ -193,13 +193,16 @@ export function createControllerRunActionFlows(
       state.selectedRun &&
       ['queued', 'running', 'awaiting_approval'].includes(state.selectedRun.status)
     ) {
-      const response = await api.steerRun(state.selectedRun.id, {
+      const runId = state.selectedRun.id;
+      const response = await api.steerRun(runId, {
         prompt,
-        expectedRunId: state.selectedRun.id,
+        expectedRunId: runId,
         expectedProviderRevision: requireProviderRevision(),
       });
       state.promptDraft = '';
-      applyRunSnapshot(response.runSnapshot);
+      if (state.selectedRun?.id === runId) {
+        applyRunSnapshot(response.runSnapshot);
+      }
       state.runUpdateFeedbackMessage =
         response.delivery === 'native'
           ? 'Update delivered to the active run.'
@@ -233,7 +236,9 @@ export function createControllerRunActionFlows(
 
     state.promptDraft = '';
     syncRouteAction();
-    state.runs.unshift(snapshot.run);
+    if (state.selectedSession?.id === session.id) {
+      state.runs.unshift(snapshot.run);
+    }
     emitRunViewState();
     await loadArchive();
     await selectRun(snapshot.run.id);
@@ -332,10 +337,11 @@ export function createControllerRunActionFlows(
     approvalId: string,
     decision: ApprovalDecision,
   ) {
+    const runId = state.selectedRun?.id;
     await api.resolveApproval(approvalId, { decision });
 
-    if (state.selectedRun) {
-      await refreshRun(state.selectedRun.id);
+    if (runId) {
+      await refreshRun(runId);
     }
   }
 
@@ -344,8 +350,11 @@ export function createControllerRunActionFlows(
       return;
     }
 
-    const snapshot = await api.cancelRun(state.selectedRun.id);
-    applyRunSnapshot(snapshot);
+    const runId = state.selectedRun.id;
+    const snapshot = await api.cancelRun(runId);
+    if (state.selectedRun?.id === runId) {
+      applyRunSnapshot(snapshot);
+    }
   }
 
   async function updateSelectedSessionPolicy() {

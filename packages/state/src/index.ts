@@ -1027,7 +1027,7 @@ export class SQLiteStateStore {
             status = ?,
             started_at = COALESCE(?, started_at),
             completed_at = COALESCE(?, completed_at),
-            error_message = ?
+            error_message = COALESCE(?, error_message)
           WHERE id = ?
         `,
       )

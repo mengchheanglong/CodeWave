@@ -18,10 +18,13 @@ export function InlineApprovalCards({
   }
 
   return (
-    <div className="inline-approvals" aria-label="Inline approvals">
+    <div 
+      className="inline-approvals" 
+      aria-label="Inline approvals"
+      style={{ display: 'flex', flexDirection: 'column-reverse' }}
+    >
       {approvals
         .slice()
-        .reverse()
         .map((approval) => (
           <ApprovalCard
             key={approval.id}

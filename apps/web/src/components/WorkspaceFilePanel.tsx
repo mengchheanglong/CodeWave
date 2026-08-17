@@ -151,7 +151,7 @@ function getParentPath(relativePath: string): string {
     return '';
   }
 
-  const parts = relativePath.split('/').filter(Boolean);
+  const parts = relativePath.split(/[\\/]/).filter(Boolean);
   parts.pop();
   return parts.join('/');
 }
@@ -525,6 +525,12 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
     setLoading(true);
     setError(null);
     try {
+      const oldDraftKey = draftStorageKey(normalizedWorkspacePath, entry.relativePath);
+      let draftToMigrate: string | null = null;
+      try {
+        draftToMigrate = window.sessionStorage.getItem(oldDraftKey);
+      } catch {}
+
       await requestWorkspaceJson<{ ok: true }>('/api/workspace/entries/rename', {
         method: 'PATCH',
         headers: {
@@ -537,10 +543,29 @@ export function WorkspaceFilePanel({ workspacePath }: WorkspaceFilePanelProps) {
         }),
       });
       await loadEntries(relativePath);
+
+      const nextRelativePath = [getParentPath(entry.relativePath), nextName]
+        .filter(Boolean)
+        .join('/');
+
+      if (draftToMigrate) {
+        try {
+          const parsed = JSON.parse(draftToMigrate);
+          if (parsed.entry) {
+            parsed.entry.name = nextName;
+            parsed.entry.relativePath = nextRelativePath;
+          }
+          if (parsed.preview) {
+            parsed.preview.name = nextName;
+            parsed.preview.relativePath = nextRelativePath;
+          }
+          const nextDraftKey = draftStorageKey(normalizedWorkspacePath, nextRelativePath);
+          window.sessionStorage.setItem(nextDraftKey, JSON.stringify(parsed));
+          window.sessionStorage.removeItem(oldDraftKey);
+        } catch {}
+      }
+
       if (selectedFile?.relativePath === entry.relativePath) {
-        const nextRelativePath = [getParentPath(entry.relativePath), nextName]
-          .filter(Boolean)
-          .join('/');
         await loadFilePreview({ ...entry, name: nextName, relativePath: nextRelativePath });
       }
     } catch (renameError) {

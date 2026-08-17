@@ -40,7 +40,7 @@ export function ToolActivityList({ tools }: ToolActivityListProps) {
         .map((tool, index) => (
           <div
             className="list-item tool-activity-card qw-inspector-card"
-            key={`${tool.toolUseId ?? tool.toolName ?? 'tool'}-${index}`}
+            key={tool.id}
           >
             <div className="tool-activity-card__head qw-inspector-card-header">
               <div className="qw-inspector-card-title-group">

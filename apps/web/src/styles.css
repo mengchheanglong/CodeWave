@@ -214,10 +214,11 @@ kbd { font: 550 9px/1 var(--font-mono); }
 .thread-tab-dot-freebuff { background: var(--accent-freebuff); }
 
 .session-item-menu-shell, .project-item-menu-shell { position: absolute; right: 2px; z-index: 5; }
+.session-item-menu-shell.open, .project-item-menu-shell.open { z-index: 50; }
 .session-item-menu-trigger, .project-item-menu-trigger { display: inline-grid; width: 27px; height: 27px; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-tertiary); opacity: 0; }
 .rail-session-row:hover .session-item-menu-trigger, .rail-project-header-row:hover .project-item-menu-trigger, .session-item-menu-shell.open .session-item-menu-trigger, .project-item-menu-shell.open .project-item-menu-trigger { opacity: 1; }
 .session-item-menu-trigger:hover, .project-item-menu-trigger:hover { background: var(--surface-3); color: var(--text-primary); }
-.session-item-menu-popover, .project-item-menu-popover { position: absolute; top: 30px; right: 0; z-index: 30; min-width: 130px; padding: 5px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-overlay); box-shadow: var(--shadow-md); backdrop-filter: blur(18px); }
+.session-item-menu-popover, .project-item-menu-popover { position: absolute; top: 30px; right: 0; z-index: 50; min-width: 130px; padding: 5px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-overlay); box-shadow: var(--shadow-md); backdrop-filter: blur(18px); }
 .session-item-menu-action { width: 100%; min-height: 30px; padding: 0 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--status-error); text-align: left; font-size: var(--text-sm); }
 .session-item-menu-action:hover { background: color-mix(in srgb, var(--status-error) 10%, transparent); }
 

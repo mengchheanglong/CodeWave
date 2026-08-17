@@ -106,7 +106,7 @@ type ApprovalView = Pick<
 
 type ToolInvocationView = Pick<
   ToolInvocationRecord,
-  'toolUseId' | 'detail'
+  'id' | 'toolUseId' | 'detail'
 > & {
   toolName: string | null;
   status: ToolInvocationRecord['status'] | null;

@@ -97,6 +97,19 @@ function attachBoundedStderr(
       pending = pending.slice(0, STDERR_LINE_LIMIT);
     }
   });
+  child.stderr?.on('end', () => {
+    if (pending && emittedBytes < STDERR_TOTAL_LIMIT) {
+      const line = pending.slice(0, STDERR_LINE_LIMIT);
+      const remaining = STDERR_TOTAL_LIMIT - emittedBytes;
+      const bounded = line.slice(0, remaining);
+      emittedBytes += Buffer.byteLength(bounded, 'utf8');
+      aggregate = `${aggregate}\n${bounded}`.trim().slice(-4096);
+      if (bounded) {
+        void publish('run.output.delta', { stream: 'stderr', text: bounded });
+      }
+      pending = '';
+    }
+  });
   return { diagnostic: () => sanitizeDiagnostic(aggregate, 4096) };
 }
 

@@ -279,7 +279,7 @@ export function launchJsonLineTransport<TRecord>(
         settled,
         new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
-            if (!closeObserved && child.exitCode === null) child.kill();
+            if (!closeObserved && child.exitCode === null) child.kill('SIGKILL');
             resolve();
           }, Math.max(0, graceMs));
           timeout.unref?.();

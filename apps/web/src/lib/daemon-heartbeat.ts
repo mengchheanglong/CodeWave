@@ -21,45 +21,52 @@ function notify() {
   }
 }
 
-function scheduleNext() {
-  if (state.status === 'connected') {
-    timer = setTimeout(check, HEARTBEAT_INTERVAL_MS);
-    return;
-  }
+export function startDaemonHeartbeat(): () => void {
+  let isDestroyed = false;
 
-  const delay = Math.min(
-    RECONNECT_BASE_MS * Math.pow(1.5, reconnectAttempts),
-    RECONNECT_MAX_MS,
-  );
-  timer = setTimeout(check, delay);
-}
-
-async function check() {
-  try {
-    const res = await fetch('/api/health');
-    if (res.ok) {
-      reconnectAttempts = 0;
-      lastCheckMs = Date.now();
-      state = { status: 'connected', lastCheckMs };
-      notify();
-      scheduleNext();
+  function scheduleNext() {
+    if (state.status === 'connected') {
+      timer = setTimeout(check, HEARTBEAT_INTERVAL_MS);
       return;
     }
-  } catch {
-    // Connection failed — fall through
+
+    const delay = Math.min(
+      RECONNECT_BASE_MS * Math.pow(1.5, reconnectAttempts),
+      RECONNECT_MAX_MS,
+    );
+    timer = setTimeout(check, delay);
   }
 
-  reconnectAttempts += 1;
-  state = { status: 'disconnected', sinceMs: Date.now(), attempts: reconnectAttempts };
-  notify();
-  scheduleNext();
-}
+  async function check() {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        reconnectAttempts = 0;
+        lastCheckMs = Date.now();
+        state = { status: 'connected', lastCheckMs };
+        notify();
+        if (!isDestroyed) {
+          scheduleNext();
+        }
+        return;
+      }
+    } catch {
+      // Connection failed — fall through
+    }
 
-export function startDaemonHeartbeat(): () => void {
+    reconnectAttempts += 1;
+    state = { status: 'disconnected', sinceMs: Date.now(), attempts: reconnectAttempts };
+    notify();
+    if (!isDestroyed) {
+      scheduleNext();
+    }
+  }
+
   // Initial check
   void check();
 
   return () => {
+    isDestroyed = true;
     if (timer) {
       clearTimeout(timer);
       timer = null;

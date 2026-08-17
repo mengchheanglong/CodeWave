@@ -90,7 +90,7 @@ export function OrchestrationSwimlanes({
         return (
           <article
             className="swimlane"
-            key={`${flow.rootSession.id}-${flow.latestActivityAt}`}
+            key={flow.rootSession.id}
           >
             <header className="swimlane-header">
               <div>

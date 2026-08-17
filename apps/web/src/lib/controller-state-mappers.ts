@@ -261,6 +261,7 @@ function toToolInvocation(
   tool: ToolInvocationRecord,
 ): ShellPanelsState['tools'][number] {
   return {
+    id: tool.id,
     toolName: tool.toolName,
     status: tool.status,
     toolUseId: tool.toolUseId,

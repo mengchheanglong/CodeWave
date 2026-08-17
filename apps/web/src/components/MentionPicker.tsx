@@ -144,6 +144,7 @@ export function MentionPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   const normalizedWorkspacePath = useMemo(
     () => workspacePath.trim(),
@@ -197,6 +198,47 @@ export function MentionPicker({
     return scored.slice(0, 12);
   }, [entries, query]);
 
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [matches]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (dismissed) return;
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+
+      if (loading || error || matches.length === 0) return;
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        setActiveIndex((prev) => (prev + 1) % matches.length);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        setActiveIndex((prev) => (prev - 1 + matches.length) % matches.length);
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        if (matches[activeIndex]) {
+          event.preventDefault();
+          event.stopPropagation();
+          setDismissed(true);
+          onSelect(matches[activeIndex].entry.relativePath);
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [dismissed, loading, error, matches, activeIndex, onClose, onSelect]);
+
   if (dismissed) {
     return null;
   }
@@ -210,11 +252,12 @@ export function MentionPicker({
       ) : matches.length === 0 ? (
         <p className="mention-picker-note">No matching files.</p>
       ) : (
-        matches.map(({ entry }) => (
+        matches.map(({ entry }, index) => (
           <button
             key={entry.relativePath}
             type="button"
             role="option"
+            aria-selected={index === activeIndex}
             className="mention-picker-item"
             onClick={() => {
               setDismissed(true);

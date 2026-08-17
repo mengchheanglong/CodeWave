@@ -51,6 +51,7 @@ export function ProjectChangesPanel({
   const [taskTrace, setTaskTrace] = useState<TaskTraceReportV1 | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceExpanded, setTraceExpanded] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
 
   async function loadTaskTrace(taskId: string): Promise<void> {
     setTraceLoading(true);
@@ -335,13 +336,23 @@ export function ProjectChangesPanel({
 
           {changes.changes.length > 0 ? (
             <div className="task-change-files" aria-label="Changed files">
-              {changes.changes.map((change) => (
+              {(showAllFiles ? changes.changes : changes.changes.slice(0, 50)).map((change) => (
                 <div key={`${change.path}:${change.originalPath ?? ''}`} className="task-change-file">
                   <span className={`task-change-kind ${change.kind}`}>{change.kind.slice(0, 1).toUpperCase()}</span>
                   <span title={change.path}>{change.path}</span>
                   <code>{change.indexStatus}{change.worktreeStatus}</code>
                 </div>
               ))}
+              {changes.changes.length > 50 && !showAllFiles ? (
+                <button
+                  type="button"
+                  className="show-more-button"
+                  onClick={() => setShowAllFiles(true)}
+                  style={{ width: '100%', margin: '4px 0', padding: '6px' }}
+                >
+                  Show all {changes.changes.length} changed files (+{changes.changes.length - 50} more)
+                </button>
+              ) : null}
             </div>
           ) : null}
 

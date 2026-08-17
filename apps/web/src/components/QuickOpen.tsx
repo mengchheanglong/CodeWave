@@ -92,13 +92,19 @@ export function QuickOpen({
       return;
     }
 
-    await item.run();
-    onClose();
+    try {
+      await item.run();
+    } finally {
+      onClose();
+    }
   }
 
   async function executeItem(item: QuickOpenItem) {
-    await item.run();
-    onClose();
+    try {
+      await item.run();
+    } finally {
+      onClose();
+    }
   }
 
   return (

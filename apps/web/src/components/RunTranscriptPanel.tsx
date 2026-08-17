@@ -117,6 +117,12 @@ export function RunTranscriptPanel({
     const scrollContainer =
       containerRef.current?.closest('.run-scroll') ?? containerRef.current;
     if (scrollContainer) {
+      const distanceFromBottom =
+        scrollContainer.scrollHeight -
+        scrollContainer.scrollTop -
+        scrollContainer.clientHeight;
+      const isNearBottom = distanceFromBottom < 150;
+      if (!isNearBottom) return;
       scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
     if (typeof bottomAnchorRef.current?.scrollIntoView === 'function') {

@@ -341,6 +341,34 @@ export default function App() {
 
   const hasActiveSession = Boolean(shellPanelsState.selectedSessionId);
 
+  const focusComposer = useCallback(() => {
+    const promptInput = document.querySelector(
+      '#prompt-input',
+    ) as HTMLTextAreaElement | null;
+    promptInput?.focus();
+  }, []);
+
+  function handleComposerPolicyChange(value: string) {
+    const nextPolicy = parseApprovalPolicy(value);
+    if (hasActiveSession) {
+      void requestSelectedSessionPolicyDraftChange(nextPolicy).then(() => {
+        void requestApplySelectedSessionPolicy();
+      });
+      return;
+    }
+
+    void requestSessionDraftChange({
+      sessionApprovalPolicy: nextPolicy,
+    });
+  }
+
+  const handleComposerPolicyChangeRef = useRef(handleComposerPolicyChange);
+  handleComposerPolicyChangeRef.current = handleComposerPolicyChange;
+
+  const onPolicyChange = useCallback((nextPolicy: string) => {
+    handleComposerPolicyChangeRef.current(nextPolicy);
+  }, []);
+
   useKeyboardShortcuts({
     railFilterInputRef,
     setQuickOpenVisible,
@@ -354,9 +382,7 @@ export default function App() {
     hasActiveSession,
     shellControlsState,
     shellPanelsState,
-    onPolicyChange: (nextPolicy) => {
-      handleComposerPolicyChangeRef.current(nextPolicy);
-    },
+    onPolicyChange,
   });
 
   const normalizedRailFilter = railFilter.trim().toLowerCase();
@@ -609,29 +635,7 @@ export default function App() {
         ? `${sendHelperPrimary}. ${sendHelperSecondary}.`
         : 'Type a message below, then press Enter or click Send.';
 
-  function focusComposer() {
-    const promptInput = document.querySelector(
-      '#prompt-input',
-    ) as HTMLTextAreaElement | null;
-    promptInput?.focus();
-  }
 
-  function handleComposerPolicyChange(value: string) {
-    const nextPolicy = parseApprovalPolicy(value);
-    if (hasActiveSession) {
-      void requestSelectedSessionPolicyDraftChange(nextPolicy).then(() => {
-        void requestApplySelectedSessionPolicy();
-      });
-      return;
-    }
-
-    void requestSessionDraftChange({
-      sessionApprovalPolicy: nextPolicy,
-    });
-  }
-
-  const handleComposerPolicyChangeRef = useRef(handleComposerPolicyChange);
-  handleComposerPolicyChangeRef.current = handleComposerPolicyChange;
 
   async function handleAddFolderToRail(): Promise<void> {
     const selectedPath = await chooseDesktopWorkspace();
@@ -752,12 +756,10 @@ export default function App() {
         onToggleBell={handleToggleBell}
         compactNavigationOpen={compactNavigationOpen}
         onToggleCompactNavigation={() => {
-          setCompactNavigationOpen((current) => {
-            if (!current) {
-              setUtilityCollapsed(true);
-            }
-            return !current;
-          });
+          if (!compactNavigationOpen) {
+            setUtilityCollapsed(true);
+          }
+          setCompactNavigationOpen(!compactNavigationOpen);
         }}
         compactNavigationToggleRef={compactNavigationToggleRef}
       />

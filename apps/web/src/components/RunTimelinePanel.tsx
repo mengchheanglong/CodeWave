@@ -20,7 +20,11 @@ export function RunTimelinePanel({
       return;
     }
 
-    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    const el = containerRef.current;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 150) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [selectedRun, timeline]);
 
   if (!selectedRun) {

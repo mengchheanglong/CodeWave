@@ -74,9 +74,15 @@ export function Composer({
     }
 
     if (event.key === 'Enter' && !event.shiftKey) {
+      if (mentionState) {
+        return;
+      }
       event.preventDefault();
       const text = event.currentTarget.value.trim();
       if (!text) {
+        return;
+      }
+      if (shellControlsState.startRunDisabled) {
         return;
       }
       void (async () => {
@@ -112,6 +118,9 @@ export function Composer({
       className="composer-shell panes-composer-shell"
       onSubmit={(event) => {
         event.preventDefault();
+        if (shellControlsState.startRunDisabled) {
+          return;
+        }
         void requestStartRun();
       }}
     >
