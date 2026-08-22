@@ -3757,6 +3757,13 @@ export class CodeWaveDaemon {
   private async createWorkspaceFolder(
     request: CreateWorkspaceFolderRequest,
   ): Promise<true | Error> {
+    if (
+      !request ||
+      typeof request.workspacePath !== 'string' ||
+      typeof request.name !== 'string'
+    ) {
+      return new Error('Creating a folder requires workspacePath and name.');
+    }
     const folderName = request.name.trim();
     if (!isValidEntryName(folderName)) {
       return new Error('Folder name is invalid.');
@@ -3800,6 +3807,14 @@ export class CodeWaveDaemon {
   private async renameWorkspaceEntry(
     request: RenameWorkspaceEntryRequest,
   ): Promise<true | Error> {
+    if (
+      !request ||
+      typeof request.workspacePath !== 'string' ||
+      typeof request.targetPath !== 'string' ||
+      typeof request.nextName !== 'string'
+    ) {
+      return new Error('A rename requires targetPath and nextName.');
+    }
     const nextName = request.nextName.trim();
     if (!isValidEntryName(nextName)) {
       return new Error('New name is invalid.');
