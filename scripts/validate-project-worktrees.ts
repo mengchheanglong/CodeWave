@@ -214,6 +214,20 @@ try {
     { workspacePath: created.payload.worktreePath, parentPath: '', name: '.codewave' },
   );
   assert.equal(protectedFolder.status, 409);
+  const renameMissingFields = await request<{ error: string }>(
+    'PATCH',
+    '/api/workspace/entries/rename',
+    {},
+  );
+  assert.equal(renameMissingFields.status, 409);
+  assert.doesNotMatch(renameMissingFields.payload.error, /Cannot read properties/);
+  const folderMissingFields = await request<{ error: string }>(
+    'POST',
+    '/api/workspace/folders',
+    {},
+  );
+  assert.equal(folderMissingFields.status, 409);
+  assert.doesNotMatch(folderMissingFields.payload.error, /Cannot read properties/);
   assert.equal(git(created.payload.worktreePath, ['status', '--porcelain=v1']), '');
 
   const clean = await request<WorktreeChangesSnapshot>(
@@ -466,7 +480,7 @@ try {
   assert.equal(projectList.payload.projects[0]?.tasks.length, 6);
 
   process.stdout.write(
-    'Project worktree validation passed: repository-root registration, clean-base task isolation, bounded and binary-safe review, stale-review fencing, one-run task reservations, accept commits, destructive revert, main-worktree preservation, Git identity binding, and junction containment.\n',
+    'Project worktree validation passed: repository-root registration, clean-base task isolation, bounded and binary-safe review, stale-review fencing, one-run task reservations, accept commits, destructive revert, main-worktree preservation, Git identity binding, junction containment, and friendly workspace mutation validation.\n',
   );
 } finally {
   delete process.env.CODEWAVE_MINIMAL_ACP_HOLD;
