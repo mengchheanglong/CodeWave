@@ -49,6 +49,9 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 }
 
 export class WorktreeManagerError extends Error {
+  /** Raw diagnostic detail for server-side logs only; never sent to clients. */
+  declare readonly detail?: string;
+
   constructor(
     message: string,
     readonly code:
@@ -71,6 +74,37 @@ type BoundedGitOutput = {
   truncated: boolean;
 };
 
+/**
+ * Map raw Git stderr to a client-safe message. Raw stderr is never embedded in
+ * error.message; it is attached separately as non-enumerable `detail` for
+ * server-side logs only.
+ */
+function gitFailureDetail(failure: { stderr?: string; message?: string }): string {
+  return (failure.stderr || failure.message || 'Git command failed.').trim().slice(0, 2_000);
+}
+
+function friendlyGitFailureMessage(stderr: string): string {
+  if (/not a git repository/i.test(stderr)) {
+    return 'That folder is not inside a Git repository.';
+  }
+  if (/Permission denied|could not read from remote|fatal: unable to access/i.test(stderr)) {
+    return 'A Git operation failed due to access permissions.';
+  }
+  return 'A Git operation failed. Check the folder and try again.';
+}
+
+function gitFailedError(failure: { stderr?: string; message?: string }): WorktreeManagerError {
+  const detail = gitFailureDetail(failure);
+  const error = new WorktreeManagerError(friendlyGitFailureMessage(detail), 'git_failed');
+  Object.defineProperty(error, 'detail', {
+    value: detail,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return error;
+}
+
 async function runGit(
   cwd: string,
   args: string[],
@@ -85,16 +119,7 @@ async function runGit(
     });
     return { stdout: result.stdout };
   } catch (error) {
-    const failure = error as Error & {
-      code?: number | string;
-      stdout?: string;
-      stderr?: string;
-    };
-    const detail = (failure.stderr || failure.message || 'Git command failed.').trim();
-    throw new WorktreeManagerError(
-      `Git operation failed: ${detail.slice(0, 2_000)}`,
-      'git_failed',
-    );
+    throw gitFailedError(error as { stderr?: string; message?: string });
   }
 }
 
@@ -148,10 +173,12 @@ async function runGitBounded(
       if (code !== 0) {
         const detail = Buffer.concat(stderr).toString('utf8').trim();
         reject(
-          new WorktreeManagerError(
-            `Git operation failed: ${detail || `git exited with code ${String(code)}`}`,
-            'git_failed',
-          ),
+          detail
+            ? gitFailedError({ stderr: detail })
+            : new WorktreeManagerError(
+                `Git operation failed: git exited with code ${String(code)}`,
+                'git_failed',
+              ),
         );
         return;
       }
@@ -384,6 +411,18 @@ export class WorktreeManager {
       throw new WorktreeManagerError('Project rootPath must be an existing directory.', 'invalid_project');
     }
     const rootPath = realpathSync.native(requestedPath);
+    let insideWorkTree: GitResult;
+    try {
+      insideWorkTree = await runGit(rootPath, ['rev-parse', '--is-inside-work-tree']);
+    } catch {
+      insideWorkTree = { stdout: '' };
+    }
+    if (insideWorkTree.stdout.trim() !== 'true') {
+      throw new WorktreeManagerError(
+        'The project folder is not a Git repository. Open a Git repository root to register it.',
+        'invalid_project',
+      );
+    }
     const topLevel = (await runGit(rootPath, ['rev-parse', '--show-toplevel'])).stdout.trim();
     const canonicalTopLevel = realpathSync.native(path.resolve(topLevel));
     if (!samePath(rootPath, canonicalTopLevel)) {

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -141,6 +142,17 @@ try {
     rootPath: path.join(projectRoot, 'nested'),
   });
   assert.equal(nested.status, 400);
+
+  const nonGit = await request<{ error: string; code: string }>('POST', '/api/projects', {
+    rootPath: outsideRoot,
+  });
+  assert.equal(nonGit.status, 400);
+  assert.equal(nonGit.payload.code, 'invalid_project');
+  assert.equal(
+    nonGit.payload.error,
+    'The project folder is not a Git repository. Open a Git repository root to register it.',
+  );
+  assert.doesNotMatch(nonGit.payload.error, /fatal:/, 'raw git stderr must not reach clients');
 
   const registered = await request<ProjectRecord>('POST', '/api/projects', {
     rootPath: projectRoot,
@@ -473,6 +485,27 @@ try {
   assert.equal(escaped.status, 409);
   assert.equal(escaped.payload.code, 'task_conflict');
 
+  // A git_failed response must carry a friendly message, never raw git stderr.
+  const hiddenGitPath = path.join(projectRoot, '.git-hidden-for-validation');
+  renameSync(path.join(projectRoot, '.git'), hiddenGitPath);
+  let gitFailed: { status: number; payload: { error: string; code: string } };
+  try {
+    gitFailed = await request<{ error: string; code: string }>(
+      'POST',
+      `/api/projects/${registered.payload.id}/tasks`,
+      { title: 'Friendly git failure' },
+    );
+  } finally {
+    renameSync(hiddenGitPath, path.join(projectRoot, '.git'));
+  }
+  assert.equal(gitFailed.status, 409);
+  assert.equal(gitFailed.payload.code, 'git_failed');
+  assert.doesNotMatch(
+    gitFailed.payload.error,
+    /fatal:/,
+    'sendWorktreeError must not emit raw git stderr for git_failed errors',
+  );
+
   const projectList = await request<{
     projects: Array<{ project: ProjectRecord; tasks: WorktreeTaskRecord[] }>;
   }>('GET', '/api/projects');
@@ -480,7 +513,7 @@ try {
   assert.equal(projectList.payload.projects[0]?.tasks.length, 6);
 
   process.stdout.write(
-    'Project worktree validation passed: repository-root registration, clean-base task isolation, bounded and binary-safe review, stale-review fencing, one-run task reservations, accept commits, destructive revert, main-worktree preservation, Git identity binding, junction containment, and friendly workspace mutation validation.\n',
+    'Project worktree validation passed: repository-root registration, non-Git folder rejection with friendly errors, clean-base task isolation, bounded and binary-safe review, stale-review fencing, one-run task reservations, accept commits, destructive revert, main-worktree preservation, Git identity binding, junction containment, stderr-free Git failure responses, and friendly workspace mutation validation.\n',
   );
 } finally {
   delete process.env.CODEWAVE_MINIMAL_ACP_HOLD;
