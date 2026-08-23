@@ -9,7 +9,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test src/args.test.ts src/daemon.test.ts"
+    "test": "node --import tsx --test src/args.test.ts src/daemon.test.ts src/duel.test.ts"
   },
   "dependencies": {
     "@codewave/protocol": "file:../../packages/protocol"
