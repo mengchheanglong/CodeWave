@@ -31,7 +31,7 @@ export interface Lane {
 interface CompareLanePayload {
   sessionId?: unknown;
   providerId?: unknown;
-  runSnapshot?: { id?: unknown } | null;
+  runSnapshot?: { run?: { id?: unknown } | null; id?: unknown } | null;
 }
 
 export interface LaneResult {
@@ -50,10 +50,17 @@ function laneFromCompareEntry(entry: CompareLanePayload): Lane {
     typeof entry.sessionId === "string" ? entry.sessionId : null;
   const providerId =
     typeof entry.providerId === "string" ? entry.providerId : null;
-  const runId =
-    entry.runSnapshot && typeof entry.runSnapshot.id === "string"
-      ? entry.runSnapshot.id
+  // The daemon nests the run inside the snapshot: { runSnapshot: { run: { id } } }.
+  const snapshotRun =
+    entry.runSnapshot && typeof entry.runSnapshot === "object"
+      ? entry.runSnapshot.run
       : null;
+  const runId =
+    snapshotRun && typeof snapshotRun.id === "string"
+      ? snapshotRun.id
+      : entry.runSnapshot && typeof entry.runSnapshot.id === "string"
+        ? entry.runSnapshot.id
+        : null;
   if (!sessionId || !providerId || !runId) {
     throw new DuelError(
       "The daemon returned a compare lane with missing identifiers.",
@@ -136,12 +143,30 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Unwrap the daemon's run-snapshot envelope: GET /api/runs/:id returns
+ * { run, events, transcript, ... } with the WorkbenchRun fields under `run`.
+ */
+function unwrapRun(snapshot: unknown): RunSnapshotLike & Record<string, unknown> {
+  if (
+    snapshot &&
+    typeof snapshot === "object" &&
+    (snapshot as Record<string, unknown>).run &&
+    typeof (snapshot as Record<string, unknown>).run === "object"
+  ) {
+    return (snapshot as { run: RunSnapshotLike & Record<string, unknown> }).run;
+  }
+  return (snapshot ?? {}) as RunSnapshotLike & Record<string, unknown>;
+}
+
 async function pollRunToTerminal(
   client: DaemonClient,
   runId: string,
 ): Promise<RunSnapshotLike> {
   for (;;) {
-    const snapshot = await client.request<RunSnapshotLike>(`/api/runs/${runId}`);
+    const snapshot = unwrapRun(
+      await client.request<unknown>(`/api/runs/${runId}`),
+    );
     const status = typeof snapshot.status === "string" ? snapshot.status : "";
     if (TERMINAL_STATUSES.has(status)) return snapshot;
     await sleep(POLL_INTERVAL_MS);

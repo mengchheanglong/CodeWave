@@ -96,8 +96,8 @@ describe("startDuel", () => {
           status: 201,
           body: {
             lanes: [
-              { sessionId: "s-1", providerId: "opencode", runSnapshot: { id: "r-1" } },
-              { sessionId: "s-2", providerId: "qwen", runSnapshot: { id: "r-2" } },
+              { sessionId: "s-1", providerId: "opencode", runSnapshot: { run: { id: "r-1" } } },
+              { sessionId: "s-2", providerId: "qwen", runSnapshot: { run: { id: "r-2" } } },
             ],
           },
         };
@@ -165,11 +165,14 @@ describe("collectLaneResults", () => {
         return {
           status: 200,
           body: {
-            id: "r-1",
-            status,
-            startedAt: "2026-08-23T10:00:00.000Z",
-            completedAt: status === "completed" ? "2026-08-23T10:00:05.000Z" : null,
-            preRunCommit: null,
+            run: {
+              id: "r-1",
+              status,
+              startedAt: "2026-08-23T10:00:00.000Z",
+              completedAt: status === "completed" ? "2026-08-23T10:00:05.000Z" : null,
+              preRunCommit: null,
+            },
+            events: [],
           },
         };
       }
